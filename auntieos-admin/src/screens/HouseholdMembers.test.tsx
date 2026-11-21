@@ -638,6 +638,7 @@ describe('HouseholdMembers PRIMARY RECOVERY', () => {
     );
     expect(sentence).not.toHaveTextContent(/lost@example\.com|entitlement/);
   });
+
   it('sends the claim link to the picked address and reloads the roster', async () => {
     api.executePrimaryRecovery.mockResolvedValue({ inviteId: 'rq_1234abcd' });
     const { user, dialog } = await openDialog();
@@ -836,6 +837,7 @@ describe('HouseholdMembers mock structure', () => {
     expect(whereLine(1, 0)).toBe('1 person · 1 primary, 0 secondary');
     expect(whereLine(1, 2)).toBe('3 people · 1 primary, 2 secondary');
   });
+
   it('#1844: counts a secondary with no portal account in the header too, as the panel does', async () => {
     api.listSecondaryKinfolk.mockResolvedValue([
       { personId: 'p1', name: 'Rae East', phone: null, email: null, access: 'NONE', memberUid: null },

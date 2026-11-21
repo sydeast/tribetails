@@ -187,11 +187,13 @@ export function whereLine(primaryCount: number | null, secondaryCount: number | 
   const people = primaryCount + secondaryCount;
   return `${peopleCount(people)} · ${primaryCount} primary, ${secondaryCount} secondary`;
 }
+
 /** #1853: a permission in words for the toast, never its stored key ("billing_full"). */
 function permissionWords(key: PermissionKey): string {
   const label = PERMISSION_META.find((p) => p.key === key)?.label ?? 'access';
   return label.charAt(0).toLowerCase() + label.slice(1);
 }
+
 /** "1 person", "3 people". */
 export function peopleCount(n: number): string {
   return `${n} ${n === 1 ? 'person' : 'people'}`;

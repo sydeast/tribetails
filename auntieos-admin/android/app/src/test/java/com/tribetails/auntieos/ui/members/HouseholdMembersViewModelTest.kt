@@ -414,6 +414,7 @@ class HouseholdMembersViewModelTest {
         assertEquals("P", householdInitial("Pruitt"))
         assertEquals("F", householdInitial("fam1"))
     }
+
     @Test fun `the where line waits for both reads, never a zero count, and never an id or stored key`() {
         assertNull(whereLine(HouseholdMembersUiState()))
         assertNull(whereLine(HouseholdMembersUiState(membersError = "boom")))
@@ -430,6 +431,7 @@ class HouseholdMembersViewModelTest {
             ),
         )
     }
+
     /** #1844: the header counted 0 secondary above a panel that listed one with no portal account. */
     @Test fun `the where line counts a secondary with no portal account, as the panel does`() {
         val primary = member(uid = "p1").copy(role = MembersRepository.MemberRole.PRIMARY)
@@ -444,10 +446,12 @@ class HouseholdMembersViewModelTest {
         assertEquals("2 people · 1 primary, 1 secondary", whereLine(state))
         assertEquals("1 person", secondaryMeta(state))
     }
+
     @Test fun `a permission toast names the permission in words`() {
         assertEquals("full billing", permissionWords(MembersRepository.PermissionKey.BILLING_FULL))
         assertEquals("edit kin", permissionWords(MembersRepository.PermissionKey.KIN_EDIT))
     }
+
     @Test fun `member capsules take the mock tints, title case, purple primary and teal secondary`() {
         assertEquals("Active", memberStatusLabel(MembersRepository.MemberStatus.ACTIVE))
         assertEquals("Suspended", memberStatusLabel(MembersRepository.MemberStatus.SUSPENDED))

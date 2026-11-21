@@ -441,9 +441,11 @@ function memberName(member: HouseholdMember): string | null {
   }
   return null;
 }
+
 export function memberLabel(member: HouseholdMember): string {
   return memberName(member) ?? (member.role === 'PRIMARY' ? UNNAMED_PRIMARY : UNNAMED_SECONDARY);
 }
+
 /** The same, as the start of a sentence: "The primary contact will be suspended". */
 export function memberSubject(member: HouseholdMember): string {
   return memberName(member) ?? (member.role === 'PRIMARY' ? 'The primary contact' : 'This secondary kinfolk');
