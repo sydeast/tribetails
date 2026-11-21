@@ -25,8 +25,9 @@ import {
 import { generateDraft, draftOpening, type GenerateDraftResult } from '../api/communicateGenerate';
 import { approveGeneratedDraft, type ApproveDraftResult } from '../api/communicateApprove';
 import { sendGeneratedDraft } from '../api/draftSend';
-import { alreadySentText, sentDraftOnOpen } from '../lib/draftSent';
+import { alreadySentText, sendRefusedUnconfirmed, sentDraftOnOpen, unconfirmedSendText } from '../lib/draftSent';
 import { householdTextPreviewLine } from '../lib/householdText';
+import { useBusinessZone } from '../lib/useBusinessZone';
 import {
   sendHouseholdPush,
   householdPushResultText,
@@ -161,7 +162,12 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   const [pushResult, setPushResult] = useState<HouseholdPushResult | null>(null);
   // #2428: an Email or Text that had already gone out: the stored draft it was
   // opened from, or `answered` when the server said so to a send from here.
-  const [sentBefore, setSentBefore] = useState<GeneratedDraftRow | 'answered' | null>(null);
+  // #2452: `unconfirmed` when the server said the send from here got no
+  // answer. The notice then takes the place of Approve and Delete at once, the
+  // way it does when the draft is opened again.
+  const [sentBefore, setSentBefore] = useState<GeneratedDraftRow | 'answered' | 'unconfirmed' | null>(null);
+  // #2440: the day in a sent notice is the business's day, never the browser's.
+  const businessZone = useBusinessZone();
   const [retryingPush, setRetryingPush] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -230,12 +236,15 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     // #2428: a draft that already went out opens as sent, with no Approve and
     // no Delete. It used to open as "needs approval", and approving an Email or
     // Text again sent it to the household a second time.
-    const went = sentDraftOnOpen(row, household);
+    const went = sentDraftOnOpen(row, household, businessZone);
     if (went !== null) {
       setApproved({ ok: true, auditWarning: null, providerId: null, delivered: true });
       setPushResult(went.push);
     }
     setSentBefore(went !== null && went.notice !== null ? row : null);
+    // `businessZone` is read here only to tell whether the draft went out at
+    // all, which no zone changes. The notice is worded again at render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stored, loadedDraftId]);
 
   function patch(next: Partial<PersonalizeFormState>) {
@@ -366,8 +375,17 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
       setPushResult(pushAnswer);
       setConfirmOpen(false);
     } catch (err) {
-      setApproveError(err instanceof Error ? err.message : 'Approve failed.');
       setConfirmOpen(false);
+      // #2452: the send got no answer, and the server keeps the draft closed.
+      // Told by the refusal's code, never its words. The screen stops offering
+      // Approve and Delete here, and says what is and is not known.
+      if (sendRefusedUnconfirmed(err)) {
+        setApproved({ ok: true, auditWarning: null, providerId: null, delivered: true });
+        setPushResult(null);
+        setSentBefore('unconfirmed');
+        return;
+      }
+      setApproveError(err instanceof Error ? err.message : 'Approve failed.');
     } finally {
       inFlight.current = false;
       setApproving(false);
@@ -755,10 +773,17 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                   {approved !== null && pushResult === null && sentBefore !== null && (() => {
                     // #2428: this one had already gone out. Say so, in place of
                     // "Draft approved", which reads as something done just now.
+                    // #2452: a send that got no answer has its own words, and
+                    // the warning tone, whether it was opened that way or the
+                    // server just said so.
                     const words =
-                      sentBefore === 'answered' ? alreadySentText(household) : sentDraftOnOpen(sentBefore, household)?.notice;
+                      sentBefore === 'answered'
+                        ? alreadySentText(household)
+                        : sentBefore === 'unconfirmed'
+                          ? unconfirmedSendText(household, def.deliverable === 'email' || def.deliverable === 'sms' ? def.deliverable : null)
+                          : sentDraftOnOpen(sentBefore, household, businessZone)?.notice;
                     return words ? (
-                      <Banner tone="success" title={words.title}>
+                      <Banner tone={words.tone} title={words.title}>
                         {words.body}
                       </Banner>
                     ) : null;

@@ -34,6 +34,10 @@ vi.mock('../api/householdPush', async (orig) => ({
   ...(await orig<typeof import('../api/householdPush')>()),
   sendHouseholdPush,
 }));
+// #2440: the business's zone, as `business_settings.timeZone` resolves. The
+// hook reads settings over the network, so the value is handed in here.
+const { businessZone } = vi.hoisted(() => ({ businessZone: { value: 'America/Chicago' } }));
+vi.mock('../lib/useBusinessZone', () => ({ useBusinessZone: () => businessZone.value }));
 vi.mock('../components/RecipientContextPanel', () => ({
   RecipientContextPanel: () => <div data-testid="context-stub" />,
 }));
@@ -64,6 +68,7 @@ function setup(row: Record<string, unknown> | null) {
   publishGeneratedDraft.mockReset();
   deleteGeneratedDraft.mockReset().mockResolvedValue(undefined);
   sendGeneratedDraft.mockReset().mockResolvedValue({ outcome: 'sent', auditWarning: null });
+  businessZone.value = 'America/Chicago';
   return userEvent.setup();
 }
 
@@ -79,6 +84,13 @@ const EMAIL = {
 const TEXT = { ...EMAIL, communication_type: 'sms', generated_title: '' };
 const PUSH = { ...EMAIL, communication_type: 'push', generated_title: '', status: 'approved' };
 
+const UNCONFIRMED_WORDS =
+  'The send of this email to Dana Halbrook on Nov 20, 2026 did not get an answer, so it is not known whether it reached them. ' +
+  'It is not sent again from this draft. Write a new one if it has to go again.';
+/** The refusal `sendGeneratedDraft` answers with: the SDK's error, with the server's `details`. */
+function refusal(message: string, code: string): Error {
+  return Object.assign(new Error(message), { code: 'functions/failed-precondition', details: { code } });
+}
 /** Nothing on the screen can send this draft or delete it. */
 function expectFinished() {
   expect(screen.queryByRole('button', { name: 'Approve and send' })).toBeNull();
@@ -109,10 +121,14 @@ describe('#2428: opening a draft that already went out', () => {
     expectFinished();
   });
 
-  it('SAD: an Email whose send was cut off before it answered is not offered again either', async () => {
+  // #2452: this used to assert "Already approved", which reads as sent about a
+  // send nobody can vouch for.
+  it('SAD: an Email whose send was cut off before it answered is not offered again, and is not called approved or sent', async () => {
     setup({ ...EMAIL, status: 'approved', approvedAt: '2026-11-20T16:00:00.000Z', sendClaimedAt: '2026-11-20T16:00:00.000Z' });
     render(<CommunicatePersonalize draftId="gd1" />);
-    expect(await screen.findByText('Already approved')).toBeInTheDocument();
+    expect(await screen.findByText('Send not confirmed')).toBeInTheDocument();
+    expect(screen.queryByText('Already approved')).toBeNull();
+    expect(screen.queryByText('Already sent')).toBeNull();
     expectFinished();
   });
 
@@ -239,5 +255,88 @@ describe('#2428: approving an Email or Text draft sends it once', () => {
     await act(async () => answer({ outcome: 'sent', auditWarning: null }));
     expect(await screen.findByText('Approved and sent.')).toBeInTheDocument();
     expect(sendGeneratedDraft).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('#2452: a send that was never confirmed', () => {
+  const MARKED = {
+    ...EMAIL,
+    status: 'approved',
+    approvedAt: '2026-11-20T16:00:00.000Z',
+    sendClaimedAt: '2026-11-20T16:00:00.000Z',
+    sendUnconfirmedAt: '2026-11-20T16:00:31.000Z',
+  };
+  async function openAndConfirm(user: ReturnType<typeof userEvent.setup>) {
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await user.click(await screen.findByRole('button', { name: 'Approve and send' }));
+    return screen.findByRole('button', { name: 'Send now' });
+  }
+  it('HAPPY: opens with its own notice, in the warning tone, with no Approve and no Delete', async () => {
+    setup(MARKED);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    const title = await screen.findByText('Send not confirmed');
+    expect(screen.getByText(UNCONFIRMED_WORDS)).toBeInTheDocument();
+    expect(title.closest('.banner')).toHaveAttribute('data-tone', 'warning');
+    expect(screen.queryByText(/Already approved|Already sent|Approved and sent/)).toBeNull();
+    expectFinished();
+  });
+  it('HAPPY: the same notice takes the place of Approve and Delete in the sitting where it happened', async () => {
+    const user = setup({ ...EMAIL });
+    sendGeneratedDraft.mockImplementation(() =>
+      Promise.reject(refusal('The send did not get an answer, so it is not known whether this message reached the household.', 'draft_send_unconfirmed')),
+    );
+    await user.click(await openAndConfirm(user));
+    expect(await screen.findByText('Send not confirmed')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'The send of this email to Dana Halbrook did not get an answer, so it is not known whether it reached them. ' +
+          'It is not sent again from this draft. Write a new one if it has to go again.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Approve blocked')).toBeNull();
+    expect(screen.queryByText('Approved and sent.')).toBeNull();
+    expectFinished();
+    expect(deleteGeneratedDraft).not.toHaveBeenCalled();
+  });
+  it('NEGATIVE: the notice is told by the code. The same words without it are an ordinary refusal', async () => {
+    const user = setup({ ...EMAIL });
+    sendGeneratedDraft.mockImplementation(() => Promise.reject(new Error('The send did not get an answer.')));
+    await user.click(await openAndConfirm(user));
+    expect(await screen.findByText('The send did not get an answer.')).toBeInTheDocument();
+    expect(screen.queryByText('Send not confirmed')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Approve and send' })).toBeEnabled();
+  });
+  it('NEGATIVE: a send that is still running is not called unconfirmed', async () => {
+    const user = setup({ ...EMAIL });
+    sendGeneratedDraft.mockImplementation(() =>
+      Promise.reject(refusal('This message is being sent right now.', 'draft_send_in_flight')),
+    );
+    await user.click(await openAndConfirm(user));
+    expect(await screen.findByText('This message is being sent right now.')).toBeInTheDocument();
+    expect(screen.queryByText('Send not confirmed')).toBeNull();
+  });
+  it('SAD: a Text claimed a moment ago opens as being sent, with neither button', async () => {
+    setup({ ...TEXT, status: 'approved', sendClaimedAt: new Date().toISOString() });
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(await screen.findByText('Being sent')).toBeInTheDocument();
+    expect(
+      screen.getByText('This text for Dana Halbrook is being sent right now. Open it again in a few minutes to see what happened.'),
+    ).toBeInTheDocument();
+    expectFinished();
+  });
+});
+describe('#2440: the sent date is the business day', () => {
+  // 03:30 UTC on Nov 21 is 9:30 PM on Nov 20 in Chicago and 5:30 PM in Honolulu.
+  const LATE = { ...EMAIL, status: 'approved', sentAt: '2026-11-21T03:30:00.000Z' };
+  it('HAPPY: reads America/Chicago by default, whatever zone the browser is in', async () => {
+    setup(LATE);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(await screen.findByText('Sent to Dana Halbrook by email on Nov 20, 2026. It is not sent again.')).toBeInTheDocument();
+  });
+  it('HAPPY: reads the zone in business settings when one is set', async () => {
+    setup(LATE);
+    businessZone.value = 'UTC';
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(await screen.findByText('Sent to Dana Halbrook by email on Nov 21, 2026. It is not sent again.')).toBeInTheDocument();
   });
 });

@@ -306,7 +306,13 @@ fun CommunicateScreen(
         }
         // #2428: so does an Email or Text that already went out. Approving one
         // again sent it to the household a second time.
-        sentNotice = sentDraftNotice(d, d.household(), com.tribetails.auntieos.web.util.businessTimeZone())
+        // #2452: read off the stamps, so a send that got no answer says so.
+        sentNotice = sentDraftNotice(
+            d,
+            d.household(),
+            com.tribetails.auntieos.web.util.businessTimeZone(),
+            draftClockMs(),
+        )
         selectedKinfolk = null
         openedHouseholdId = d.householdId().ifBlank { null }
         onDraftConsumed()
@@ -534,6 +540,9 @@ fun CommunicateScreen(
                             showToast(outcome.notice.body, ToastKind.Success)
                         }
                         is DraftSendOutcome.AlreadySent -> sentNotice = outcome.notice
+                        // #2452: held on the screen, where Approve and Delete
+                        // were. It used to be a toast and nothing else.
+                        is DraftSendOutcome.Unconfirmed -> sentNotice = outcome.notice
                         is DraftSendOutcome.Refused -> showToast(outcome.message, ToastKind.Error)
                     }
                 } catch (c: CancellationException) {
@@ -1109,14 +1118,15 @@ private fun ComposePanel(
             ) {
                 val approveChannel = approveDeliveryChannel(messageType)
                 PrimaryButton(
-                    label = when {
-                        sent || sentNotice != null -> "Sent"
-                        pushNotice != null -> "Approved"
+                    // #2452: "Sent" only for a send somebody vouches for.
+                    label = approveButtonLabel(
+                        sent = sent,
+                        notice = sentNotice,
+                        approved = pushNotice != null,
                         // #1563: a KinTale sends to the household's portal; #1625: a Text or Email sends too; #2294: a Push too.
-                        messageType == MessageType.Visit || approveChannel != null ||
-                            messageType == MessageType.Push -> "Approve and send"
-                        else -> "Approve draft"
-                    },
+                        sends = messageType == MessageType.Visit || approveChannel != null ||
+                            messageType == MessageType.Push,
+                    ),
                     onClick = onApprove,
                     loading = saving,
                     enabled = result?.draft_id != null && !deleting && mayApprove(sent, pushNotice, sentNotice),
@@ -1158,7 +1168,12 @@ private fun ComposePanel(
             }
             sentNotice?.let { notice ->
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-                    Text(text = notice.title, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                    // #2452: a send nobody can vouch for is in the warning colour.
+                    Text(
+                        text = notice.title,
+                        style = AuntieTheme.typography.titleSmall,
+                        color = if (notice.confirmed) c.textPrimary else c.warning,
+                    )
                     Text(text = notice.body, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
                 }
             }

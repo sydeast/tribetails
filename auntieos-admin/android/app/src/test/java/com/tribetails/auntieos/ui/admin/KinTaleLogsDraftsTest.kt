@@ -195,5 +195,29 @@ class KinTaleLogsDraftsTest {
         // Home's count is unchanged.
         assertEquals(0, com.tribetails.auntieos.data.model.pendingDraftCountOf(listOf(unanswered)))
     }
+
+    @Test
+    fun `#2440 the load keeps the drafts that went out, beside the Drafts bucket`() = runTest(dispatcher) {
+        val repo = mockk<AuntieRepository>()
+        coEvery { repo.getGeneratedDrafts(any()) } returns Result.success(
+            listOf(
+                Draft(id = "pending", status = "pending", communicationType = "email", createdOn = "2026-11-14T00:00:00Z"),
+                Draft(id = "sentEmail", status = "approved", communicationType = "email", sentAt = "2026-11-15T00:00:05Z", createdOn = "2026-11-15T00:00:00Z"),
+                Draft(id = "sentPush", status = "approved", communicationType = "push", pushOutcome = "sent", createdOn = "2026-11-16T00:00:00Z"),
+                Draft(
+                    id = "lost", status = "approved", communicationType = "sms",
+                    sendClaimedAt = "2026-11-17T00:00:00Z", sendUnconfirmedAt = "2026-11-17T00:00:31Z", createdOn = "2026-11-17T00:00:00Z",
+                ),
+                Draft(id = "tale", status = "published", communicationType = "visit_report", publishedReportId = "r1", createdOn = "2026-11-18T00:00:00Z"),
+            ),
+        )
+        val vm = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true), kinCareRepository = mockk<KinCareRepository>())
+        vm.loadGeneratedDrafts()
+        advanceUntilIdle()
+        // The Drafts bucket is what it was.
+        assertEquals(listOf("pending"), vm.generatedDrafts.value.map { it.id })
+        // A sent KinTale is listed as its report, never here.
+        assertEquals(listOf("lost", "sentPush", "sentEmail"), vm.goneGeneratedDrafts.value.map { it.id })
+    }
 }
 
