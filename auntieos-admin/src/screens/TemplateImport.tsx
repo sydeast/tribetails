@@ -14,10 +14,10 @@ import {
   type TemplateImportRow,
 } from '../api/templateImport';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { humanizeKey } from '../lib/notificationsFeed';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './TemplateImport.css';
-import { humanizeKey } from '../lib/notificationsFeed';
 
 interface TemplateImportProps {
   /** Returns to the Template Bank list. A sibling view, not a route. */
