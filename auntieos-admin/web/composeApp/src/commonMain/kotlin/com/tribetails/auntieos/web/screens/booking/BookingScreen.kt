@@ -336,6 +336,10 @@ private fun BookingListScreen(
         val names = (incomingKinfolkState as? FirestoreResult.Data)?.value.orEmpty().associate { it._id to it.displayName }
         groupIncomingBySeries(visits) { names[it] }
     }
+    // #2243: the households' asks to move or cancel a booked visit, through the
+    // callables admin web reads. Not read for a sandbox test admin (the server
+    // refuses both), nor on the fake-data path (no client).
+    val visitAsks = rememberVisitAskQueue(enabled = client != null && !testMode.active)
     // #2028: what became of the request a notice opened this screen for, once
     // the queue has answered: open its card, or look the booking up.
     val focus = focusRequestOutcome(focusRequestKey, incomingState, incomingSeries)
@@ -569,12 +573,19 @@ private fun BookingListScreen(
         }
 
         // ── 16.5 Incoming requests (MyTribe envelopes; approve/cancel a series) ──
-        if (incomingSeries.isNotEmpty() || incomingState is FirestoreResult.Error) {
+        // #2243: a household's ask to move or cancel a booked visit waits here too.
+        if (incomingSeries.isNotEmpty() || incomingState is FirestoreResult.Error || visitAsks.needsPanel || testMode.active) {
             DenPanel(
                 title    = "Visit requests",
-                subtitle = "New requests from MyTribe. Approve a whole series at once; approving creates the visits.",
-                trailing = { SectionCount("${incomingSeries.size}") },
+                subtitle = "Households asked to move, cancel, or book a visit and are waiting on an answer.",
+                trailing = { SectionCount("${incomingSeries.size + visitAsks.rows.size}") },
             ) {
+              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                VisitAskSection(
+                    state = visitAsks,
+                    zone = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone),
+                    sandbox = testMode.active,
+                )
                 when {
                     requestBanner(testMode, incomingState) == RequestBanner.Sandbox ->
                         EmptyHint("Visit requests aren't available in the sandbox (cross-tenant data).")
@@ -595,6 +606,7 @@ private fun BookingListScreen(
                         }
                     }
                 }
+              }
             }
             Spacer(Modifier.height(18.dp))
         }
