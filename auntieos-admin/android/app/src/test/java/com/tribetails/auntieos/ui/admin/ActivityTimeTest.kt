@@ -3,6 +3,7 @@ import com.tribetails.auntieos.data.admin.ActivityLogEntry
 import com.tribetails.auntieos.data.model.businessZone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 /**
  * #1585: the Activity Log read UTC stamps as local time and grouped days by UTC.
@@ -46,12 +47,13 @@ class ActivityTimeTest {
         assertNull(activityWhen("not a date", chicago))
     }
     @Test
-    fun theOpenedEntryShowsTheBusinessReadingBesideTheRawStamp() {
+    fun theOpenedEntryReadsItsTimeOnceInTheBusinessZone() {
+        // #1818: one readable time, never the raw UTC stamp beside it.
         val rows = activityDetailRows(
             ActivityLogEntry(id = "a1", timestamp = "2026-11-04T21:34:00Z", actionType = "LOGIN"),
             chicago,
         )
-        assertEquals("When" to "2026-11-04T21:34:00Z", rows[0])
-        assertEquals("Business time" to "2026-11-04 3:34p", rows[1])
+        assertEquals("When" to "Nov 4, 2026, 3:34p", rows[0])
+        assertTrue(rows.none { it.first == "Business time" })
     }
 }

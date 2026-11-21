@@ -206,3 +206,35 @@ describe('no description carries an id (#1752)', () => {
     expect(offenders).toEqual([]);
   });
 });
+describe('#1818, #1881: lines that had no sentence, and brand words', () => {
+  it('names the change in words, never a key or an id', async () => {
+    const w = await import('../src/lib/activityWords');
+    expect(w.bookingSeriesApprovedWords(3, 0)).toBe('Approved a visit request: 3 visits');
+    expect(w.bookingSeriesApprovedWords(1, 0)).toBe('Approved a visit request: 1 visit');
+    expect(w.bookingSeriesApprovedWords(2, 1)).toBe('Approved a visit request: 2 of 3 visits; 1 could not be changed');
+    expect(w.bookingSeriesCancelledWords(4, 0)).toBe('Cancelled a visit series: 4 visits');
+    expect(w.visitCreatedWords(false)).toBe('Created a visit');
+    expect(w.visitCreatedWords(true)).toBe('Recorded a past visit');
+    expect(w.visitsRequestedWords(1, 'individual')).toBe('Kinfolk asked for 1 visit (individual dates)');
+    expect(w.visitsRequestedWords(2, 'weekly')).toBe('Kinfolk asked for 2 visits (weekly)');
+    expect(w.invoiceCreatedWords('1042')).toBe('Created invoice 1042');
+    expect(w.cardPaymentWords('1042')).toBe('Invoice 1042 paid by card');
+    expect(w.cardPaymentFailedWords('1042')).toBe('A card payment failed on invoice 1042');
+    expect(w.shareLinkExpiredWords()).toBe('A KinTale share link expired');
+  });
+  it('an invoice with no number is said in words, not left blank', async () => {
+    const w = await import('../src/lib/activityWords');
+    expect(w.invoiceCreatedWords('')).not.toMatch(/undefined|null|\s$/);
+    expect(w.cardPaymentWords(undefined)).not.toMatch(/undefined|null/);
+  });
+  it('a key with no label keeps the brand words in their casing', async () => {
+    const w = await import('../src/lib/activityWords');
+    const e = await import('../src/lib/auditEvents');
+    expect(w.humanizeKey('kincare.booking.confirm')).toBe('KinCare booking confirm');
+    expect(e.auditEventWords('CREATE_KINCARE_SESSION')).toBe('Create KinCare session');
+    expect(e.auditEventWords('KINTALE_DRAFT_DELETED')).toBe('KinTale draft deleted');
+    expect(e.auditEventWords('AI_TALE_TITLES_APPLIED')).toBe('AI tale titles applied');
+    expect(e.auditEventWords('UPDATE_KINFOLK')).toBe('Kinfolk updated');
+    expect(e.auditEventWords('CONTENT_KINTALE_SENT')).toBe('KinTale sent');
+  });
+});

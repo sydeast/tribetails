@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ACTIVITY_LOG_QUERY,
+  ACTIVITY_OLDER_PAGE,
+  fetchOlderActivity,
   verifyActivityLogChain,
   type ActivityLogEntry,
   type VerifyAnomaly,
@@ -8,6 +10,8 @@ import {
 } from '../api/activityLog';
 import { useCollection } from '../lib/firestore';
 import { useStaffNames, useStaffRoles } from '../lib/useStaffNames';
+import { useKinfolkRoster } from '../lib/useKinfolkRoster';
+import { kinfolkDisplayName } from '../api/directory';
 import { type StaffRole } from '../api/staff';
 import { str } from '../lib/coerce';
 import { type Async } from '../lib/async';
@@ -22,10 +26,8 @@ import {
   activityMatchesQuery,
   activityMatchesStatus,
   activityPayloadRows,
-  activityEntryDescription,
-  activityEntryShowsCode,
   activityEntryTitle,
-  activityRowShowsTarget,
+  activityRowContext,
   activityWhen,
   type ActivityCategory,
   type ActivityStatusFilter,
@@ -82,6 +84,59 @@ function BusinessClockNotice({ state }: { state: Async<WorkSettings> }) {
     >
       Until it loads, days are counted on Central time.
     </Banner>
+  );
+}
+
+/** #1880: the older pages read so far, below the live newest 200. */
+interface OlderState {
+  rows: ActivityLogEntry[];
+  loading: boolean;
+  error: string | null;
+  /** True once a page came back short: there is nothing older to read. */
+  exhausted: boolean;
+}
+
+const NO_OLDER: OlderState = { rows: [], loading: false, error: null, exhausted: false };
+
+/** The live rows, then the older pages, with no entry twice. */
+function withOlder(live: readonly ActivityLogEntry[], older: readonly ActivityLogEntry[]): ActivityLogEntry[] {
+  const seen = new Set(live.map((e) => e._id));
+  return [...live, ...older.filter((e) => !seen.has(e._id))];
+}
+
+/** The lowest chain sequence on screen, where the next older page starts. */
+function oldestSeq(rows: readonly ActivityLogEntry[]): number | null {
+  let min: number | null = null;
+  for (const r of rows) {
+    if (typeof r.seq === 'number' && (min === null || r.seq < min)) min = r.seq;
+  }
+  return min;
+}
+
+/** #1880: the words, exported so tests spell them once. */
+export const LOAD_OLDER_LABEL = 'Load older entries';
+export const LOADING_OLDER_LABEL = 'Loading older entries…';
+export const OLDER_FAILED = "Couldn't load older entries";
+
+/** #1880: the way to the entries below the newest 200, with its wait and its failure. */
+function OlderEntries({ state, onLoad }: { state: OlderState; onLoad: () => void }) {
+  if (state.loading) return <LoadingRow label={LOADING_OLDER_LABEL} className="den-hint activity__older" />;
+  if (state.error !== null) {
+    return (
+      <Banner
+        tone="error"
+        title={OLDER_FAILED}
+        className="activity__older"
+        trailing={<GhostButton label="Try again" onClick={onLoad} />}
+      >
+        {state.error}
+      </Banner>
+    );
+  }
+  return (
+    <div className="activity__older">
+      <GhostButton label={LOAD_OLDER_LABEL} onClick={onLoad} />
+    </div>
   );
 }
 
@@ -152,6 +207,17 @@ export function ActivityLog() {
   const staffNames = useStaffNames();
   // #1820: which staff account is the owner and which an Auntie, for Actor role.
   const staffRoles = useStaffRoles();
+  // #1818: the household by name on an opened entry, never its id.
+  const roster = useKinfolkRoster();
+  const households = useMemo(() => {
+    const map = new Map<string, string>();
+    if (roster.status !== 'ready') return map;
+    for (const kf of roster.data) {
+      if (str(kf.firstName).trim() === '' && str(kf.lastName).trim() === '') continue;
+      map.set(kf._id, kinfolkDisplayName(kf));
+    }
+    return map;
+  }, [roster]);
   const [chain, setChain] = useState<Async<VerifyResult>>({ status: 'loading' });
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<ActivityCategory>('all');
@@ -163,6 +229,30 @@ export function ActivityLog() {
    * makes that impossible.
    */
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(new Set());
+  /** #1880: the pages read below the live 200, and whether another read is running or failed. */
+  const [older, setOlder] = useState<OlderState>(NO_OLDER);
+
+  async function loadOlder(shown: readonly ActivityLogEntry[]): Promise<void> {
+    if (older.loading) return;
+    const oldest = oldestSeq(shown);
+    if (oldest === null) return;
+    setOlder((prev) => ({ ...prev, loading: true, error: null }));
+    try {
+      const page = await fetchOlderActivity(oldest, ACTIVITY_OLDER_PAGE);
+      setOlder((prev) => ({
+        rows: [...prev.rows, ...page],
+        loading: false,
+        error: null,
+        exhausted: page.length < ACTIVITY_OLDER_PAGE,
+      }));
+    } catch (err) {
+      setOlder((prev) => ({
+        ...prev,
+        loading: false,
+        error: err instanceof Error ? err.message : 'The older entries could not be read.',
+      }));
+    }
+  }
 
   function toggleOpen(id: string): void {
     setOpenIds((prev) => {
@@ -204,7 +294,7 @@ export function ActivityLog() {
         kicker="The Den · Activity log"
         title="Every move,"
         accentTail="sealed."
-        subtitle="A tamper-evident audit trail, newest first and capped at 200 by chain sequence. Legacy pre-chain entries are not listed. Open an entry for the full record. Re-verify walks the SHA-256 chain server-side and reports the verdict."
+        subtitle="A tamper-evident audit trail, newest first. Legacy pre-chain entries are not listed. Open an entry for the full record. Re-verify walks the SHA-256 chain server-side and reports the verdict."
         trailing={<ChainBadge chain={chain} onVerify={() => void verify()} />}
       />
 
@@ -225,21 +315,18 @@ export function ActivityLog() {
           </DenPanel>
         }
       >
-        {(rows) => {
+        {(live) => {
+          // #1880: the live newest 200, then every older page loaded so far.
+          const rows = withOlder(live, older.rows);
           const visible = rows.filter(
             (e) =>
               activityMatchesCategory(e, category) &&
               activityMatchesStatus(e, statusFilter) &&
               activityMatchesQuery(e, query, staffNames),
           );
-          // The cap is STATED rather than left to be discovered. Removing it
-          // needs a paginated listener (page-spec 22 item 6), so until then
-          // the honest move is to say what is being shown.
-          const count =
-            `${visible.length} of ${rows.length} loaded` +
-            (rows.length >= ACTIVITY_LOG_QUERY.max
-              ? `, the newest ${String(ACTIVITY_LOG_QUERY.max)} by seq`
-              : '');
+          // The count is STATED rather than left to be discovered.
+          const count = `${visible.length} of ${rows.length} loaded`;
+          const mayHaveOlder = live.length >= ACTIVITY_LOG_QUERY.max && !older.exhausted;
           return (
             <>
               <div className="activity__filters">
@@ -255,7 +342,7 @@ export function ActivityLog() {
                     aria-label="Search activity"
                     // The payload is in the haystack, which is the whole point:
                     // an operator hunts for an id, and the id is in there.
-                    placeholder="Search actor, action, target, payload…"
+                    placeholder="Search activity"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
@@ -277,6 +364,7 @@ export function ActivityLog() {
                             zone={zone}
                             names={staffNames}
                             roles={staffRoles}
+                            households={households}
                             open={openIds.has(e._id)}
                             onToggle={() => toggleOpen(e._id)}
                           />
@@ -285,6 +373,9 @@ export function ActivityLog() {
                     </section>
                   ))
                 )}
+                {mayHaveOlder ? (
+                  <OlderEntries state={older} onLoad={() => void loadOlder(rows)} />
+                ) : null}
               </DenPanel>
             </>
           );
@@ -494,39 +585,6 @@ function rowTile(entry: ActivityLogEntry): { glyph: string; tone: IconTileTone }
   return category === null ? { glyph: '·', tone: 'neutral' } : CATEGORY_TILE[category];
 }
 
-/** The mock's `.meta small`: description, actor, target, whichever are on the record. */
-function rowContext(entry: ActivityLogEntry, names: ReadonlyMap<string, string>): string {
-  const parts: string[] = [];
-  // #1747: a stored path reads as words; the entry itself is never rewritten.
-  const raw = str(entry.description);
-  // #1819: a held notice an older server stored as "dispatched" reads as its reason.
-  const description = activityEntryDescription(entry);
-  if (description !== '') parts.push(description);
-  const look = activityIsHouseholdLook(entry);
-  // #1839: a look the server wrote in words already names the Auntie and the
-  // household, so the row adds neither her name again nor the household's id.
-  // A look stored as the bare key names nobody, so it keeps the actor's name.
-  const namedInWords = look && description !== '' && description === raw.trim();
-  // #1592: the actor's name, not their uid, once `listStaff` has answered.
-  const actor = str(entry.actorId).trim();
-  if (look) {
-    // #1839: a look names a person or nobody. The roster's label falls back to
-    // a sign-in email and then the uid, and neither belongs on this row.
-    const who = namedInWords || actor === '' ? '' : (names.get(actor) ?? '').trim();
-    if (who !== '' && !who.includes('@')) parts.push(who);
-    return parts.join(' · ');
-  }
-  if (actor !== '') parts.push(names.get(actor) ?? actor);
-  // #1905: a notification row ends with its sentence, not a database path.
-  if (!activityRowShowsTarget(entry)) return parts.join(' · ');
-  const targetId = str(entry.targetId).trim();
-  const targetCollection = str(entry.targetCollection).trim();
-  if (targetId !== '' && targetCollection !== '') parts.push(`${targetCollection}/${targetId}`);
-  else if (targetId !== '') parts.push(targetId);
-  else if (targetCollection !== '') parts.push(targetCollection);
-  return parts.join(' · ');
-}
-
 /**
  * One entry. Collapsed it is the mock's row; opened it is the full sealed
  * record.
@@ -544,6 +602,7 @@ function ActivityRow({
   zone,
   names,
   roles,
+  households,
   open,
   onToggle,
 }: {
@@ -551,15 +610,16 @@ function ActivityRow({
   zone: string;
   names: ReadonlyMap<string, string>;
   roles: ReadonlyMap<string, StaffRole>;
+  households: ReadonlyMap<string, string>;
   open: boolean;
   onToggle: () => void;
 }) {
   const detailId = `log-detail-${entry._id}`;
-  const detail = activityDetailRows(entry, zone, names, roles);
+  const detail = activityDetailRows(entry, zone, names, roles, households);
   const chain = activityChainRows(entry);
-  const payload = activityPayloadRows(entry);
+  const payload = activityPayloadRows(entry, zone);
   const tile = rowTile(entry);
-  const context = rowContext(entry, names);
+  const context = activityRowContext(entry, names, roles);
   const timestamp = str(entry.timestamp);
   const clock = activityWhen(timestamp, zone)?.clock ?? '';
   // A row can carry a seq but no entryHash; slicing that undefined would blank
@@ -582,9 +642,6 @@ function ActivityRow({
         <span className="activity__meta">
           <span>
             <b className="activity__title">{activityEntryTitle(entry)}</b>
-            {activityEntryShowsCode(entry) ? (
-              <code className="activity__code">{entry.actionType}</code>
-            ) : null}
           </span>
           {context !== '' ? <small className="activity__ctx">{context}</small> : null}
         </span>
@@ -614,7 +671,7 @@ function ActivityRow({
             // Stated, not omitted: an entry whose writer recorded no specifics
             // is a fact about the writer, and hiding the section would read as
             // "this screen has nothing more to show" instead.
-            <EmptyHint>This entry was written with no payload.</EmptyHint>
+            <EmptyHint>Nothing more was recorded.</EmptyHint>
           ) : (
             <ActivityFieldList rows={payload} mono />
           )}

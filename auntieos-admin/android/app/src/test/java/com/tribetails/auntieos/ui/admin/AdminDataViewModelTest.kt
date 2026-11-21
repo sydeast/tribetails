@@ -345,6 +345,83 @@ class AdminDataViewModelTest {
         assertNotNull(vm.error.value)
     }
 
+    // ─── #1880: older Activity Log entries ────────────────────────────────────
+
+    private fun page(from: Long, n: Int) = (0 until n).map { i ->
+        ActivityLogEntry(
+            id = "e${from - i}",
+            timestamp = "2026-05-01T09:%02d:%02d".format(((from - i) / 60) % 60, (from - i) % 60),
+            actionType = "LOGIN",
+        ).apply { seq = from - i }
+    }
+
+    @Test
+    fun `loadOlderActivityLog reads below the oldest entry and appends the page`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getActivityLog() } returns Result.success(page(1059, 100))
+        coEvery { mockRepo.getOlderActivityLog(960, any()) } returns Result.success(page(959, 100))
+
+        val vm = buildViewModel()
+        vm.loadActivityLog()
+        advanceUntilIdle()
+        assertFalse(vm.olderActivity.value.exhausted)
+        vm.loadOlderActivityLog()
+        advanceUntilIdle()
+
+        assertEquals(200, vm.activityLog.value.size)
+        assertEquals(200, vm.activityLog.value.map { it.id }.toSet().size)
+        assertFalse(vm.olderActivity.value.loading)
+        assertNull(vm.olderActivity.value.error)
+        assertFalse(vm.olderActivity.value.exhausted)
+        coVerify(exactly = 1) { mockRepo.getOlderActivityLog(960, any()) }
+    }
+
+    @Test
+    fun `loadOlderActivityLog stops once a page comes back short`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getActivityLog() } returns Result.success(page(150, 100))
+        coEvery { mockRepo.getOlderActivityLog(51, any()) } returns Result.success(page(50, 50))
+
+        val vm = buildViewModel()
+        vm.loadActivityLog()
+        advanceUntilIdle()
+        vm.loadOlderActivityLog()
+        advanceUntilIdle()
+        assertTrue(vm.olderActivity.value.exhausted)
+        vm.loadOlderActivityLog()
+        advanceUntilIdle()
+
+        assertEquals(150, vm.activityLog.value.size)
+        coVerify(exactly = 1) { mockRepo.getOlderActivityLog(any(), any()) }
+    }
+
+    @Test
+    fun `loadOlderActivityLog keeps the rows and says why when the read fails`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getActivityLog() } returns Result.success(page(500, 100))
+        coEvery { mockRepo.getOlderActivityLog(401, any()) } returns Result.failure(RuntimeException("unavailable"))
+
+        val vm = buildViewModel()
+        vm.loadActivityLog()
+        advanceUntilIdle()
+        vm.loadOlderActivityLog()
+        advanceUntilIdle()
+
+        assertEquals(100, vm.activityLog.value.size)
+        assertEquals("unavailable", vm.olderActivity.value.error)
+        assertFalse(vm.olderActivity.value.loading)
+    }
+
+    @Test
+    fun `a short first page has nothing older to offer`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getActivityLog() } returns Result.success(page(12, 12))
+
+        val vm = buildViewModel()
+        vm.loadActivityLog()
+        advanceUntilIdle()
+
+        assertTrue(vm.olderActivity.value.exhausted)
+        assertFalse(showsLoadOlder(vm.activityLog.value.size, vm.olderActivity.value))
+        assertTrue(showsLoadOlder(100, OlderActivityState()))
+    }
+
     // ─── loadNotifications ────────────────────────────────────────────────────
 
     @Test

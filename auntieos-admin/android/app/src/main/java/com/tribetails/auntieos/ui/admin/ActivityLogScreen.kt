@@ -132,10 +132,14 @@ fun ActivityLogScreen(
     val zoneId by viewModel.businessTimeZone.collectAsState()
     val zone = remember(zoneId) { businessZone(zoneId) }
     val chainVerify by viewModel.chainVerify.collectAsState()
+    val older by viewModel.olderActivity.collectAsState()
     var staff by remember { mutableStateOf<List<StaffMember>>(emptyList()) }
     LaunchedEffect(Unit) { staff = loadStaff() }
     val staffNames = remember(staff) { staffNamesByUid(staff) }
     val staffRoles = remember(staff) { staffRolesByUid(staff) }
+    // #1818: the household by name on an opened entry, never its id.
+    val directory by viewModel.kinfolkDirectory.collectAsState()
+    val households = remember(directory) { householdNamesById(directory) }
 
     // Verify on arrival as well as on demand: the mock's badge reads "Chain
     // verified" the moment the screen opens, and web has verified on mount
@@ -144,6 +148,7 @@ fun ActivityLogScreen(
     LaunchedEffect(Unit) {
         viewModel.loadActivityLog()
         viewModel.verifyChain()
+        viewModel.loadKinfolkDirectory()
     }
 
     var filter by remember { mutableStateOf(ActivityFilter.All) }
@@ -152,7 +157,14 @@ fun ActivityLogScreen(
     var selectedEntry by remember { mutableStateOf<ActivityLogEntry?>(null) }
 
     selectedEntry?.let { entry ->
-        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null }, names = staffNames, roles = staffRoles)
+        ActivityDetailModal(
+            entry = entry,
+            zone = zone,
+            onDismiss = { selectedEntry = null },
+            names = staffNames,
+            roles = staffRoles,
+            households = households,
+        )
     }
 
     AuntieScreenScaffold(title = "Activity Log", onBack = onBack) {
@@ -194,7 +206,7 @@ fun ActivityLogScreen(
                 AuntieSearchField(
                     value         = query,
                     onValueChange = { query = it },
-                    placeholder   = "Search actor, action, target",
+                    placeholder   = "Search activity",
                     onClear       = { query = "" },
                     modifier      = Modifier.fillMaxWidth(),
                 )
@@ -208,6 +220,9 @@ fun ActivityLogScreen(
                     zone               = zone,
                     onRowClick         = { selectedEntry = it },
                     staffNames         = staffNames,
+                    staffRoles         = staffRoles,
+                    older              = older,
+                    onLoadOlder        = { viewModel.loadOlderActivityLog() },
                 )
             }
         }
@@ -223,6 +238,9 @@ private fun LogPanel(
     zone: ZoneId,
     onRowClick: (ActivityLogEntry) -> Unit,
     staffNames: Map<String, String> = emptyMap(),
+    staffRoles: Map<String, String> = emptyMap(),
+    older: OlderActivityState = OlderActivityState(exhausted = true),
+    onLoadOlder: () -> Unit = {},
 ) {
     // The mock's `.log`: one glass panel with no title, rows running edge to
     // edge, so this is the kit surface rather than a DenPanel with a heading
@@ -284,8 +302,9 @@ private fun LogPanel(
 
             grouped.forEach { (dateIso, dayEntries) ->
                 DaySeparator(label = relativeDayLabel(dateIso, todayKey, yesterdayKey))
-                dayEntries.forEach { entry -> ActivityRow(entry, zone = zone, names = staffNames, onClick = { onRowClick(entry) }) }
+                dayEntries.forEach { entry -> ActivityRow(entry, zone = zone, names = staffNames, roles = staffRoles, onClick = { onRowClick(entry) }) }
             }
+            if (showsLoadOlder(all.size, older)) OlderEntries(older, onLoadOlder)
         }
     }
 }
@@ -437,6 +456,40 @@ private fun FilterChipRow(selected: ActivityFilter, onSelect: (ActivityFilter) -
     }
 }
 
+/** #1880: the words, shared with the tests. */
+internal const val LOAD_OLDER_LABEL = "Load older entries"
+internal const val LOADING_OLDER_LABEL = "Loading older entries…"
+internal const val OLDER_FAILED = "Couldn't load older entries"
+/** #1880: the way to the older entries shows under a full first page until a page comes back short. */
+internal fun showsLoadOlder(loaded: Int, older: OlderActivityState): Boolean =
+    loaded >= com.tribetails.auntieos.data.repository.ACTIVITY_LOG_PAGE && !older.exhausted
+/** #1880: the way to the entries below the newest page, with its wait and its failure. */
+@Composable
+internal fun OlderEntries(state: OlderActivityState, onLoad: () -> Unit) {
+    val c = AuntieTheme.colors
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when {
+            state.loading -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                AuntieSpinner(modifier = Modifier.size(16.dp))
+                Text(LOADING_OLDER_LABEL, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+            state.error != null -> {
+                AuntieBanner(tone = AuntieBannerTone.Error, title = OLDER_FAILED, icon = Lucide.TriangleAlert) {
+                    Text(state.error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+                GhostButton(label = "Try again", onClick = onLoad)
+            }
+            else -> GhostButton(label = LOAD_OLDER_LABEL, onClick = onLoad)
+        }
+    }
+}
 /** The mock's `.daysep`: mono, uppercase, letter-spaced, dim, at the log's edge padding. */
 @Composable
 private fun DaySeparator(label: String) {
@@ -477,8 +530,9 @@ private fun ActivityDetailModal(
     onDismiss: () -> Unit,
     names: Map<String, String> = emptyMap(),
     roles: Map<String, String> = emptyMap(),
+    households: Map<String, String> = emptyMap(),
 ) {
-    val payload = activityPayloadRows(entry)
+    val payload = activityPayloadRows(entry, zone)
     val chain = activityChainRows(entry)
     AuntieModal(
         onDismissRequest = onDismiss,
@@ -486,7 +540,7 @@ private fun ActivityDetailModal(
         confirmButton = { GhostButton(label = "Close", onClick = onDismiss) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            activityDetailRows(entry, zone, names, roles).forEach { (label, value) -> DetailKv(label, value) }
+            activityDetailRows(entry, zone, names, roles, households).forEach { (label, value) -> DetailKv(label, value) }
 
             DetailSectionHeading("What happened")
             if (payload.isEmpty()) {
@@ -494,7 +548,7 @@ private fun ActivityDetailModal(
                 // specifics is a fact about the writer, and a vanished section
                 // would read as "this screen has nothing more to show".
                 Text(
-                    "This entry was written with no payload.",
+                    "Nothing more was recorded.",
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
@@ -571,42 +625,44 @@ private fun DetailKv(label: String, value: String, mono: Boolean = false) {
 internal fun activityDetailRows(
     entry: ActivityLogEntry,
     zone: ZoneId = businessZone(null),
-    /** uid -> name (`listStaff`), #1592. A uid it does not know shows as it is. */
+    /** uid -> name (`listStaff`), #1592. Only a real name is shown, never an email or a uid. */
     names: Map<String, String> = emptyMap(),
     /** uid -> "owner" | "auntie" (`listStaff`), #1820. See [actorRoleFor]. */
     roles: Map<String, String> = emptyMap(),
+    /** household id -> name, #1818. A household it does not hold is left out. */
+    households: Map<String, String> = emptyMap(),
 ): List<Pair<String, String>> {
     val rows = mutableListOf<Pair<String, String>>()
     fun add(label: String, value: String) {
         if (value.isNotBlank()) rows += label to value.trim()
     }
-    add("When", entry.timestamp)
-    // The stored stamp is UTC; the row reads in the business zone (#1585). Both
-    // are shown so the two can be reconciled without doing the sum.
-    activityWhen(entry.timestamp, zone)?.let { add("Business time", "${it.dayKey} ${it.clock}") }
-    add("Action", entry.actionType)
+    // #1818: one readable time, in the business zone (#1585). The raw UTC stamp,
+    // the stored key, the actor's uid, the household's id, the target's path
+    // and the request ids stay on the sealed entry, and search still finds them.
+    add("When", activityWhen(entry.timestamp, zone)?.let(::activityWhenWords).orEmpty())
     add("Status", activityStatusWords(entry))
-    add("Severity", entry.severity)
-    // #1592: the person by name; the uid stays beside it on the opened record,
-    // because this is the evidence log and the uid is what the record holds.
-    val actorName = names[entry.actorId.trim()]
-    add("Actor", actorName ?: entry.actorId)
-    if (actorName != null) add("Actor id", entry.actorId)
+    add("Severity", severityWords(entry.severity))
+    add("Actor", activityActorName(entry, names))
     add("Actor role", actorRoleFor(entry.actorRole, entry.actorId, entry.payload, roles))
-    add("Household", entry.familyId)
+    add("Household", households[entry.familyId.trim()].orEmpty())
     // #1747: a stored path reads as words; the entry itself is never rewritten.
     add("Detail", activityEntryDescription(entry))
-    // A path, not a link. Where no route exists the path is still the most useful
-    // thing that can honestly be shown (spec 22 item 1: "render the path
-    // read-only, do not fabricate a link").
-    if (entry.targetId.isNotBlank()) {
-        add("Target", "${entry.targetCollection.ifBlank { "target" }}/${entry.targetId}")
-    }
-    add("Request", entry.requestId)
-    add("Client request", entry.clientRequestId)
     add("IP", entry.ip)
     add("User agent", entry.userAgent)
     return rows
+}
+
+/** `Nov 11, 2026, 11:33a`: an entry's time as the opened entry reads it (#1818). */
+internal fun activityWhenWords(w: ActivityWhen): String {
+    val month = MONTHS.getOrNull(w.dayKey.substring(5, 7).toInt() - 1) ?: w.dayKey.substring(5, 7)
+    val day = w.dayKey.substring(8, 10).toInt()
+    return "$month $day, ${w.dayKey.take(4)}, ${w.clock}"
+}
+
+private val SEVERITY_WORDS = mapOf("info" to "Info", "warn" to "Warning", "critical" to "Critical")
+private fun severityWords(raw: String): String {
+    val s = raw.trim().lowercase()
+    return if (s.isEmpty()) "" else SEVERITY_WORDS[s] ?: brandWords(s)
 }
 
 /**
@@ -634,38 +690,75 @@ internal fun activityChainRows(entry: ActivityLogEntry): List<Pair<String, Strin
  * already sorts these keys at write time because the hash is computed over the
  * canonical form, so the order is stable on the wire too. Pure; unit-tested.
  */
-internal fun activityPayloadRows(entry: ActivityLogEntry): List<Pair<String, String>> {
+internal fun activityPayloadRows(
+    entry: ActivityLogEntry,
+    zone: ZoneId = businessZone(null),
+): List<Pair<String, String>> {
     val out = mutableListOf<Pair<String, String>>()
 
     fun renderScalar(v: Any?): String = when (v) {
         // A recorded null is a decision the writer made; blanking it hides that.
         // It reads as the word "none", not the literal "null" (#1592).
         null -> "none"
-        is String -> v
-        is Number, is Boolean -> v.toString()
+        is String -> payloadValueWords(v, zone)
+        is Boolean -> if (v) "yes" else "no"
+        is Number -> v.toString()
         else -> v.toString()
     }
 
-    fun walk(value: Any?, path: String) {
+    fun walk(value: Any?, path: String, leaf: String) {
+        // #1818: an id, a stored key, a hash or a path is not shown. It stays on
+        // the sealed entry, and the search box still finds the row by it.
+        if (isHiddenPayloadKey(leaf)) return
         when (value) {
-            // Arrays render on one line: an audit payload's lists are short
-            // (channel names, ids), and exploding them into `channels.0` /
-            // `channels.1` buries the fact that they are one field.
-            is List<*> -> out += path to value.joinToString(", ") { renderScalar(it) }
-            is Map<*, *> -> {
-                val keys = value.keys.map { it.toString() }.sorted()
-                // An empty nested map is reported rather than dropped: "present
-                // and empty" differs from "absent", and in an audit trail that
-                // difference can matter.
-                if (keys.isEmpty()) out += path to "{}"
-                else keys.forEach { k -> walk(value[k], if (path.isEmpty()) k else "$path.$k") }
+            // Arrays render on one line: an audit payload's lists are short.
+            is List<*> -> {
+                val items = value.map { renderScalar(it) }.filter { it.isNotEmpty() && !looksLikeId(it) }
+                if (items.isNotEmpty()) out += payloadLabel(path) to items.joinToString(", ")
             }
-            else -> out += path to renderScalar(value)
+            is Map<*, *> -> value.keys.map { it.toString() }.sorted()
+                .forEach { k -> walk(value[k], if (path.isEmpty()) k else "$path.$k", k) }
+            else -> {
+                val text = renderScalar(value)
+                if (text.isNotEmpty() && !looksLikeId(text)) out += payloadLabel(path) to text
+            }
         }
     }
 
-    entry.payload.keys.sorted().forEach { k -> walk(entry.payload[k], k) }
+    entry.payload.keys.sorted().forEach { k -> walk(entry.payload[k], k, k) }
     return out
+}
+
+/** `affectedVisits` reads "Affected visits"; `result.scanned` reads "Result scanned". */
+internal fun payloadLabel(path: String): String =
+    brandWords(path.replace(Regex("([a-z0-9])([A-Z])"), "$1 $2"))
+
+private val HIDDEN_KEY_SUFFIX = Regex("(?:^|[a-z0-9])(?:Id|Ids|Uid|Uids|Key|Keys|Hash|Path)$")
+private val HIDDEN_KEYS = setOf("id", "ids", "uid", "uids", "key", "keys", "hash", "path", "admin", "staffrole", "code")
+
+/** A key whose value is an id, a stored key, a hash or a database path (#1818). */
+internal fun isHiddenPayloadKey(key: String): Boolean =
+    HIDDEN_KEY_SUFFIX.containsMatchIn(key) || key.lowercase() in HIDDEN_KEYS
+
+/** A value that is an id or a path rather than words (#1818). */
+internal fun looksLikeId(text: String): Boolean {
+    val t = text.trim()
+    if (t.any { it.isWhitespace() }) return false
+    if (Regex("^[A-Za-z]{2,6}_[A-Za-z0-9_-]{8,}$").matches(t)) return true
+    if (Regex("^[A-Za-z0-9_-]{16,}$").matches(t) && t.any { it.isDigit() } && t.any { it.isLetter() }) return true
+    return Regex("^[\\w-]+(?:/[\\w-]+)+$").matches(t)
+}
+
+/** A stored value in words: a time in the business zone, a stored status or key as words (#1818). */
+internal fun payloadValueWords(raw: String, zone: ZoneId): String {
+    val t = raw.trim()
+    if (Regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}.*").matches(t)) {
+        activityWhen(t, zone)?.let { return activityWhenWords(it) }
+    }
+    if (Regex("^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[A-Z]{3,}$").matches(t)) return brandWords(t)
+    if (Regex("^[a-z]+(?:\\.[a-z_]+)+$").matches(t)) return brandWords(t)
+    if (Regex("^[a-z]+(?:_[a-z]+)+$").matches(t)) return brandWords(t)
+    return raw
 }
 
 /**
@@ -684,13 +777,14 @@ internal fun ActivityRow(
     onClick: () -> Unit,
     zone: ZoneId = businessZone(null),
     names: Map<String, String> = emptyMap(),
+    roles: Map<String, String> = emptyMap(),
 ) {
     val c = AuntieTheme.colors
     val tone = rowTone(entry.actionType, entry.status)
 
     AuntieEntityRow(
         title    = activityEntryTitle(entry),
-        subtitle = rowContext(entry, names).ifBlank { null },
+        subtitle = rowContext(entry, names, roles).ifBlank { null },
         onClick  = onClick,
         modifier = Modifier.padding(horizontal = 8.dp),
         leading = {
@@ -711,18 +805,7 @@ internal fun ActivityRow(
                 )
             }
         },
-        supporting = {
-            // The mock sets the raw code beside the title; on a phone it goes
-            // under it, still in the mono the mock gives it. A kind with a plain
-            // title (#1839) shows no code.
-            if (activityEntryShowsCode(entry)) {
-                Text(
-                    text  = entry.actionType,
-                    style = AuntieTheme.typography.mono.copy(fontSize = 10.sp, letterSpacing = 0.4.sp),
-                    color = c.textDim,
-                )
-            }
-        },
+        // #1818: no stored key under the title. The title says it in words.
         trailing = { SeqColumn(seq = entry.seq, entryHash = entry.entryHash) },
     )
 }
@@ -814,44 +897,68 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
         entry.targetId,
         entry.targetCollection,
         entry.status,
+        entry.familyId,
+        // #1818: the ids the screen no longer shows still find their row.
+        entry.payload.toString(),
     ).joinToString(" ").lowercase()
     return hay.contains(q.lowercase())
 }
 
-/** Actor + target context line built only from real fields. */
-internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = emptyMap()): String {
-    val look = isHouseholdLook(entry.actionType)
-    val parts = buildList {
-        // #1747: a stored path reads as words; the entry itself is never rewritten.
-        // #1819: a held notice an older server stored as "dispatched" reads as its reason.
-        val words = activityEntryDescription(entry)
-        if (words.isNotBlank()) add(words)
+/**
+ * The collapsed row's grey line (#1818): the sentence, then who did it. No
+ * database path, no id, no email. A sentence that only repeats the title is
+ * left off; a stored "<KEY> uid=<id>" reads as nothing for the same reason.
+ */
+internal fun rowContext(
+    entry: ActivityLogEntry,
+    names: Map<String, String> = emptyMap(),
+    roles: Map<String, String> = emptyMap(),
+): String {
+    val parts = mutableListOf<String>()
+    val words = activityEntryDescription(entry).trim()
+    val title = activityEntryTitle(entry).trim()
+    if (words.isNotEmpty() && !words.equals(title, ignoreCase = true)) parts += words
+    if (isHouseholdLook(entry.actionType)) {
         // #1839: a look the server wrote in words already names the Auntie and
-        // the household, so the row adds neither her name again nor the
-        // household's id. A look stored as the bare key keeps the actor's name.
-        val namedInWords = look && words.isNotBlank() && words == entry.description.trim()
-        // #1592: the actor's name, not their uid, once `listStaff` has answered.
-        if (look) {
-            // #1839: a look names a person or nobody. The roster's label falls
-            // back to a sign-in email and the row to the uid; neither belongs here.
-            val who = if (namedInWords || entry.actorId.isBlank()) "" else names[entry.actorId.trim()].orEmpty().trim()
-            if (who.isNotEmpty() && '@' !in who) add(who)
-            return@buildList
-        }
-        if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
-        // #1905: a notification row ends with its sentence, not a database path.
-        if (!activityRowShowsTarget(entry)) return@buildList
-        val target = when {
-            entry.targetCollection.isNotBlank() && entry.targetId.isNotBlank() ->
-                "${entry.targetCollection}/${entry.targetId}"
-            entry.targetId.isNotBlank() -> entry.targetId
-            entry.targetCollection.isNotBlank() -> entry.targetCollection
-            else -> ""
-        }
-        if (target.isNotBlank()) add(target)
+        // the household. A look stored as the bare key keeps the name.
+        val namedInWords = words.isNotEmpty() && words == entry.description.trim()
+        val who = if (namedInWords) "" else activityActorName(entry, names)
+        if (who.isNotEmpty()) parts += who
+        return parts.joinToString(" · ")
     }
+    val who = activityActorWords(entry, names, roles)
+    if (who.isNotEmpty()) parts += who
     return parts.joinToString(" · ")
 }
+
+/**
+ * #1818: the actor's name, or nothing. The roster's label falls back to a
+ * sign-in email and then the uid, and neither belongs on screen.
+ */
+internal fun activityActorName(entry: ActivityLogEntry, names: Map<String, String>): String {
+    val actor = entry.actorId.trim()
+    if (actor.isEmpty()) return ""
+    val name = names[actor].orEmpty().trim()
+    return if (name.isEmpty() || name == actor || '@' in name) "" else name
+}
+
+/** #1818: the person's name, or the role they held when the roster has no name for them. Never an id. */
+internal fun activityActorWords(
+    entry: ActivityLogEntry,
+    names: Map<String, String>,
+    roles: Map<String, String> = emptyMap(),
+): String {
+    val name = activityActorName(entry, names)
+    if (name.isNotEmpty()) return name
+    if (entry.actorId.isBlank() && entry.actorRole.isBlank()) return ""
+    return actorRoleFor(entry.actorRole, entry.actorId, entry.payload, roles)
+}
+
+/** Household id to name, real names only (#1818). */
+internal fun householdNamesById(directory: List<com.tribetails.auntieos.data.model.Kinfolk>): Map<String, String> =
+    directory
+        .filter { it.firstName.isNotBlank() || it.lastName.isNotBlank() }
+        .associate { it.id to it.displayName }
 
 /**
  * The row tile's tone. A failure is the error tone whatever its kind; a look at
@@ -900,10 +1007,8 @@ private fun actionIcon(actionType: String, status: String): ImageVector {
     }
 }
 
-internal fun humanizeAction(actionType: String): String {
-    val lower = actionType.lowercase().replace('_', ' ').trim()
-    return if (lower.isEmpty()) "Event" else lower.replaceFirstChar { it.uppercaseChar() }
-}
+/** `KINCARE_ARRIVED` reads "KinCare arrived": brand words in their casing (#1881). */
+internal fun humanizeAction(actionType: String): String = brandWords(actionType).ifEmpty { "Event" }
 
 
 /**
@@ -917,13 +1022,12 @@ internal const val HOUSEHOLD_LOOK_TITLE = "Household opened"
 
 internal fun isHouseholdLook(actionType: String): Boolean = actionType.trim().uppercase() == HOUSEHOLD_LOOK_ACTION
 
-/** The row's bold line: a plain title where one exists (#1839), else the humanized key. */
-internal fun activityTitle(actionType: String): String =
-    if (isHouseholdLook(actionType)) HOUSEHOLD_LOOK_TITLE else humanizeAction(actionType)
-
-/** Whether the row prints the stored key with its title. False for a kind with a plain title. */
-internal fun activityShowsCode(actionType: String): Boolean =
-    actionType.isNotBlank() && activityTitle(actionType) == humanizeAction(actionType)
+/**
+ * The row's bold line: the kind's plain title, or its key in words (#1818,
+ * #1881). The stored key itself is never on screen. Same rule as the web and
+ * the desktop console.
+ */
+internal fun activityTitle(actionType: String): String = activityTitleWords(actionType)
 
 /** True when [iso] looks like a parseable ISO-8601 date-time (at least yyyy-MM-dd). */
 private fun isParseableTimestamp(iso: String): Boolean = runCatching {

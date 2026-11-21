@@ -967,7 +967,8 @@ describe('#2345: a card payment on an invoice that cannot take it is held for th
     expect(docs['payments/evt_cs_1']!.needsAdminDecision).toBeUndefined();
     expect(paidLines()).toHaveLength(1);
     expect(paidLines()[0]![0].severity).toBe('info');
-    expect(paidLines()[0]![0].description).toBeUndefined();
+    // #1818: the ordinary line names the invoice in words, never the stored key.
+    expect(paidLines()[0]![0].description).toBe('Invoice 1029 paid by card');
     expect(paidLines()[0]![0].payload.cardApplyFallback).toBeUndefined();
     expect(notices('invoice.payment.applied')).toHaveLength(1);
   });
@@ -978,7 +979,7 @@ describe('#2345: a card payment on an invoice that cannot take it is held for th
     expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0, paidCents: 4000 });
     expect(docs['payments/evt_cs_1']!.needsAdminDecision).toBeUndefined();
     expect(paidLines()[0]![0].severity).toBe('info');
-    expect(paidLines()[0]![0].description).toBeUndefined();
+    expect(paidLines()[0]![0].description).toBe('Invoice 1029 paid by card');
   });
 
   it('a short card payment on an ordinary invoice: applied, and the rest stays owing', async () => {

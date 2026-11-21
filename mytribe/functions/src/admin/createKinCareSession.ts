@@ -366,6 +366,8 @@ export async function createKinCareSessionHandler(
     severity: 'info',
     actorRole: 'AUNTIE',
     actorUid: uid,
+    // #1818: words. With none the line read "CREATE_KINCARE_SESSION uid=<id>".
+    description: (await import('../lib/activityWords.js')).visitCreatedWords(backdated),
     payload: {
       sessionId: ref.id,
       kinfolkId: args.kinfolkId,
