@@ -6,7 +6,6 @@ import {
   formatRevenue,
   mondayOfWeekIso,
   pendingDraftCount,
-  pendingTaleRows,
   todayPack,
   weeklyRevenue,
 } from '../../lib/dashboardInsights';
@@ -145,14 +144,18 @@ function RevenueStatCard({
 }
 
 /**
- * "3 recent drafts", or nothing at all while the stream is not ready.
+ * What the big number counts, or nothing at all while the stream is not ready.
+ *
+ * #1850: this used to read "4 recent drafts" under a 12. The 4 was how many rows
+ * KinTales pending draws (it shows the newest four), not anything this card
+ * counts, so the card and the list below it disagreed. The line now says what
+ * the number is, and KinTales pending says when it is showing fewer.
  *
  * Returned blank rather than guessed, because `StatCard` renders a trend ONLY
  * beside a real value; a sentence composed from data nobody read would be the
  * second half of the bug the value guard above closes.
  */
-function trendForDrafts(drafts: Async<GeneratedDraftRow[]>): string {
+export function trendForDrafts(drafts: Async<GeneratedDraftRow[]>): string {
   if (drafts.status !== 'ready') return '';
-  const shown = pendingTaleRows(drafts.data, 4).length;
-  return `${String(shown)} recent draft${shown === 1 ? '' : 's'}`;
+  return pendingDraftCount(drafts.data) === 0 ? 'all caught up' : 'drafts waiting to send';
 }
