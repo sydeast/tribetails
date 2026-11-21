@@ -33,7 +33,8 @@
 const MARKER = /sample-names/giu;
 const BLOCK = /<!--[ \t]*sample-names[ \t]*\r?\n([\s\S]*?)-->[ \t]*(?:\r?\n)?/giu;
 const PLACEHOLDER_LABEL = { kin: 'Kin', kinfolk: 'Kinfolk', auntie: 'Auntie' };
-const PLACEHOLDER = /\[(?:Kin|Kinfolk|Auntie)(?: \d+)?\]/;
+// #2424: the office's own writing adds [Name] and the contact-detail tokens.
+const PLACEHOLDER = /\[(?:Kin|Kinfolk|Auntie|Name|email|phone|link|address|number)(?: \d+)?\]/;
 const APOSTROPHES = /['’‘ʼ]/gu;
 // What a declared name may be written with. A comma, a bracket, a quote mark or
 // a note after the name would make one "name" that matches nothing, and the
