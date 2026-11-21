@@ -134,7 +134,11 @@ const NAME_JOINERS = new Set([
   'de', 'del', 'la', 'le', 'van', 'von', 'der', 'den', 'da', 'di', 'du', 'st', 'mc',
 ]);
 function addNames(roster, role, texts) {
-  for (const raw of texts) {
+  // One field can hold two people ("A & B", "A and B", "A/B"): each part is a
+  // name of its own.
+  // An email address is not a name: the contact patterns replace it whole.
+  const parts = texts.filter((raw) => !String(raw || '').includes('@')).flatMap((raw) => tidy(raw).split(/[^\p{L}\p{M}\s'’‘ʼ.-]+|\s+and\s+/iu));
+  for (const raw of parts) {
     const text = tidy(raw).replace(/\s+/gu, ' ').trim();
     if (text.length < 2 || !NAME_TEXT.test(text)) continue;
     const words = text.split(' ').filter((w) => !NAME_JOINERS.has(fold(w)));
@@ -179,6 +183,11 @@ async function readTribeRoster(db) {
 // ---- 3. words nothing vouches for -----------------------------------------
 
 const WORD = /[\p{L}][\p{L}\p{M}'’‘ʼ]*/gu;
+
+/** True when the text before a word ends a sentence or a line, or is empty. */
+function atSentenceStart(before) {
+  return /(?:^\s*|[.!?:;]["'”’)\]]*\s+|\n\s*|["“‘(]\s*)$/u.test(before);
+}
 
 /** The lowercase words of `texts`: a word written in lowercase is an everyday word. */
 function lowercaseWords(texts) {
@@ -231,13 +240,16 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
       return placeholderFor(entry) + (groups[entries.length] || '');
     });
   }
-  // Capitalised words nothing vouches for.
+  // Capitalised words nothing vouches for. Mid-sentence a capital is taken as
+  // a name unless the word is always a word; at the start of a sentence an
+  // everyday word keeps its capital.
   out = out.replace(WORD, (word, offset, whole) => {
     if (word.charAt(0) === word.charAt(0).toLowerCase()) return word;
     const key = fold(word).replace(/'s$/u, '');
-    if (ALWAYS_WORDS.has(key) || vocabulary.has(key)) return word;
+    if (ALWAYS_WORDS.has(key)) return word;
     // A placeholder is already in brackets.
     if (whole.charAt(offset - 1) === '[') return word;
+    if (atSentenceStart(whole.slice(0, offset)) && vocabulary.has(key)) return word;
     return '[Name]';
   });
   out = out.replace(/\[Name\](?:\s+\[Name\])+/gu, '[Name]');
@@ -248,6 +260,22 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
   }
   if (hasIdentifier(out.replace(/\[(?:email|phone|link|address|number)\]/gu, ''))) return null;
   return out;
+}
+
+/**
+ * An email body without what it quotes: lines starting with ">" and
+ * everything from the line that introduces a quoted message. The quoted part
+ * is the household's writing, never the office's.
+ */
+function withoutQuotedReply(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (/^On\b.*\bwrote:?$/iu.test(t) || /^-{2,}\s*(?:Original|Forwarded) Message/iu.test(t) || /^From:\s/iu.test(t)) break;
+    if (t.startsWith('>')) continue;
+    out.push(line);
+  }
+  return out.join('\n').trim();
 }
 
 /** Text without markup, entities decoded, spaces tidied. */
@@ -305,7 +333,7 @@ async function readCandidates(db) {
       .map((m) => ({ kind: 'text_reply', text: plainText(m.body), at: Date.parse(m.timestamp) || 0, names: [m.kinfolkName] }))),
     optional('emails', async () => (await rowsOf(db.collection('emails').orderBy('timestamp', 'desc').limit(200)))
       .filter((m) => m.direction === 'outbound')
-      .map((m) => ({ kind: 'email', text: plainText(m.body || m.bodyHtml), at: Date.parse(m.timestamp) || 0, names: [m.kinfolkName] }))),
+      .map((m) => ({ kind: 'email', text: withoutQuotedReply(plainText(m.body || m.bodyHtml)), at: Date.parse(m.timestamp) || 0, names: [m.kinfolkName] }))),
     optional('kintales', async () => (await rowsOf(db.collection('kin_care_reports').orderBy('createdAt', 'desc').limit(100)))
       .filter((t) => String(t.status || '').toUpperCase() === 'SENT'
         && !textOf(t.sourceDraftId)
@@ -400,35 +428,47 @@ async function buildOwnWriting(db, voiceText) {
 }
 
 let _cache = null;
+let _building = null;
+const EMPTY = Object.freeze({ text: '', names: [], vocabulary: new Set() });
 
-/** The set for this instance, built at most once in CACHE_MS and bounded in time. */
+/**
+ * The set for this instance, built at most once in CACHE_MS. One build runs
+ * at a time. A request waits for it at most BUILD_BUDGET_MS and then goes
+ * without; the build keeps going and fills the cache for the next request.
+ */
 async function loadOwnWriting(db, voiceText, now = Date.now) {
   if (_cache && now() < _cache.until) return _cache.value;
-  const empty = { text: '', names: [], vocabulary: new Set() };
-  // A set that failed to build is tried again in a minute, not in ten.
+  if (!_building) {
+    _building = buildOwnWriting(db, voiceText)
+      .catch(() => null)
+      .then((value) => {
+        // A set that failed to build is tried again in a minute, not in ten.
+        _cache = value === null
+          ? { value: EMPTY, until: now() + FAILED_CACHE_MS }
+          : { value, until: now() + CACHE_MS };
+        _building = null;
+        return _cache.value;
+      });
+  }
   let timer;
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => resolve(null), BUILD_BUDGET_MS);
   });
-  let value;
   try {
-    value = await Promise.race([buildOwnWriting(db, voiceText), timeout]);
-  } catch (_) {
-    value = null;
+    const value = await Promise.race([_building, timeout]);
+    if (value === null) {
+      console.error('generate: own writing was not ready in time, so none is sent with this request');
+      return EMPTY;
+    }
+    return value;
   } finally {
     clearTimeout(timer);
   }
-  if (value === null) {
-    console.error('generate: own writing could not be built in time, so none is sent');
-    _cache = { value: empty, until: now() + FAILED_CACHE_MS };
-    return empty;
-  }
-  _cache = { value, until: now() + CACHE_MS };
-  return value;
 }
 
 function resetOwnWritingCache() {
   _cache = null;
+  _building = null;
 }
 
 /**
@@ -450,11 +490,9 @@ function tribeNamesIn(draft, names, vocabulary, requestText, carriedNames) {
     const capital = form.charAt(0).toUpperCase() + form.slice(1);
     const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(capital)}(?![\\p{L}\\p{N}])`, 'gu');
     if (new RegExp(pattern.source, 'u').test(request)) continue;
-    const hits = [...text.matchAll(new RegExp(pattern.source, 'gu'))].filter((m) => {
-      const before = text.slice(0, m.index).replace(/\s+$/u, '');
-      const sentenceStart = before === '' || /[.!?:\n]["'”’)]*$/u.test(before);
-      return !(sentenceStart && vocabulary && vocabulary.has(fold(form)));
-    });
+    const hits = [...text.matchAll(new RegExp(pattern.source, 'gu'))].filter(
+      (m) => !(atSentenceStart(text.slice(0, m.index)) && vocabulary && vocabulary.has(fold(form))),
+    );
     if (hits.length && !found.includes(capital)) found.push(capital);
   }
   return found;
@@ -471,6 +509,8 @@ module.exports = {
   readTribeRoster,
   scrubExample,
   plainText,
+  withoutQuotedReply,
+  atSentenceStart,
   readCandidates,
   buildOwnWriting,
   loadOwnWriting,

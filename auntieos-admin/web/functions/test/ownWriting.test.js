@@ -75,7 +75,7 @@ function tribeData(extra = {}) {
     kinfolk: KINFOLK,
     kin: KIN,
     families: [{ id: 'h1', displayName: 'The Vashti Household' }, { id: 'h2' }],
-    'families/h1/members': [{ id: 'u1', displayName: 'ottoline@example-household.invalid', firstName: 'Otti' }],
+    'families/h1/members': [{ id: 'u1', displayName: 'catch@hanasamku.com', firstName: 'Otti' }],
     'families/h1/secondaryKinfolk': [{ id: 'p1', name: 'Perpetua Vashti' }],
     'families/h2/kin': [{ id: 'fk3', name: 'Sprocket', legacyKinId: 'k3' }],
     clients: [],
@@ -86,7 +86,7 @@ function tribeData(extra = {}) {
       { id: 'h2', kinfolkName: 'Leopold Quince', lastMessageAtMs: 200 },
     ],
     'conversations/h1/messages': [
-      { id: 'm1', senderRole: 'auntie', body: '<p>Hi Ottoline, Marzipan was a sweetheart today and Bramblewick\'s bowl is put away. Call me at (555) 010-2233 or write to tess@example-office.invalid.</p>', createdAtMs: 290 },
+      { id: 'm1', senderRole: 'auntie', body: '<p>Hi Ottoline, Marzipan was a sweetheart today and Bramblewick\'s bowl is put away. Call me at (555) 010-2233 or write to e2e-admin@tribetails.com.</p>', createdAtMs: 290 },
       { id: 'm2', senderRole: 'kinfolk', body: 'Thank you so much, this is the household writing and it never trains the voice at all.', createdAtMs: 280 },
     ],
     'conversations/h2/messages': [
@@ -98,7 +98,7 @@ function tribeData(extra = {}) {
       { id: 't3', direction: 'outbound', body: 'A carrier record with no mirror marker, long enough to count if it were ours.', timestamp: '2026-11-12T10:00:00.000Z' },
     ],
     emails: [
-      { id: 'e1', direction: 'outbound', body: 'Will you leave the spare key with Perpetua? See https://example.invalid/portal for the schedule. Thanks!', kinfolkName: 'Ottoline Vashti', timestamp: '2026-11-09T10:00:00.000Z' },
+      { id: 'e1', direction: 'outbound', body: 'Will you leave the spare key with Perpetua? See https://hanasamku.com/portal for the schedule. Thanks!', kinfolkName: 'Ottoline Vashti', timestamp: '2026-11-09T10:00:00.000Z' },
     ],
     kin_care_reports: [
       { id: 'r1', status: 'SENT', bodyCopy: 'Marzipan met me at the door and we sat in the sun for a while before supper.', kinfolkName: 'Ottoline Vashti', authorDisplayName: 'Wrenna Ashdown', sentAt: '2026-11-08T10:00:00.000Z', createdAt: '2026-11-08T09:00:00.000Z' },
@@ -141,7 +141,7 @@ beforeEach(() => own.resetOwnWritingCache());
 describe('contact details in the office\'s own writing', () => {
   it('emails, phones, links, addresses, long numbers and merge tokens become placeholders', () => {
     const out = own.withoutIdentifiers(
-      'Write to a@example.invalid or call +1 (555) 010-2233, see www.example.invalid/x and example.com, ' +
+      'Write to pawsome@hanasamku.com or call +1 (555) 010-2233, see www.hanasamku.com/x and tribetails.com, ' +
       'we are at 1234 Juniper Hollow Lane, code 48213. Hi {{firstName}}.',
     );
     assert.strictEqual(
@@ -189,6 +189,45 @@ describe('one example made safe', () => {
     const out = own.scrubExample('Tell Hollis I said hi.', roster(), ['Hollis'], vocab, new Map());
     assert.strictEqual(out, 'Tell [Kinfolk] I said hi.');
   });
+  it('mid-sentence, a capital is a name even when the word is an everyday one', () => {
+    // "Rose" is not in the roster; the voice files write "rose" in lowercase.
+    const out = own.scrubExample('The sun rose early. Say hi to Rose for me.', roster(), [], new Set([...vocab, 'rose', 'say']), new Map());
+    assert.strictEqual(out, 'The sun rose early. Say hi to [Name] for me.');
+  });
+  it('at the start of a line an everyday word keeps its capital', () => {
+    const out = own.scrubExample('Hi [Kinfolk],\n\nThe walk was lovely.', roster(), [], vocab, new Map());
+    assert.strictEqual(out, 'Hi [Kinfolk],\n\nThe walk was lovely.');
+  });
+});
+
+describe('the roster', () => {
+  it('a field holding two people gives each of them, and an email is no name', () => {
+    const roster = own.addNames(new Map(), 'kinfolk', ['Ottoline & Leopold Quince', 'Perpetua and Grisholm', 'Corvina/Pell', 'catch@hanasamku.com']);
+    for (const key of ['ottoline', 'leopold', 'quince', 'perpetua', 'grisholm', 'corvina', 'pell']) assert.ok(roster.has(key), key);
+    assert.ok(![...roster.keys()].some((k) => k.includes('catch') || k.includes('hanasamku')));
+  });
+  it('words a household name is built with are not names of their own', () => {
+    const roster = own.addNames(new Map(), 'kinfolk', ['The Vashti Household']);
+    assert.ok(roster.has('vashti') && roster.has('the vashti household'));
+    assert.ok(!roster.has('the') && !roster.has('household'));
+  });
+});
+
+describe('an email\'s quoted reply', () => {
+  it('is cut: quoted lines and everything from the line that introduces them', () => {
+    const body = 'Thanks so much, see you Tuesday.\n\nOn Mon, Nov 3, 2026 at 9:00 AM someone wrote:\n> Can you come early?\n> Thanks';
+    assert.strictEqual(own.withoutQuotedReply(body), 'Thanks so much, see you Tuesday.');
+    assert.strictEqual(own.withoutQuotedReply('All good.\n> quoted line\nBack to me.'), 'All good.\nBack to me.');
+    assert.strictEqual(own.withoutQuotedReply('Done.\n-----Original Message-----\nFrom: them'), 'Done.');
+  });
+  it('never reaches the examples', async () => {
+    const data = tribeData({
+      emails: [{ id: 'e2', direction: 'outbound', body: 'We had the loveliest walk today and the water is fresh.\n\nOn Mon someone wrote:\n> please do not share this household text', timestamp: '2026-11-09T10:00:00.000Z' }],
+    });
+    const { value } = await silence(() => own.buildOwnWriting(makeDb(data), VOICE));
+    assert.match(value.text, /loveliest walk/);
+    assert.doesNotMatch(value.text, /household text|wrote/);
+  });
 });
 
 describe('the office\'s own writing, collected', () => {
@@ -203,7 +242,7 @@ describe('the office\'s own writing, collected', () => {
   it('carries no Tribe name, no contact detail and no unknown name', async () => {
     const { text } = await build();
     for (const name of TRIBE_NAMES) assert.ok(!text.includes(name), 'a Tribe name is in the examples');
-    assert.doesNotMatch(text, /@|555|https?:|example\.invalid|48213|1234|\{\{/);
+    assert.doesNotMatch(text, /@|555|https?:|hanasamku|tribetails\.com|48213|1234|\{\{/);
     assert.match(text, /\[Kinfolk\], \[Kin\] was a sweetheart today/);
     assert.match(text, /Hello \[Kinfolk\], the holiday calendar is open/);
   });
@@ -380,5 +419,34 @@ describe('the Tribe-name check on a draft', () => {
   it('an everyday-word name counts mid-sentence, not at a sentence start', () => {
     assert.deepStrictEqual(own.tribeNamesIn('Will you call? Thanks.', entries, vocab, 'notes', []), []);
     assert.deepStrictEqual(own.tribeNamesIn('Say hi to Will for me.', entries, vocab, 'notes', []), ['Will']);
+  });
+  it('the start of a new paragraph is a sentence start too', () => {
+    assert.deepStrictEqual(own.tribeNamesIn('Hi Leopold,\n\nWill you call?', entries, vocab, 'notes', []), []);
+  });
+});
+
+describe('a slow build', () => {
+  it('is not waited for past the budget, and still fills the cache for the next request', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const db = makeDb(tribeData());
+    const base = db.collection;
+    db.collection = (name) => {
+      const c = base(name);
+      if (name !== 'kinfolk') return c;
+      return { ...c, async get() { await gate; return c.get(); } };
+    };
+    const realSetTimeout = global.setTimeout;
+    global.setTimeout = (fn, ms) => realSetTimeout(fn, ms > 1000 ? 5 : ms);
+    try {
+      const first = (await silence(() => own.loadOwnWriting(db, VOICE))).value;
+      assert.strictEqual(first.text, '');
+      release();
+      await new Promise((resolve) => realSetTimeout(resolve, 20));
+      const second = (await silence(() => own.loadOwnWriting(makeDb({}), VOICE))).value;
+      assert.ok(second.text.includes('[Inbox reply]'));
+    } finally {
+      global.setTimeout = realSetTimeout;
+    }
   });
 });
