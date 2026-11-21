@@ -381,6 +381,33 @@ function taleBackgroundText(background) {
   return parts.join('\n\n');
 }
 
+/** Words in a row a draft must share with the background to count as repeating it. */
+const BACKGROUND_RUN_WORDS = 6;
+
+function wordRuns(text, n) {
+  const words = String(text || '').toLowerCase().replace(/['’‘ʼ]/gu, "'").match(/[\p{L}\p{N}']+/gu) || [];
+  const out = new Set();
+  for (let i = 0; i + n <= words.length; i += 1) out.add(words.slice(i, i + n).join(' '));
+  return out;
+}
+
+/**
+ * True when a draft repeats the household background word for word: a run of
+ * BACKGROUND_RUN_WORDS words that the background holds and the rest of the
+ * request (the visit facts, the ticked tasks, the notes) does not. The
+ * background is never quoted (#2052 ruling), so such a draft is not handed over.
+ */
+function repeatsBackground(draft, backgroundText, visitText) {
+  if (!backgroundText) return false;
+  const background = wordRuns(backgroundText, BACKGROUND_RUN_WORDS);
+  if (background.size === 0) return false;
+  const visit = wordRuns(visitText, BACKGROUND_RUN_WORDS);
+  for (const run of wordRuns(draft, BACKGROUND_RUN_WORDS)) {
+    if (background.has(run) && !visit.has(run)) return true;
+  }
+  return false;
+}
+
 /**
  * The message for a KinTale: the visit's own facts, the tasks ticked, the
  * household background (what is usual for them, never what happened), the
@@ -899,8 +926,22 @@ async function readTaleBackground(db, kinfolkId, onVisit, offVisit) {
       console.error('generate: a batch of 411s could not be read for a KinTale');
     }
   }
+  // A 411 names no household of its own, only a Kin id. The id it was found by
+  // is this household's (an office record read by its household, or a copy in
+  // this household's own Kin), but one id can sit in both stores. So a 411 is
+  // used only when no office record of another household, or of no household,
+  // holds its id. A record that cannot be read is not used.
+  const ownerOk = new Map();
+  await Promise.all([...byKinId.keys()].map(async (kinId) => {
+    try {
+      const snap = await db.collection('kin').doc(kinId).get();
+      ownerOk.set(kinId, !snap.exists || textOf((snap.data() || {}).kinfolkId) === kinfolkId);
+    } catch (_) {
+      ownerOk.set(kinId, false);
+    }
+  }));
   for (const kin of onVisit) {
-    const found = [...kin.ids].map((id) => byKinId.get(id)).find(Boolean);
+    const found = [...kin.ids].map((id) => (ownerOk.get(id) ? byKinId.get(id) : null)).find(Boolean);
     if (found && kin.name) four11s.push({ name: kin.name, four11: recordWithoutKinNames(found, hidden) });
   }
   return { dossier, four11s };
@@ -1181,7 +1222,7 @@ async function generateTitle(anthropic, bodyText, model, leftMs = MODEL_CALL_TIM
  */
 function correctionFor(problems) {
   const lines = [];
-  const { strays, borrowed, placeholder } = problems;
+  const { strays, borrowed, placeholder, quotesBackground } = problems;
   if (strays.length) {
     lines.push(
       `CORRECTION: your last draft named ${listNames(strays)}, who ${strays.length === 1 ? 'is' : 'are'} ` +
@@ -1199,6 +1240,12 @@ function correctionFor(problems) {
     lines.push(
       'CORRECTION: your last draft contained a bracketed placeholder such as [Kin]. Write it again ' +
       'using only the names this request carries.',
+    );
+  }
+  if (quotesBackground) {
+    lines.push(
+      'CORRECTION: your last draft repeated wording from the household background. The background is ' +
+      'never quoted. Write the tale again from the visit facts, the ticked tasks and the notes, in your own words.',
     );
   }
   return lines.join('\n');
@@ -1224,22 +1271,25 @@ async function runGenerate(deps, body) {
     const scrub = sampleScrubber(sampleNames);
     return { ...t, title: scrub(t.title), content: scrub(t.content) };
   });
+  const visitMessage = (correction, background) => buildVisitReportMessage({
+    communicationType: v.communication_type,
+    kinfolkName: ctx.kinfolkName,
+    rawNotes: v.raw_notes,
+    toneHint: v.tone_hint,
+    maxLength: v.max_length,
+    visit: ctx.visit,
+    visitKin: ctx.visitKin,
+    background,
+    careTasks: v.care_tasks,
+    avoidOpening: v.avoid_opening,
+    correction,
+  });
   const messageFor = (correction) =>
-    ctx.grounded
-      ? buildVisitReportMessage({
-        communicationType: v.communication_type,
-        kinfolkName: ctx.kinfolkName,
-        rawNotes: v.raw_notes,
-        toneHint: v.tone_hint,
-        maxLength: v.max_length,
-        visit: ctx.visit,
-        visitKin: ctx.visitKin,
-        background: ctx.background,
-        careTasks: v.care_tasks,
-        avoidOpening: v.avoid_opening,
-        correction,
-      })
-      : otherMessage({ correction });
+    ctx.grounded ? visitMessage(correction, ctx.background) : otherMessage({ correction });
+  // #2052 ruling: the household background is never quoted. What the visit
+  // itself says (facts, tasks, notes) may still be said in its own words.
+  const backgroundText = ctx.grounded ? taleBackgroundText(ctx.background) : '';
+  const visitOnlyText = backgroundText ? visitMessage('', null) : '';
   const otherMessage = (over) => buildUserMessage({
     communicationType: v.communication_type,
     kinfolkName: ctx.kinfolkName,
@@ -1275,9 +1325,14 @@ async function runGenerate(deps, body) {
     // A name the off-visit rule already called out is not called out twice.
     const stray = new Set(strays.map((n) => n.toLowerCase()));
     const borrowed = sampleNamesIn(draft, sampleNames, requestText, carriedNames).filter((n) => !stray.has(n.toLowerCase()));
-    return { strays, borrowed, placeholder: hasPlaceholder(draft) };
+    return {
+      strays,
+      borrowed,
+      placeholder: hasPlaceholder(draft),
+      quotesBackground: repeatsBackground(draft, backgroundText, visitOnlyText),
+    };
   };
-  const any = (p) => p.strays.length > 0 || p.borrowed.length > 0 || p.placeholder;
+  const any = (p) => p.strays.length > 0 || p.borrowed.length > 0 || p.placeholder || p.quotesBackground;
   let raw = await callClaude(anthropic, system, messageFor(''), model, left());
   let problems = problemsIn(raw.text);
   if (any(problems)) {
@@ -1315,6 +1370,16 @@ async function runGenerate(deps, body) {
       `Your notes are untouched. Try again, or write ${ctx.grounded ? 'the tale' : 'it'} yourself.`,
       422,
       { code: 'draft_has_placeholder' },
+    );
+  }
+  if (problems.quotesBackground) {
+    // What it repeated is not said, on screen or in the log.
+    console.error('generate: draft thrown away, it repeated the household background');
+    throw new GenerateError(
+      "Auntie's draft kept repeating the office's own notes on this household, so it was thrown away. " +
+      'Your notes are untouched. Try again, or write the tale yourself.',
+      422,
+      { code: 'draft_repeats_background' },
     );
   }
   // #1610: one subject. A subject line the model wrote anyway leaves the body
@@ -1425,6 +1490,7 @@ module.exports = {
   visitFacts,
   buildVisitReportMessage,
   taleBackgroundText,
+  repeatsBackground,
   readTaleBackground,
   offVisitKinNamed,
   TITLE_INSTRUCTION,

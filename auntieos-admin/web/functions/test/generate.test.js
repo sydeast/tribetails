@@ -1226,6 +1226,65 @@ describe('what the model is given for a KinTale (#2052)', () => {
       });
       assert.strictEqual(text, 'Mochi:\nDiet: Wet food only.');
     });
+    it('a 411 under a household copy id that another household\'s office record holds is left out', async () => {
+      const db = t1Db({
+        'families/t1/kin': [...T1_FAMILY_KIN, { id: 'k-other', name: 'Rover' }],
+        the_411: [...T1_411, { id: '411_k-other', kinId: 'k-other', rawSummary: 'Rogue guards the porch.' }],
+      });
+      const a = visitModel([GOOD_DRAFT]);
+      await run(db, a, { communication_type: 'visit_report', kinfolk_id: 't1', raw_notes: 'all ate' });
+      const bg = backgroundOf(promptOf(a));
+      assert.match(bg, /Biscuit naps/);
+      assert.doesNotMatch(promptOf(a), /guards the porch/);
+    });
+    it('a 411 whose Kin record cannot be read is left out', async () => {
+      const db = t1Db();
+      const base = db.collection;
+      db.collection = (name) => (name === 'kin'
+        ? { ...base(name), doc: () => ({ async get() { throw new Error('unavailable'); } }) }
+        : base(name));
+      const a = visitModel([GOOD_DRAFT]);
+      const out = await run(db, a);
+      assert.strictEqual(out.generated_copy, GOOD_DRAFT);
+      assert.doesNotMatch(promptOf(a), /Biscuit naps/);
+      assert.match(backgroundOf(promptOf(a)), /breakfast/);
+    });
+  });
+  describe('a draft that repeats the household background (#2052 ruling)', () => {
+    // A sample draft that lifts a line of the dossier and a line of a 411.
+    const QUOTING = 'Biscuit naps after a walk and sulks, and Tess likes a note about breakfast, so here it is.';
+    it('is sent back once with a correction, and the second draft is handed over', async () => {
+      const db = t1Db();
+      const a = visitModel([QUOTING, GOOD_DRAFT]);
+      const out = await run(db, a);
+      assert.strictEqual(a.calls.length, 2);
+      assert.match(promptOf(a, 1), /CORRECTION: your last draft repeated wording from the household background/);
+      assert.strictEqual(out.generated_copy, GOOD_DRAFT);
+      assert.doesNotMatch(out.generated_copy, /naps after a walk|likes a note about breakfast/);
+      assert.doesNotMatch(JSON.stringify(db._drafts), /naps after a walk|likes a note about breakfast/);
+    });
+    it('is refused when the retry repeats it too, and no draft row is written', async () => {
+      const db = t1Db();
+      const a = visitModel([QUOTING, QUOTING]);
+      await assert.rejects(
+        run(db, a),
+        (e) => e.status === 422 && e.extra.code === 'draft_repeats_background' && /Your notes are untouched/.test(e.message),
+      );
+      assert.strictEqual(db._drafts.length, 0);
+    });
+    it('the visit may still say what its own notes say, even where the background says it too', async () => {
+      const db = t1Db();
+      const draft = 'All ate, and I made sure to lock the side gate on the way out.';
+      const a = visitModel([draft]);
+      const out = await run(db, a, { ...T1_REQUEST, raw_notes: 'all ate, lock the side gate on the way out' });
+      assert.strictEqual(a.calls.length, 1);
+      assert.strictEqual(out.generated_copy, draft);
+    });
+    it('a short shared phrase is not a repeat', () => {
+      assert.strictEqual(gen.repeatsBackground('She had a walk and a nap.', 'Biscuit naps after a walk and sulks.', ''), false);
+      assert.strictEqual(gen.repeatsBackground('Biscuit naps after a walk and sulks.', '', ''), false);
+      assert.strictEqual(gen.repeatsBackground('Biscuit naps after a walk and sulks.', 'Biscuit naps after a walk and sulks.', ''), true);
+    });
   });
   it('is told to state nothing beyond them, in the last word before the notes', async () => {
     const a = visitModel([GOOD_DRAFT]);
