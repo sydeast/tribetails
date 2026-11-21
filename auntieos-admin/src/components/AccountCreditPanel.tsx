@@ -10,8 +10,10 @@ import type { GetAccountCreditHistoryResult } from '../contracts/invoiceContract
 import { mintGiveCreditIdempotencyKey } from '../lib/moneyIdempotency';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import {
+  EARLIER_CREDIT_LABEL,
   MAX_CREDIT_REASON_LENGTH,
   creditApplicationLines,
+  earlierCreditStatusLine,
   creditGivenNotice,
   creditStatusLine,
   creditUseLine,
@@ -135,15 +137,22 @@ export function AccountCreditPanel({
   );
 }
 
-/** The two lists. Also used, read only, nowhere else on the admin. */
+/**
+ * The two lists. Also used, read only, nowhere else on the admin.
+ *
+ * #1939: credit the log does not itemise (`earlierCredit`) is a row of its own
+ * under "Credits given", so the credits listed, less the credit used, are the
+ * balance above. An older server sends no `earlierCredit` key, read as none.
+ */
 export function CreditHistoryList({ data }: { data: GetAccountCreditHistoryResult }) {
-  if (data.credits.length === 0 && data.uses.length === 0) {
+  const earlier = data.earlierCredit ?? null;
+  if (data.credits.length === 0 && data.uses.length === 0 && earlier === null) {
     return <EmptyHint>No credit given yet.</EmptyHint>;
   }
   return (
     <div className="acredit">
       <h3 className="acredit__heading">Credits given</h3>
-      {data.credits.length === 0 ? (
+      {data.credits.length === 0 && earlier === null ? (
         <EmptyHint>No credit given yet.</EmptyHint>
       ) : (
         <ul className="acredit__list">
@@ -162,6 +171,15 @@ export function CreditHistoryList({ data }: { data: GetAccountCreditHistoryResul
               ))}
             </li>
           ))}
+          {earlier !== null && (
+            <li className="acredit__row" data-testid="acredit-earlier">
+              <div className="acredit__line">
+                <span className="acredit__amount">{formatCentsUsd(earlier.amountCents)}</span>
+                <span className="acredit__date">{EARLIER_CREDIT_LABEL}</span>
+              </div>
+              <p className="acredit__status">{earlierCreditStatusLine(earlier)}</p>
+            </li>
+          )}
         </ul>
       )}
       {data.uses.length > 0 && (
