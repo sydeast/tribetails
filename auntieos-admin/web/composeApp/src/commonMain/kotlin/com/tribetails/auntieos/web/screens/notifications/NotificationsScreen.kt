@@ -72,6 +72,10 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatCard
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import com.tribetails.auntieos.web.observability.reportMessage
+import com.tribetails.auntieos.web.observability.reportingExceptionHandler
 import com.tribetails.auntieos.web.screens.booking.NewBookingMath
 import com.tribetails.auntieos.web.screens.booking.SeriesDecisionDialog
 import com.tribetails.auntieos.web.screens.booking.groupIncomingBySeries
@@ -127,6 +131,21 @@ fun NotificationsScreen(
         }
     }
     val scope = rememberReportingScope()
+    // #1829: Open marks an unread notice read. The mark runs on a scope that
+    // outlives this screen, because Open navigates away at once and the
+    // screen's own scope is cancelled when it leaves.
+    val openAndMarkRead: (NotificationEntry) -> Unit = { entry ->
+        openNotification(
+            entry,
+            markRead = { id ->
+                openMarkScope.launch {
+                    val r = client.markNotificationRead(id)
+                    if (r is WriteResult.Err) reportMessage("Open did not mark the notification read: ${r.message}")
+                }
+            },
+            open = openEntry,
+        )
+    }
 
     // P0-FLICKER: hoist the Flow via remember so it survives recomposition.
     val state by remember { client.notificationsStream() }.collectAsState(initial = FirestoreResult.Loading)
@@ -367,7 +386,7 @@ fun NotificationsScreen(
                                     else selectedIds.remove(id)
                                 },
                                 onToggleRead = onToggleRead,
-                                onOpenTarget = openEntry,
+                                onOpenTarget = openAndMarkRead,
                                 onCreateQuote = onCreateQuote,
                                 onArchive = onArchive,
                                 onBookingAction = onBookingAction,
@@ -812,3 +831,5 @@ private fun relativeTime(createdAt: String): String {
     val shortDate = if (datePart.length >= 10) datePart.substring(5) else datePart
     return "$shortDate $timePart"
 }
+/** #1829: where Open's mark-read runs, so leaving the screen does not cancel it. */
+private val openMarkScope = CoroutineScope(SupervisorJob() + reportingExceptionHandler("markNotificationRead on Open"))
