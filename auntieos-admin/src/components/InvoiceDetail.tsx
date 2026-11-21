@@ -28,7 +28,12 @@ import {
   unstampedStateInfo,
   type InvoiceAction,
 } from '../lib/invoiceFormat';
-import { checkInvoiceTotal, formatCentsUsd, storedTotalSourceLabel } from '../lib/invoiceReconcile';
+import {
+  INVOICE_TOTAL_MISMATCH_TITLE,
+  checkInvoiceTotal,
+  formatCentsUsd,
+  invoiceTotalMismatchText,
+} from '../lib/invoiceReconcile';
 import { APP_ONLY_NOTE, lastReminderLabel, reminderOutcomeMessage } from '../lib/invoiceReminder';
 import {
   sendInvoiceReminder,
@@ -2146,18 +2151,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             which number is the true one, so the banner's whole job is to make
             sure they are looking at both. See lib/invoiceReconcile.ts. */}
         {totalCheck.disagrees && totalCheck.storedTotalCents !== null && (
-          <Banner tone="error" title="This invoice disagrees with itself">
+          <Banner tone="error" title={INVOICE_TOTAL_MISMATCH_TITLE}>
             <p>
-              The line items below add up to{' '}
-              <strong>{formatCentsUsd(totalCheck.derivedTotalCents)}</strong>, but{' '}
-              {storedTotalSourceLabel(totalCheck.storedFrom!)} says{' '}
-              <strong>{formatCentsUsd(totalCheck.storedTotalCents)}</strong>.
-            </p>
-            <p>
-              Nothing has been changed to make them match, and nothing will be. The household is
-              billed the stored figure. This can happen when an invoice is written outside the
-              normal edit path. Re-saving the line items below will recompute the stored total from
-              them, if the lines are the version you want to keep.
+              {invoiceTotalMismatchText(
+                totalCheck.derivedTotalCents,
+                totalCheck.storedTotalCents,
+                canEdit && moneyEditable,
+              )}
             </p>
           </Banner>
         )}

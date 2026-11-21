@@ -30,7 +30,12 @@ import {
   useVisitClockState,
   type LifecycleWriteState,
 } from './visitClockOutcome';
-import { actionNotifiesHousehold, visitNoticeOutcomeSentence } from './visitNotice';
+import {
+  actionNotifiesHousehold,
+  visitAlreadySentence,
+  visitMovedSentence,
+  visitNoticeOutcomeSentence,
+} from './visitNotice';
 import { type VisitLifecycleSession } from './visitLifecyclePatch';
 import { beginVisitTracking, endVisitTracking, stopVisitTracking } from './visitTracking';
 
@@ -89,7 +94,7 @@ export interface VisitLifecycleController {
    * holding and returns `changed: false` WITHOUT writing when the action is
    * already true -- the same guard that stops a double clock-in from moving the
    * arrival time. So a re-attempt that races a first attempt which did land
-   * reports "Already ARRIVED. Nothing was changed", never a second arrival.
+   * reports "Already arrived. Nothing was changed", never a second arrival.
    *
    * This is the only WRITE in either app that a sync offer is pointed at.
    * Writes that CREATE are not idempotent, because nothing client-side can
@@ -227,7 +232,7 @@ export function useVisitLifecycle(
       if (!res.changed) {
         settleVisitClockWrite(id, seq, {
           status: 'done',
-          message: `Already ${res.status}. Nothing was changed, and the time already on file is unchanged.`,
+          message: visitAlreadySentence(res.status),
         });
         return true;
       }
@@ -235,7 +240,8 @@ export function useVisitLifecycle(
       // THE STATUS SENTENCE LANDS THE MOMENT THE WRITE DOES, and says nothing
       // about the household yet. The push is still in flight; claiming it here
       // would be exactly the lie this hook exists to prevent.
-      const moved = `${res.from} → ${res.status}.`;
+      // #1814: in words, never the stored keys.
+      const moved = visitMovedSentence(res.from, res.status);
       // #2037: while the server's answer about the household is on its way,
       // the card says it is checking, so the wait is never a silent one.
       const checking = actionNotifiesHousehold(action)

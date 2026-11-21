@@ -238,11 +238,13 @@ fun HouseholdMembersBody(
                 },
                 content = {
                     // The mock's `.where`: mono, 13.5, dim, under the name.
-                    Text(
-                        text = whereLine(viewModel.kinfolkId, state),
-                        style = AuntieTheme.typography.mono.copy(fontSize = 13.5.sp, letterSpacing = 0.3.sp),
-                        color = c.textDim,
-                    )
+                    whereLine(state)?.let { line ->
+                        Text(
+                            text = line,
+                            style = AuntieTheme.typography.mono.copy(fontSize = 13.5.sp, letterSpacing = 0.3.sp),
+                            color = c.textDim,
+                        )
+                    }
                     // #1602: why Invite to portal is off, beside it.
                     portalInviteBlockerFor(state)?.let { reason ->
                         Text(
@@ -284,7 +286,6 @@ fun HouseholdMembersBody(
         item {
             DenPanel(
                 title = "Primary contact",
-                meta = "role: PRIMARY",
                 subtitle = PRIMARY_PANEL_TIP,
             ) {
                 when {
@@ -323,7 +324,7 @@ fun HouseholdMembersBody(
                 // Operator ruling 2026-09-27 (Q4): "Secondary kinfolk", the
                 // ruling's own term, in place of the mock's "Secondary contacts".
                 title = "Secondary kinfolk",
-                meta = secondaryMeta(state, secondaries.size),
+                meta = secondaryMeta(state),
                 // 2026-09-11 ruling: a tooltip at most, one sentence. DenPanel
                 // already renders this behind the info button, never as copy
                 // under the title.
@@ -410,7 +411,7 @@ fun HouseholdMembersBody(
                                         modifier = Modifier.semantics { heading() },
                                     )
                                     Text(
-                                        text = inviteGroupNote(group, inGroup.size),
+                                        text = inviteGroupNote(inGroup.size),
                                         style = AuntieTheme.typography.labelSmall,
                                         color = c.textDim,
                                     )
@@ -456,7 +457,7 @@ fun HouseholdMembersBody(
             },
         ) {
             Text(
-                "${target.label} will be suspended on $kinfolkName and signed out of every " +
+                "${target.subject} will be suspended on $kinfolkName and signed out of every " +
                     "device. The row stays in the list marked Suspended, and any invite they " +
                     "already accepted stays accepted.",
                 style = AuntieTheme.typography.bodyMedium,
@@ -521,17 +522,30 @@ fun HouseholdMembersBody(
 }
 
 /**
- * The mock's `.ct` note on the Secondary kinfolk panel. Written only once both
+ * The count beside the Secondary kinfolk panel's title, "2 people" (#1853:
+ * the mock's "2 of role: SECONDARY" printed a stored key). Written only once both
  * reads have landed, so an unread list never reads as zero. Null until then.
  *
  * #1602: the people added with no portal account count too. The walk added
  * one and the panel still read 0 after a reload.
  */
-internal fun secondaryMeta(state: HouseholdMembersUiState, secondaries: Int): String? {
+internal fun secondaryMeta(state: HouseholdMembersUiState): String? =
+    secondaryCount(state)?.let(::peopleCount)
+
+/**
+ * The secondaries the panel lists: portal members plus the people with no
+ * portal account. One number for the panel's count and the line under the
+ * name (#1844), so the two can never disagree. Null until both reads land.
+ */
+internal fun secondaryCount(state: HouseholdMembersUiState): Int? {
     if (!state.membersLoaded || !state.peopleLoaded) return null
+    val portal = state.members.count { it.role == MembersRepository.MemberRole.SECONDARY }
     val noPortal = state.people.count { it.access != MembersRepository.PersonAccess.ACTIVE }
-    return "${secondaries + noPortal} of role: SECONDARY"
+    return portal + noPortal
 }
+
+/** "1 person", "3 people". */
+internal fun peopleCount(n: Int): String = "$n ${if (n == 1) "person" else "people"}"
 
 /** Adds one dismissible error banner to the list, or nothing when there is none. */
 private fun androidx.compose.foundation.lazy.LazyListScope.errorBannerItem(
@@ -645,7 +659,7 @@ private fun MemberBlock(
                         horizontalArrangement = Arrangement.spacedBy(dims.space2),
                     ) {
                         Text(
-                            text = "SECONDARYLABEL",
+                            text = "LABEL",
                             style = AuntieTheme.typography.labelSmall,
                             color = c.textDim,
                         )
@@ -842,23 +856,30 @@ internal fun householdInitial(name: String): String {
 }
 
 /**
- * The mock's `.where` line under the household name: `familyId: fam_7Qk2 · 3
- * members · 1 PRIMARY, 2 SECONDARY`. Counts are by ROLE, which is what the
- * two panels are split by, and they are only written once the roster has been
- * read: before that the line is the id alone, never "0 members".
+ * The line under the household name: "2 people · 1 primary, 1 secondary".
+ *
+ * #1844: the mock's line opened with `familyId: fam_7Qk2` and counted by stored
+ * role key. The settled rule wins over the mock: no field name, no id and no
+ * stored key on screen. The secondary count is [secondaryCount], the panel's
+ * own. Null until both reads land, never "0 secondary".
  */
-internal fun whereLine(kinfolkId: String, state: HouseholdMembersUiState): String {
-    val head = "familyId: $kinfolkId"
-    if (!state.membersLoaded) return head
-    val total = state.members.size
+internal fun whereLine(state: HouseholdMembersUiState): String? {
+    val secondary = secondaryCount(state) ?: return null
     val primary = state.members.count { it.role == MembersRepository.MemberRole.PRIMARY }
-    val noun = if (total == 1) "member" else "members"
-    return "$head · $total $noun · $primary PRIMARY, ${total - primary} SECONDARY"
+    return "${peopleCount(primary + secondary)} · $primary primary, $secondary secondary"
 }
 
-/** The invites mock's `.sec h3 .ct`: the wire statuses and the count. */
-internal fun inviteGroupNote(group: InviteGroup, count: Int): String =
-    group.statuses.joinToString(" / ") { it.name } + " · $count"
+/**
+ * #1853: the count beside an invite group's heading. The mock's note printed
+ * the stored status keys ("PENDING / EMAIL_SENT · 2").
+ */
+internal fun inviteGroupNote(count: Int): String = "$count"
+
+/** #1853: a permission in words for the toast, never its stored key ("billing_full"). */
+internal fun permissionWords(key: MembersRepository.PermissionKey): String {
+    val label = PERMISSION_ROWS.firstOrNull { it.key == key }?.label ?: "access"
+    return label.replaceFirstChar { it.lowercaseChar() }
+}
 
 /** "Active" from ACTIVE. The mock's LED text is title case. */
 internal fun memberStatusLabel(status: MembersRepository.MemberStatus): String =
@@ -887,7 +908,7 @@ internal val PERMISSION_ROWS: List<PermissionRow> = listOf(
     PermissionRow(
         MembersRepository.PermissionKey.BILLING_FULL,
         "Full billing",
-        "Full access to invoices and payment methods. The household PRIMARY can " +
+        "Full access to invoices and payment methods. The household's primary contact can " +
             "grant this too; every change is audited.",
     ),
     PermissionRow(
@@ -903,7 +924,7 @@ internal val PERMISSION_ROWS: List<PermissionRow> = listOf(
     PermissionRow(
         MembersRepository.PermissionKey.KIN_EDIT,
         "Edit kin",
-        "Adds or edits the household pet records.",
+        "Adds or edits the household's Kin records.",
     ),
     PermissionRow(
         MembersRepository.PermissionKey.HOME_ACCESS,

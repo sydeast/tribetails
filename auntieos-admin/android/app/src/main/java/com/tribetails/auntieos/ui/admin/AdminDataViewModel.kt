@@ -416,6 +416,22 @@ class AdminDataViewModel(
     }
 
     /**
+     * #1829: Open on an unread notice marks it read. Started by the Open press
+     * and never waited on, so the Open goes ahead at once; this scope outlives
+     * the screen. A failed mark says so when the list is next shown, and a
+     * success reloads the list so the notice reads as read on the way back.
+     */
+    fun markNotificationReadOnOpen(id: String) {
+        if (id.isBlank()) return
+        viewModelScope.launch {
+            repository.markNotificationRead(id)
+                .onSuccess { loadNotifications() }
+                .onFailure { throwable ->
+                    _bulkReadMessage.value = "Couldn't mark the notification read: ${throwable.message}"
+                }
+        }
+    }
+    /**
      * Step 4 quick-action: archive ONE notification out of the active inbox via
      * archiveNotification, then reload so it drops off the list. Fail-loud.
      */
@@ -1521,6 +1537,20 @@ internal fun bulkArchiveSummary(requested: Int, archived: Int): String = when {
  */
 internal fun isNotificationUnread(entry: com.tribetails.auntieos.data.admin.NotificationEntry): Boolean =
     entry.readAt.isNullOrBlank()
+
+/**
+ * #1829: Open on an unread notice marks it read, then opens it. [markRead] is
+ * started first and never waited on. A read notice, or one with no id, opens
+ * without a write. Same rule as admin web and the desktop console. Pure; tested.
+ */
+internal fun openNotification(
+    entry: com.tribetails.auntieos.data.admin.NotificationEntry,
+    markRead: (notificationId: String) -> Unit,
+    open: (com.tribetails.auntieos.data.admin.NotificationEntry) -> Unit,
+) {
+    if (isNotificationUnread(entry) && entry.id.isNotBlank()) markRead(entry.id)
+    open(entry)
+}
 
 /**
  * #1563: the generated drafts the KinTales list files under Drafts: not yet sent
