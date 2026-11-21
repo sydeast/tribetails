@@ -470,3 +470,36 @@ describe('a household only ever touches its own Kin (#1912)', () => {
     expect(docs['kin/flatTheirs']).toEqual(THEIR_FLAT);
   });
 });
+// #2350: a Kin's stored id moves when its link is written, and the household's
+// visits that named its card move with it.
+describe('a link written after a visit was booked moves the visit onto the record (#2350)', () => {
+  it('a record minted for a new card: the visit booked under the card id names the record', async () => {
+    const { docs } = world({
+      [NEW_PATH]: { ...NEW_FAMILY },
+      'kin_care_sessions/v1': { kinfolkId: HOUSEHOLD, kinIds: ['new'], kinNames: ['Max'], status: 'SCHEDULED' },
+    });
+    const { linkWasWritten } = await import('../src/triggers/onFamilyKinWrite');
+    const { rewriteVisitKinIdsAfterLink } = await import('../src/lib/visitKinIds');
+    const after = { ...docs[NEW_PATH] };
+    const res = await runMirror(docs, 'new');
+    expect(res.action).toBe('created');
+    expect(linkWasWritten(after as any, res)).toBe(true);
+    await rewriteVisitKinIdsAfterLink(HOUSEHOLD, 'onFamilyKinWrite');
+    expect(docs['kin_care_sessions/v1']).toEqual({ kinfolkId: HOUSEHOLD, kinIds: [res.flatDocId], kinNames: ['Max'], status: 'SCHEDULED' });
+  });
+  it('a crossed pair put right: the moved Kin\'s visit names its new record, the other Kin\'s visit stays', async () => {
+    const { docs } = world(
+      crossedDocs({
+        'kin_care_sessions/v-new': { kinfolkId: HOUSEHOLD, kinIds: ['new'], kinNames: ['Max'] },
+        'kin_care_sessions/v-old': { kinfolkId: HOUSEHOLD, kinIds: ['flatOld'], kinNames: ['Max'] },
+      }),
+    );
+    const before = { ...docs[OLD_PATH] };
+    docs[OLD_PATH] = { ...docs[OLD_PATH], sitterNotes: 'Shy' };
+    await runMirror(docs, 'old', before);
+    const newFlat = docs[NEW_PATH]['legacyKinId'] as string;
+    expect(newFlat).not.toBe('flatOld');
+    expect(docs['kin_care_sessions/v-new']?.['kinIds']).toEqual([newFlat]);
+    expect(docs['kin_care_sessions/v-old']?.['kinIds']).toEqual(['flatOld']);
+  });
+});
