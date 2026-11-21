@@ -21,6 +21,8 @@ const hooks = vi.hoisted(() => ({
   log: vi.fn(),
   events: {} as Record<string, unknown>,
   feeCents: 146 as number | null,
+  // #2334: the charge's `payment_method_details`, null for a charge that says nothing.
+  methodDetails: null as unknown,
 }));
 
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: () => hooks.db.current, auth: vi.fn(), getAdmin: vi.fn() }));
@@ -42,7 +44,9 @@ vi.mock('../src/lib/stripe', () => ({
     paymentIntents: {
       retrieve: async () => {
         if (hooks.feeCents === null) throw new Error('stripe unavailable');
-        return { latest_charge: { balance_transaction: { fee: hooks.feeCents } } };
+        return {
+          latest_charge: { balance_transaction: { fee: hooks.feeCents }, payment_method_details: hooks.methodDetails },
+        };
       },
     },
     charges: { retrieve: vi.fn() },
@@ -150,6 +154,7 @@ beforeEach(() => {
   hooks.deliver.mockResolvedValue({ outcome: 'sent', channels: ['email'] });
   hooks.log.mockReset();
   hooks.feeCents = 146;
+  hooks.methodDetails = null;
   for (const k of Object.keys(hooks.events)) delete hooks.events[k];
   docs = { [INVOICE]: { ...OPEN }, 'families/fam1': { accountBalanceCents: 12000 } };
   ctx = buildDbMock({ docs, writeThrough: true });
@@ -933,5 +938,63 @@ describe('#2276: where a card payment lands (decideCardApply)', () => {
   it('names the row after the PaymentIntent, and after the event only when there is none', () => {
     expect(cardPaymentRowId('pi_1', 'evt_1')).toBe('stripe_pi_1');
     expect(cardPaymentRowId(null, 'evt_1')).toBe('stripe_evt_1');
+  });
+});
+
+describe('#2334: the card payment rows carry what it was actually paid with', () => {
+  it('a Klarna payment: the invoice row and the ledger row both say klarna, beside the stored stripe', async () => {
+    hooks.methodDetails = { type: 'klarna', klarna: {} };
+    cardPayment(1, 4000);
+
+    expect(await deliver('session-1')).toBe(200);
+
+    const [[, row]] = cardRows();
+    expect(row).toMatchObject({ method: 'stripe', onlineMethod: 'klarna' });
+    expect(docs['payments/evt_cs_1']).toMatchObject({ paymentMethod: 'stripe', onlineMethod: 'klarna' });
+  });
+
+  it('a card from Apple Pay is stored as the wallet', async () => {
+    hooks.methodDetails = { type: 'card', card: { wallet: { type: 'apple_pay' } } };
+    cardPayment(1, 4000);
+
+    expect(await deliver('intent-1')).toBe(200);
+
+    const [[, row]] = cardRows();
+    expect(row.onlineMethod).toBe('apple_pay');
+    expect(docs['payments/evt_pi_1']).toMatchObject({ onlineMethod: 'apple_pay' });
+  });
+
+  it('a Stripe lookup that fails stores no method at all, never a guess, and the payment still lands', async () => {
+    hooks.feeCents = null;
+    hooks.methodDetails = { type: 'card' };
+    cardPayment(1, 4000);
+
+    expect(await deliver('session-1')).toBe(200);
+
+    const [[, row]] = cardRows();
+    expect('onlineMethod' in row).toBe(false);
+    expect('onlineMethod' in docs['payments/evt_cs_1']!).toBe(false);
+    expect(docs[INVOICE]).toMatchObject({ status: 'paid', paidCents: 4000 });
+  });
+
+  it('a charge that does not say leaves the field off', async () => {
+    cardPayment(1, 4000);
+
+    expect(await deliver('session-1')).toBe(200);
+
+    const [[, row]] = cardRows();
+    expect('onlineMethod' in row).toBe(false);
+  });
+
+  it('a duplicate charge held for the owner carries its method on the held row', async () => {
+    hooks.methodDetails = { type: 'affirm', affirm: {} };
+    cardPayment(1, 4000);
+    expect(await deliver('session-1')).toBe(200);
+    // A second checkout on the now-paid bill: held, not applied.
+    cardPayment(2, 4000);
+
+    expect(await deliver('session-2')).toBe(200);
+
+    expect(docs['payments/evt_cs_2']).toMatchObject({ needsAdminDecision: true, onlineMethod: 'affirm' });
   });
 });

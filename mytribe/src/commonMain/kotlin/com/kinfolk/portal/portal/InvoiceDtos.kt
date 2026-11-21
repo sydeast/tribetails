@@ -154,7 +154,38 @@ data class Invoice(
      * not say; [invoiceName] then prints the bare noun.
      */
     val invoiceNumber: String? = null,
+    /**
+     * #2334: the bill's Payment History, newest first: how each payment was
+     * made, the day and the amount. Empty from a server older than the field.
+     */
+    val payments: List<HouseholdPayment> = emptyList(),
 )
+
+/**
+ * #2334: one line of an invoice's Payment History, as `getMyInvoices` sends it.
+ * [methodLabel] is already plain words (Card, Klarna, Affirm, Account credit,
+ * "Online payment" for an old card payment); [paidDay] is `YYYY-MM-DD` or null.
+ */
+data class HouseholdPayment(
+    val paymentId: String,
+    val methodLabel: String,
+    val paidDay: String?,
+    val amountCents: Long,
+)
+
+/** #2334: what a payment with no stored method reads as. Never a stored key. */
+const val ONLINE_PAYMENT_LABEL = "Online payment"
+
+/**
+ * #2334: how a Payment History row names its method: the server's words, a
+ * stored "stripe" that slipped through as "Online payment", and a blank as
+ * "Payment". The same rule as the web portal's `paymentRowMethodLabel`.
+ */
+fun paymentRowMethodLabel(p: HouseholdPayment): String {
+    val label = p.methodLabel.trim()
+    if (label.equals("stripe", ignoreCase = true)) return ONLINE_PAYMENT_LABEL
+    return label.ifEmpty { "Payment" }
+}
 
 /** One covered visit on an invoice. All fields optional server-side. */
 data class InvoiceLineItem(

@@ -947,6 +947,79 @@ class PayMethodDecodeTest {
         assertNull(PortalApi(fake).getMyInvoices("3").open[0].payMethods)
     }
 
+    // #2334: the bill's Payment History, by method, day and amount.
+    @Test
+    fun `getMyInvoices decodes each invoice's Payment History`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 0L)
+            put("open", buildJsonArray {})
+            put("paid", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "1001")
+                    put("kinfolkId", "3")
+                    put("total", 40.0)
+                    put("amountDue", 0.0)
+                    put("isPaid", true)
+                    put("status", "paid")
+                    put("payments", buildJsonArray {
+                        add(buildJsonObject {
+                            put("paymentId", "stripe_pi_1")
+                            put("methodLabel", "Klarna")
+                            put("paidDay", "2026-11-20")
+                            put("amountCents", 2500L)
+                        })
+                        add(buildJsonObject {
+                            put("paymentId", "credit")
+                            put("methodLabel", "Account credit")
+                            put("paidDay", JsonNull)
+                            put("amountCents", 1500L)
+                        })
+                        // A row with no id is dropped, never drawn.
+                        add(buildJsonObject { put("methodLabel", "Card") })
+                    })
+                })
+            })
+            put("credits", buildJsonArray {})
+        })
+        val inv = PortalApi(fake).getMyInvoices("3").paid.single()
+        assertEquals(
+            listOf(
+                HouseholdPayment("stripe_pi_1", "Klarna", "2026-11-20", 2500L),
+                HouseholdPayment("credit", "Account credit", null, 1500L),
+            ),
+            inv.payments,
+        )
+    }
+
+    @Test
+    fun `an invoice from a server without Payment History decodes to no rows`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 0L)
+            put("open", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "1001")
+                    put("kinfolkId", "3")
+                    put("total", 50.0)
+                    put("amountDue", 50.0)
+                    put("isPaid", false)
+                    put("status", "open")
+                })
+            })
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {})
+        })
+        assertEquals(emptyList<HouseholdPayment>(), PortalApi(fake).getMyInvoices("3").open[0].payments)
+    }
+
+    @Test
+    fun `a Payment History row never reads stripe or a blank`() {
+        assertEquals("Klarna", paymentRowMethodLabel(HouseholdPayment("a", "Klarna", null, 1L)))
+        assertEquals("Online payment", paymentRowMethodLabel(HouseholdPayment("a", "stripe", null, 1L)))
+        assertEquals("Payment", paymentRowMethodLabel(HouseholdPayment("a", "  ", null, 1L)))
+    }
+
     @Test
     fun `payMethodsFor prefers the invoice own list and falls through only on null`() {
         val home = listOf(

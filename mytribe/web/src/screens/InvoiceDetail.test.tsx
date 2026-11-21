@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { InvoiceDetail, PAYMENT_CHECK_EVERY_MS, PAYMENT_CHECK_FOR_MS } from './InvoiceDetail';
@@ -125,6 +125,7 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   writtenOffCents: null,
   // #2410: null on an invoice that can be paid.
   payBlockedReason: null,
+  payments: [],
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -689,6 +690,7 @@ describe('InvoiceDetail payment option sources (issue #409)', () => {
     writtenOffCents: null,
     // #2410: null on an invoice that can be paid.
     payBlockedReason: null,
+    payments: [],
     payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
   };
 
@@ -804,6 +806,72 @@ describe('InvoiceDetail: a PAID invoice offers no way to pay (docket Q5)', () =>
   it('an open bill still offers the card', async () => {
     await renderWith({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
     expect(await screen.findByText('Pay with Credit Card')).toBeInTheDocument();
+  });
+});
+
+/**
+ * #2334: the household sees each payment on its bill, by what it was actually
+ * paid with, the day and the amount. Never the stored word "stripe".
+ */
+describe('InvoiceDetail: Payment History (#2334)', () => {
+  async function renderWith(res: GetMyInvoicesResult) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(res);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+  const PAID = {
+    ...OPEN_INVOICE,
+    status: 'paid' as const,
+    isPaid: true,
+    amountDue: 0,
+    paidCents: 4000,
+    payMethods: [],
+    payments: [
+      { paymentId: 'stripe_pi_1', methodLabel: 'Klarna', paidDay: '2026-11-20', amountCents: 2500 },
+      { paymentId: 'stripe_pi_0', methodLabel: 'Online payment', paidDay: '2026-11-01', amountCents: 1000 },
+      { paymentId: 'credit', methodLabel: 'Account credit', paidDay: null, amountCents: 500 },
+    ],
+  };
+
+  it('lists each payment by its method, its day and its amount', async () => {
+    await renderWith({ open: [], paid: [PAID], credits: [], accountBalanceCents: 0 });
+    const rows = await screen.findAllByTestId('payment-history-row');
+    expect(rows.map((r) => r.querySelector('b')?.textContent)).toEqual(['Klarna', 'Online payment', 'Account credit']);
+    expect(within(rows[0]!).getByText('Nov 20, 2026')).toBeInTheDocument();
+    expect(within(rows[0]!).getByText('$25.00')).toBeInTheDocument();
+    // A row with no day says nothing about one, rather than inventing it.
+    expect(rows[2]!.querySelector('small')).toBeNull();
+    expect(screen.queryByText(/stripe/i)).toBeNull();
+  });
+
+  it('a stored word that slipped through still never reads "stripe"', async () => {
+    await renderWith({
+      open: [],
+      paid: [{ ...PAID, payments: [{ paymentId: 'x', methodLabel: 'stripe', paidDay: '2026-11-20', amountCents: 4000 }] }],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    const [row] = await screen.findAllByTestId('payment-history-row');
+    expect(row!.querySelector('b')?.textContent).toBe('Online payment');
+  });
+
+  it('no payments and no legacy text draws no Payment History at all', async () => {
+    await renderWith({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
+    expect(await screen.findByText('Pay with Credit Card')).toBeInTheDocument();
+    expect(screen.queryByTestId('payment-history')).toBeNull();
+  });
+
+  it('a server older than the field (no payments key) keeps the legacy text and does not break', async () => {
+    const older: Record<string, unknown> = { ...PAID, paymentsHistory: 'Paid by check, June 3' };
+    delete older['payments'];
+    await renderWith({ open: [], paid: [older as unknown as typeof PAID], credits: [], accountBalanceCents: 0 });
+    expect(await screen.findByText('Paid by check, June 3')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('payment-history-row')).toHaveLength(0);
   });
 });
 

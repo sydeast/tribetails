@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
+import com.kinfolk.portal.portal.HouseholdPayment
 import com.kinfolk.portal.portal.Invoice
 import com.kinfolk.portal.portal.InvoiceLineItem
 import com.kinfolk.portal.portal.InvoiceStatus
@@ -105,6 +106,55 @@ class InvoiceDetailScreenTest {
         // Same mapping as the list chips: Open reads as "Pending", never "Open".
         onNodeWithText("Pending").assertIsDisplayed()
         onNodeWithText("Open").assertDoesNotExist()
+    }
+
+    // #2334: each payment on the bill, by what it was paid with, the day and the amount.
+    @Test
+    fun paymentHistory_listsEachPaymentByMethodDayAndAmount() = runComposeUiTest {
+        val paid = openInvoice().copy(
+            status = InvoiceStatus.Paid,
+            isPaid = true,
+            amountDue = 0.0,
+            payments = listOf(
+                HouseholdPayment("stripe_pi_1", "Klarna", "2026-11-20", 2500L),
+                HouseholdPayment("stripe_pi_0", "Online payment", "2026-11-01", 1000L),
+                HouseholdPayment("credit", "Account credit", null, 500L),
+            ),
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", paid, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Payment History").assertExists()
+        onNodeWithText("Klarna").assertExists()
+        onNodeWithText("Nov 20, 2026").assertExists()
+        onNodeWithText("\$25.00").assertExists()
+        onNodeWithText("Online payment").assertExists()
+        onNodeWithText("Account credit").assertExists()
+        onNodeWithText("stripe", substring = true, ignoreCase = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun paymentHistory_aStoredStripeThatSlippedThroughReadsOnlinePayment() = runComposeUiTest {
+        val paid = openInvoice().copy(
+            status = InvoiceStatus.Paid,
+            payments = listOf(HouseholdPayment("x", "stripe", "2026-11-20", 4000L)),
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", paid, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Online payment").assertExists()
+        onNodeWithText("stripe", substring = true, ignoreCase = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun paymentHistory_noPaymentsAndNoLegacyText_drawsNoSection() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", openInvoice(), onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Payment History").assertDoesNotExist()
     }
 
     @Test
