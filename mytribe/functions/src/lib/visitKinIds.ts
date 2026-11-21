@@ -1,6 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import { db } from './firestoreAdmin';
 import { kinIdAliases, readHouseholdKin } from './kinRoster';
+import { isInactiveKinStatus } from './kinStatus';
 import { logEvent } from './logger';
 
 /**
@@ -52,8 +53,9 @@ import { logEvent } from './logger';
  *   - a document that names a card in a CROSSED pair: two cards that claim
  *     one admin record ([crossedCardIds]). The roster reader gives the record
  *     to whichever card it reads first, while `lib/kinLink.ts` gives it to the
- *     card created first, so the record may be the other Kin's. Listed, left
- *     for after `healKinLink` has given each card a record of its own.
+ *     card created first, so the record may be the other Kin's. The same holds
+ *     for a live card tied to an archived or memorial record (#1912). Listed,
+ *     left for after `healKinLink` has given each card a record of its own.
  *   - a card id that is also some Kin's stored id, or one no Kin of the
  *     household answers to.
  *
@@ -111,7 +113,10 @@ function collectStrings(v: unknown, into: Set<string>, depth = 0): void {
 }
 
 /**
- * The household cards that share one admin record with another card. PURE.
+ * The household cards whose admin record may not be their own. PURE.
+ *
+ * Two kinds: a card that shares its record with another card, and a live card
+ * tied to an archived or memorial record (see below).
  *
  * Reads each card's record exactly as `readHouseholdKin` does (its
  * `legacyKinId` when that record exists, else the record whose
@@ -127,7 +132,9 @@ export function crossedCardIds(
   records: ReadonlyArray<{ id: string; data: Data }>,
 ): Set<string> {
   const recordIds = new Set(records.map((r) => r.id));
+  const recordStatus = new Map(records.map((r) => [r.id, r.data['status']]));
   const byRecord = new Map<string, string[]>();
+  const crossed = new Set<string>();
   for (const card of cards) {
     const stamped = textOf(card.data['legacyKinId']);
     const pointed = records.find((r) => textOf(r.data['familyKinPath']) === `families/${kinfolkId}/kin/${card.id}`);
@@ -135,8 +142,12 @@ export function crossedCardIds(
       stamped !== '' && recordIds.has(stamped) ? stamped : pointed ? pointed.id : recordIds.has(card.id) ? card.id : null;
     if (linked === null) continue;
     byRecord.set(linked, [...(byRecord.get(linked) ?? []), card.id]);
+    // #1912: a live Kin tied to an archived or memorial record. `kinLink.ts`
+    // reads that as crossed with no owner (`adoptedWhileHidden`): the record
+    // was another Kin's of the same name. A memorial being restored looks the
+    // same for a moment; holding it only lists its visits.
+    if (!isInactiveKinStatus(card.data['status']) && isInactiveKinStatus(recordStatus.get(linked))) crossed.add(card.id);
   }
-  const crossed = new Set<string>();
   for (const claimants of byRecord.values()) {
     if (claimants.length > 1) for (const id of claimants) crossed.add(id);
   }

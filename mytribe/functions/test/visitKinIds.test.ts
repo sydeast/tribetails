@@ -219,6 +219,31 @@ describe('planHouseholdVisitKinIds + applyHouseholdVisitKinIds (the script\'s wr
     ]);
   });
 
+  it('never moves a live Kin\'s visit onto an archived record its card was tied to by name', async () => {
+    // #1912: a new Max was added in MyTribe under the name of a Max who had
+    // passed, and the old mirror tied the new card to the old Max's archived
+    // record. `lib/kinLink.ts` reads that card as crossed (owner none) until it
+    // is healed. Moving the new Max's visit onto the record would put it on
+    // the old Max.
+    const ctx = buildDbMock({
+      docs: {
+        'families/6/kin/new-max': { name: 'Max', legacyKinId: 'rec-old-max', createdByUid: 'household-uid', status: 'active' },
+        'kin/rec-old-max': { name: 'Max', kinfolkId: '6', status: 'archived' },
+        'kin_care_sessions/new-max-visit': { kinfolkId: '6', kinIds: ['new-max'], kinNames: ['Max'] },
+      },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { planHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
+
+    const plan = await planHouseholdVisitKinIds('6');
+
+    expect(plan.writes).toEqual([]);
+    expect(plan.refusals).toEqual([
+      { collection: 'kin_care_sessions', docId: 'new-max-visit', cardIds: ['new-max'], reason: 'crossed-link' },
+    ]);
+  });
+
   it('re-plans inside the write, so a visit put right meanwhile is left alone', async () => {
     const { docs } = world();
     const { planHouseholdVisitKinIds, applyHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
