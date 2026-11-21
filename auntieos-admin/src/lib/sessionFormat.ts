@@ -167,7 +167,10 @@ export function sessionState(status: string): SessionState {
       return 'departed';
     case 'COMPLETED':
       return 'completed';
+    // #2268: CANCELED is the one-L spelling older and imported rows carry. The
+    // server reads it as cancelled (`normalizeBookingStatus`), so this does too.
     case 'CANCELLED':
+    case 'CANCELED':
       return 'cancelled';
     default:
       return 'unknown';

@@ -45,7 +45,7 @@ import com.tribetails.auntieos.web.data.SilenceKind
 import com.tribetails.auntieos.web.data.SilenceOutcome
 import com.tribetails.auntieos.web.data.checkedSend
 import com.tribetails.auntieos.web.data.invoiceSentMessage
-import com.tribetails.auntieos.web.data.lastReminderLabel
+import com.tribetails.auntieos.web.data.reminderListLine
 import com.tribetails.auntieos.web.data.mintInvoiceIdempotencyKey
 import com.tribetails.auntieos.web.data.quoteCreatedMessage
 import com.tribetails.auntieos.web.data.receiptGeneratedMessage
@@ -875,7 +875,7 @@ internal fun InvoiceRow(
             // operator can see it before pressing Send reminder, not after.
             if (remindable) {
                 Text(
-                    text  = "reminded ${lastReminderLabel(invoice.reminderNotifiedAtMs, appOnly = invoice.reminderNotifiedAppOnly)}",
+                    text  = reminderListLine(invoice.reminderNotifiedAtMs, invoice.reminderNotifiedAppOnly, invoice.reminderHeldAtMs),
                     style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
                     color = c.textDim,
                 )

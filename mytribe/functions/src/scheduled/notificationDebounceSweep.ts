@@ -4,6 +4,9 @@ import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { promoteQueuedNotification } from '../notifications/promoteQueued';
 import { FULL_CPU_SERIAL, SCHEDULE_RETRY_FREQUENT } from '../lib/runtimeOptions';
+import { countHeldNotice, withHeldNoticeBatch } from '../notifications/heldNoticeBatch';
+// #2478: loaded only when a run has rows to drain, so the cold-start graph stays at its bound.
+import type * as QueuedCopyHold from '../notifications/queuedCopyHold';
 
 /**
  * Drains `pendingNotifications/{uid}_{key}` docs whose fireAfterMs has elapsed.
@@ -29,6 +32,86 @@ import { FULL_CPU_SERIAL, SCHEDULE_RETRY_FREQUENT } from '../lib/runtimeOptions'
  */
 const SCAN_LIMIT = 100;
 
+/** #2478: the job whose line counts the household copies held at their send time. */
+export const DEBOUNCE_HELD_JOB = 'notificationDebounceSweep';
+
+/**
+ * Drains the due rows of `pendingNotifications` at `now`. Exported for the
+ * tests; the cron below is its only caller.
+ *
+ * #2478: a household copy is asked about "Send notices to households" again
+ * here, at its send time (`notifications/queuedCopyHold.ts`). Off, it comes off
+ * the queue and is never sent later, and the run writes one line with the
+ * count. Unreadable, it stays queued for the next tick. Today every debounced
+ * key (`pets.updated`, `profile.updated`) goes to the office only, so this
+ * holds nothing yet; it is here so the next household key cannot slip past.
+ */
+export async function drainPendingNotifications(
+  now: number,
+): Promise<{ promoted: number; held: number; skipped: number }> {
+  const snap = await db()
+    .collection('pendingNotifications')
+    .where('fireAfterMs', '<=', now)
+    .limit(SCAN_LIMIT)
+    .get();
+  if (snap.empty) return { promoted: 0, held: 0, skipped: 0 };
+
+  let promoted = 0;
+  let held = 0;
+  let skipped = 0;
+  const { queuedCopyVerdict, startQueuedCopyGate }: typeof QueuedCopyHold = await import(
+    '../notifications/queuedCopyHold.js'
+  );
+  const gate = startQueuedCopyGate();
+  await withHeldNoticeBatch(DEBOUNCE_HELD_JOB, { atMs: now, final: true }, async (heldBatch) => {
+    for (const doc of snap.docs) {
+      const data = doc.data() as Record<string, unknown>;
+      const key = typeof data.key === 'string' ? data.key : '';
+      const verdict = key === '' ? 'send' : await queuedCopyVerdict(key, data.stream, gate);
+      if (verdict === 'skip') {
+        skipped += 1;
+        continue;
+      }
+      try {
+        const done = await db().runTransaction(async (tx) => {
+          const fresh = await tx.get(doc.ref);
+          if (!fresh.exists) return false;
+          if (verdict === 'send') {
+            promoteQueuedNotification(tx, data, {
+              mode: 'debounced-promoted',
+              origin: { originPendingId: doc.id },
+            });
+          }
+          tx.delete(doc.ref);
+          return true;
+        });
+        if (!done) continue;
+        if (verdict === 'hold') {
+          held += 1;
+          countHeldNotice(heldBatch, key, 'off', [key, `pending:${doc.id}`].join('\u0000'));
+        } else {
+          promoted += 1;
+        }
+      } catch (err) {
+        logEvent({
+          severity: 'warn',
+          function: 'notificationDebounceSweep',
+          event: verdict === 'hold' ? 'debounce.hold.failed' : 'debounce.promote.failed',
+          extra: { pendingId: doc.id, error: (err as Error)?.message },
+        });
+      }
+    }
+  });
+
+  logEvent({
+    severity: 'info',
+    function: 'notificationDebounceSweep',
+    event: 'debounce.sweep.complete',
+    extra: { scanned: snap.size, promoted, held, skipped },
+  });
+  return { promoted, held, skipped };
+}
+
 export const notificationDebounceSweep = onSchedule(
   // Runs every minute and dispatches. The default 60s timeout leaves no room
   // to run 4x slower on a quarter vCPU, and a run can overlap the next tick.
@@ -40,43 +123,6 @@ export const notificationDebounceSweep = onSchedule(
     ...SCHEDULE_RETRY_FREQUENT,
   },
   wrapScheduled('notificationDebounceSweep', async () => {
-    const now = Date.now();
-    const snap = await db()
-      .collection('pendingNotifications')
-      .where('fireAfterMs', '<=', now)
-      .limit(SCAN_LIMIT)
-      .get();
-    if (snap.empty) return;
-
-    let promoted = 0;
-    for (const doc of snap.docs) {
-      const data = doc.data() as Record<string, unknown>;
-      try {
-        await db().runTransaction(async (tx) => {
-          const fresh = await tx.get(doc.ref);
-          if (!fresh.exists) return;
-          promoteQueuedNotification(tx, data, {
-            mode: 'debounced-promoted',
-            origin: { originPendingId: doc.id },
-          });
-          tx.delete(doc.ref);
-        });
-        promoted += 1;
-      } catch (err) {
-        logEvent({
-          severity: 'warn',
-          function: 'notificationDebounceSweep',
-          event: 'debounce.promote.failed',
-          extra: { pendingId: doc.id, error: (err as Error)?.message },
-        });
-      }
-    }
-
-    logEvent({
-      severity: 'info',
-      function: 'notificationDebounceSweep',
-      event: 'debounce.sweep.complete',
-      extra: { scanned: snap.size, promoted },
-    });
+    await drainPendingNotifications(Date.now());
   }),
 );

@@ -1464,6 +1464,8 @@ data class RecordPaymentResult(
     val confirmationAppOnly: Boolean? = null,
     val householdNoPortalAccount: Boolean,
     val officeNoticePending: Boolean,
+    /** Null when the payload omits the key. */
+    val replayed: Boolean? = null,
 )
 
 /**
@@ -1491,6 +1493,7 @@ internal fun decodeRecordPaymentResult(raw: Map<String, Any?>?): RecordPaymentRe
         confirmationAppOnly = raw?.get("confirmationAppOnly") as? Boolean,
         householdNoPortalAccount = raw?.get("householdNoPortalAccount") as? Boolean ?: false,
         officeNoticePending = raw?.get("officeNoticePending") as? Boolean ?: false,
+        replayed = raw?.get("replayed") as? Boolean,
     )
 
 // ---------- redeemCredit ----------

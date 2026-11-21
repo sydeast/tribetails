@@ -62,12 +62,27 @@ export interface HeldNoticeBatch {
    * so they are counted every run. None of the three timed jobs sends one.
    */
   readonly unnamed: Record<HeldNoticeReason, Map<string, number>>;
+  /**
+   * #2478: the copies counted here were taken off a queue at their send time
+   * and are never sent later (the three queue sweeps). The line says so. A
+   * reminder job's copies are asked about again on its next run, so its line
+   * does not.
+   */
+  readonly final?: boolean;
 }
 
-export function startHeldNoticeBatch(job: string, run: { day?: string; atMs?: number } = {}): HeldNoticeBatch {
+/** When a run happened, and (#2478) whether what it holds is gone for good. */
+export interface HeldNoticeRun {
+  day?: string;
+  atMs?: number;
+  final?: boolean;
+}
+
+export function startHeldNoticeBatch(job: string, run: HeldNoticeRun = {}): HeldNoticeBatch {
   return {
     job,
     ...(run.day !== undefined && run.day !== '' ? { day: run.day } : {}),
+    ...(run.final === true ? { final: true } : {}),
     atMs: run.atMs ?? Date.now(),
     held: { off: new Map(), unreadable: new Map(), turnedOff: new Map() },
     unnamed: { off: new Map(), unreadable: new Map(), turnedOff: new Map() },
@@ -122,7 +137,7 @@ export function tickMs(nowMs: number, scheduleTime?: string): number {
  */
 export async function withHeldNoticeBatch<T>(
   job: string,
-  when: { day?: string; atMs?: number },
+  when: HeldNoticeRun,
   run: (batch: HeldNoticeBatch) => Promise<T>,
 ): Promise<T> {
   const batch = startHeldNoticeBatch(job, when);

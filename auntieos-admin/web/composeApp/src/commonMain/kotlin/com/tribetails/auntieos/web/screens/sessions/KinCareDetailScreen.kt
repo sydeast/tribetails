@@ -43,6 +43,7 @@ import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kin411
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.visitStatusCode
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.emergencyContactsOf
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
@@ -797,16 +798,18 @@ private fun wifiSummary(k: Kinfolk): String {
 
 // ---- Status mapping --------------------------------------------------------
 
-private fun statusLabel(status: String): String = when (status.uppercase()) {
+private fun statusLabel(status: String): String = when (visitStatusCode(status)) {
     "SCHEDULED" -> "Scheduled"
     "ON_MY_WAY" -> "On my way"
     "ARRIVED"   -> "Arrived"
     "DEPARTED"  -> "Departed"
     "COMPLETED" -> "Completed"
+    // #2268: every stored spelling, the one-L CANCELED included.
+    "CANCELLED" -> "Cancelled"
     else        -> status.lowercase().replaceFirstChar { it.uppercaseChar() }.ifBlank { "Scheduled" }
 }
 
-private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
+private fun statusTone(status: String): AuntieStatusTone = when (visitStatusCode(status)) {
     "SCHEDULED" -> AuntieStatusTone.Muted
     "ON_MY_WAY" -> AuntieStatusTone.Orange
     "ARRIVED"   -> AuntieStatusTone.Teal

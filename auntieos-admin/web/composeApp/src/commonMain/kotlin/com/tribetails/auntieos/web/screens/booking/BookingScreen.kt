@@ -54,6 +54,7 @@ import com.composables.icons.lucide.CircleCheckBig
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.tribetails.auntieos.web.data.AuntieDataSource
+import com.tribetails.auntieos.web.data.visitStatusCode
 import com.tribetails.auntieos.web.data.BatchBookingResult
 import com.tribetails.auntieos.web.data.CloudFormSchemaRepository
 import com.tribetails.auntieos.web.data.FirestoreClient
@@ -1831,10 +1832,13 @@ internal val IN_FLIGHT_STATUSES: Set<String> = setOf("ON_MY_WAY", "ARRIVED", "DE
  */
 internal fun isOnTheBooks(status: String): Boolean =
     status.trim().uppercase().let { it == "SCHEDULED" || it in IN_FLIGHT_STATUSES }
-/** The pill's words: the stored status, with ON_MY_WAY read as Auntie Time reads it. */
+/**
+ * The pill's words: the stored status, with ON_MY_WAY read as Auntie Time reads it.
+ * #2268: through [visitStatusCode], so a one-L CANCELED visit reads CANCELLED.
+ */
 internal fun bookingStatusLabel(status: String): String =
-    status.trim().uppercase().let { if (it == "ON_MY_WAY") "ON THE WAY" else it }
-private fun bookingStatusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
+    visitStatusCode(status).let { if (it == "ON_MY_WAY") "ON THE WAY" else it }
+private fun bookingStatusTone(status: String): AuntieStatusTone = when (visitStatusCode(status)) {
     "DRAFT"     -> AuntieStatusTone.Orange
     "PENDING"   -> AuntieStatusTone.Warning
     "SCHEDULED" -> AuntieStatusTone.Teal

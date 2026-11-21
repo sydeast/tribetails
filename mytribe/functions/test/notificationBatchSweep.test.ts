@@ -36,10 +36,17 @@ import { FieldPath } from 'firebase-admin/firestore';
  *    not silently capped.
  */
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEvent: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), logEvent: vi.fn(), heldSummary: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
+// #2478: the run's held line. Its words and its once-a-day marker are pinned
+// in heldNoticeSummary.test.ts against the real writer; here, what the sweep
+// hands it.
+vi.mock('../src/notifications/noticeAudit', async (original) => ({
+  ...(await original<typeof import('../src/notifications/noticeAudit')>()),
+  recordHeldNoticeSummary: mocks.heldSummary,
+}));
 
 import { buildDbMock } from './_helpers/mockDb';
 import { enqueueNotification } from '../src/notifications/dispatcher';
@@ -54,6 +61,7 @@ import {
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.logEvent.mockReset();
+  mocks.heldSummary.mockReset();
 });
 
 const MIN = 60 * 1000;
@@ -112,11 +120,16 @@ interface Sink {
  * `collectionGroup()` id, every `orderBy()` argument and every `where()` call,
  * which is what lets the index-shape assertions below mean something.
  */
-function buildBatchDb(rowsByGroup: Record<string, Row[]>) {
+function buildBatchDb(
+  rowsByGroup: Record<string, Row[]>,
+  /** #2478: "Send notices to households" as the settings read answers it; 'throw' is a failed read. */
+  opts: { live?: boolean | 'throw' } = {},
+) {
   const groupsQueried: string[] = [];
   const orderByArgs: unknown[] = [];
   const whereCalls: unknown[] = [];
   const sink: Sink = { writes: [], deletes: [] };
+  const gate = { live: opts.live ?? true, reads: 0 };
   let autoId = 0;
 
   const makeDocSnap = (row: Row) => ({
@@ -154,6 +167,16 @@ function buildBatchDb(rowsByGroup: Record<string, Row[]>) {
       groupsQueried.push(name);
       return makeQuery(name, null, null);
     },
+    // #2478: the only document the sweep reads directly is the business
+    // settings the send switch lives on.
+    doc: (path: string) => ({
+      get: async () => {
+        if (!path.startsWith('business_settings/')) throw new Error(`unexpected read ${path}`);
+        gate.reads += 1;
+        if (gate.live === 'throw') throw new Error('unavailable');
+        return { exists: true, data: () => ({ householdNotificationsLive: gate.live }) };
+      },
+    }),
     collection: (name: string) => ({
       doc: (id?: string) => {
         autoId += 1;
@@ -167,7 +190,7 @@ function buildBatchDb(rowsByGroup: Record<string, Row[]>) {
       })),
   };
 
-  return { db, groupsQueried, orderByArgs, whereCalls, sink };
+  return { db, groupsQueried, orderByArgs, whereCalls, sink, gate };
 }
 
 /** One pending batch item at the canonical 4-segment path. */
@@ -591,5 +614,102 @@ describe('notificationBatchSweep: backlog drain', () => {
       bucketsFlushed: 1,
       batchKeys: ['kintale-comments'],
     });
+  });
+});
+
+/**
+ * #2478: A HOUSEHOLD'S DIGEST IS ASKED ABOUT THE SEND SWITCH AGAIN AT ITS SEND
+ * TIME. A KinTale comment queued while notices to households were on used to
+ * go out in the digest even if notices were turned off before it was due.
+ */
+describe('notificationBatchSweep: notices to households turned off before the digest is due', () => {
+  const householdRow = (uid: string, id: string, at: number, stream: string | null = 'kinfolk'): Row => {
+    const r = item(uid, 'kintale-comments', id, at, { kinfolkId: 'fam1', authorName: 'Jamie' });
+    return {
+      ...r,
+      data: { ...r.data, title: 'New comment on your KinTale', description: '', ...(stream === null ? {} : { stream }) },
+    };
+  };
+  const officeRow = (id: string, at: number): Row => {
+    const r = item('staff1', 'kintale-comments', id, at);
+    return { ...r, data: { ...r.data, title: 'New comment on a KinTale (comment box)', stream: 'staff' } };
+  };
+  const sends = (ctx: ReturnType<typeof buildBatchDb>) =>
+    ctx.sink.writes.filter((w) => w.path.startsWith('notifications/') || w.path.startsWith('notificationDispatch/'));
+
+  it('held: its items come off the queue, no digest is written, and the run counts one held notice', async () => {
+    const ctx = buildBatchDb(
+      { 'kintale-comments': [householdRow('kin1', 'c-a', NOW - 30 * MIN), householdRow('kin1', 'c-b', NOW - 20 * MIN)] },
+      { live: false },
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await runNotificationBatchSweep(NOW);
+
+    expect(res).toMatchObject({ scanned: 2, emitted: 0, held: 1 });
+    expect(sends(ctx)).toEqual([]);
+    expect(ctx.sink.deletes.sort()).toEqual([
+      `${NOTIFICATION_BATCH_ROOT}/kin1/kintale-comments/c-a`,
+      `${NOTIFICATION_BATCH_ROOT}/kin1/kintale-comments/c-b`,
+    ]);
+    // One line for the run, counts only, saying it will not be sent later.
+    expect(mocks.heldSummary).toHaveBeenCalledTimes(1);
+    const batch = mocks.heldSummary.mock.calls[0]?.[0];
+    expect(batch).toMatchObject({ job: 'notificationBatchSweep', final: true });
+    expect([...batch.held.off.values()]).toEqual(['kintale.comment.added']);
+    expect(batch.held.unreadable.size).toBe(0);
+  });
+
+  it("the office's digest still goes with the switch off, and the switch is not even read", async () => {
+    const ctx = buildBatchDb({ 'kintale-comments': [officeRow('c-a', NOW - 30 * MIN)] }, { live: false });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await runNotificationBatchSweep(NOW);
+    expect(res).toMatchObject({ emitted: 1, held: 0 });
+    expect(ctx.sink.writes.find((w) => w.path.startsWith('notificationDispatch/'))!.data.stream).toBe('staff');
+    expect(ctx.gate.reads).toBe(0);
+    expect(mocks.heldSummary).not.toHaveBeenCalled();
+  });
+
+  it('a household row queued before rows carried a stream is held too', async () => {
+    const ctx = buildBatchDb({ 'kintale-comments': [householdRow('kin1', 'c-a', NOW - 30 * MIN, null)] }, { live: false });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect(await runNotificationBatchSweep(NOW)).toMatchObject({ emitted: 0, held: 1 });
+    expect(sends(ctx)).toEqual([]);
+  });
+
+  it('on at its time, the digest goes as before and nothing is held', async () => {
+    const ctx = buildBatchDb({ 'kintale-comments': [householdRow('kin1', 'c-a', NOW - 30 * MIN)] }, { live: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect(await runNotificationBatchSweep(NOW)).toMatchObject({ emitted: 1, held: 0 });
+    expect(ctx.sink.writes.find((w) => w.path.startsWith('notificationDispatch/'))!.data.stream).toBe('kinfolk');
+    expect(mocks.heldSummary).not.toHaveBeenCalled();
+  });
+
+  it('the switch is read once per run, however many households are due', async () => {
+    const ctx = buildBatchDb(
+      {
+        'kintale-comments': [
+          householdRow('kin1', 'c-a', NOW - 30 * MIN),
+          householdRow('kin2', 'c-b', NOW - 30 * MIN),
+          householdRow('kin3', 'c-c', NOW - 30 * MIN),
+        ],
+      },
+      { live: false },
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect(await runNotificationBatchSweep(NOW)).toMatchObject({ emitted: 0, held: 3 });
+    expect(ctx.gate.reads).toBe(1);
+    expect(mocks.heldSummary.mock.calls[0]?.[0].held.off.size).toBe(3);
+  });
+
+  it('ERROR: a switch that cannot be read leaves the bucket queued for the next tick, then it goes', async () => {
+    const ctx = buildBatchDb({ 'kintale-comments': [householdRow('kin1', 'c-a', NOW - 30 * MIN)] }, { live: 'throw' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect(await runNotificationBatchSweep(NOW)).toMatchObject({ emitted: 0, held: 0 });
+    expect(ctx.sink.deletes).toEqual([]);
+    expect(sends(ctx)).toEqual([]);
+    expect(mocks.heldSummary).not.toHaveBeenCalled();
+
+    ctx.gate.live = true;
+    expect(await runNotificationBatchSweep(NOW + MIN)).toMatchObject({ emitted: 1, held: 0 });
   });
 });
