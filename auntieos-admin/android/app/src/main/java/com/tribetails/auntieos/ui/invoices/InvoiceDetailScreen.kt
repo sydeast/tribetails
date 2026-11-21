@@ -48,7 +48,6 @@ import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPaymen
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.howToPayRowsForInvoice
 import com.tribetails.auntieos.data.model.KinCareSession
-import com.tribetails.auntieos.data.model.visitStatusCode
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.domain.InvoiceAction
 import com.tribetails.auntieos.domain.draftPanelLine
@@ -1593,9 +1592,6 @@ private fun InvoiceLineTotalsRows(
     )
 }
 
-/** #2268: a linked visit's status in words, a one-L CANCELED visit read as cancelled. */
-internal fun linkedVisitStatusLabel(status: String): String = visitStatusCode(status).lowercase().replace('_', ' ')
-
 @Composable
 private fun LinkedSessionRow(
     session: KinCareSession,
@@ -1610,7 +1606,7 @@ private fun LinkedSessionRow(
     val dateLabel = com.tribetails.auntieos.domain.storedBusinessDay(session.completedAt, dayZone)
         .ifBlank { com.tribetails.auntieos.domain.storedBusinessDay(session.startTime, dayZone) }
         .ifBlank { "-" }
-    val statusText = linkedVisitStatusLabel(session.status)
+    val statusText = session.status.lowercase().replace('_', ' ')
     Row(
         modifier = Modifier
             .fillMaxWidth()
