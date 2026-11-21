@@ -114,8 +114,10 @@ node scripts/voice-secret.mjs push
 ```
 
 It stores nothing when the files fail the check below, and it never prints a
-line of them. `docs/runbooks/release-internals.md`, "Ask Auntie's voice files
-on the runner", has the rest.
+line of them. A release from the Mac that ships the admin functions compares
+the stored copy with the files here and warns in yellow when they differ, so
+a missed push shows up at the next release. `docs/runbooks/release-internals.md`,
+"Ask Auntie's voice files on the runner", has the rest.
 
 Channel and length rules belong in `voice/02_Channel_Playbook.md` §2. The
 per-type lines in `SYSTEM_FRAMING` (`web/functions/generate.js`) must agree with

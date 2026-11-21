@@ -707,6 +707,13 @@ jobs:
           # restored on every exit it controls. A job that is cancelled or
           # times out kills it before it can, and these hold real names.
           rm -rf auntieos-admin/web/functions/voice
+          # The same files outside the workspace. voice-secret.mjs checks the
+          # stored copy in a folder of its own before it writes it, and
+          # firebase-tools packs each functions codebase, voice files
+          # included, into a zip. Both go in the temp directory, both are
+          # removed by the process that made them, and a killed process
+          # removes nothing.
+          rm -rf "${TMPDIR:-/tmp}"/voice-restore-* "${TMPDIR:-/tmp}"/firebase-functions-*
           echo "Removed the restored keystores, local.properties, sentry.properties, gradle.properties, credentials files and Ask Auntie's voice files."
 
       - name: Summary

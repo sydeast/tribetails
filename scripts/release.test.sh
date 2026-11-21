@@ -3928,7 +3928,10 @@ else
   printf '%s\n' "$OUT" | grep -i "voice" | tail -8
 fi
 
-# Usable files.
+# Usable files, and a gcloud that answers nothing (the shared stub): a Mac with
+# no gcloud, or one that is signed out. The files ship. The copy stored for the
+# scheduled release could not be compared with them, which is said in yellow
+# and stops nothing.
 DVB="$(admin_repo)"
 voice_files "$DVB" $'kin: Quillon\nkinfolk: Bramwell\n'
 RCVB="$(run_release "$DVB" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DVB/calls")"
@@ -3939,6 +3942,15 @@ if [ "$RCVB" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: the files this rel
   ok "voice: usable voice files pass, with counts, and the admin functions deploy"
 else
   bad "voice: usable voice files did not pass (rc=$RCVB)"; printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+if [ "$RCVB" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: Secret Manager could not be asked for AUNTIE_VOICE_FILES" &&
+   printf '%s' "$OUT" | grep -qF "voice: NOT COMPARED with the copy stored for the scheduled release" &&
+   printf '%s' "$OUT" | grep -qF "node scripts/voice-secret.mjs push" &&
+   ! printf '%s' "$OUT" | grep -qF "REFUSED"; then
+  ok "voice: a Secret Manager that cannot be asked leaves the stored copy uncompared, in yellow, and the release goes on"
+else
+  bad "voice: an unreachable Secret Manager stopped a release that has its files, or said nothing (rc=$RCVB)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
 fi
 if printf '%s' "$OUT" | grep -qiE "quillon|bramwell"; then
   bad "voice: the release output repeats a name out of the voice files"
@@ -4392,30 +4404,116 @@ else
   printf '%s\n' "$OUT" | grep -iE "voice|client config" | tail -10
 fi
 
-# The Mac: the files are in the checkout, and Secret Manager holds a copy that
-# would be refused. The release uses the checkout's files, asks nothing about
-# the stored copy, and leaves the files where they were.
-DRM="$(admin_repo)"
-voice_files "$DRM" "$GOOD_NAMES"
-voice_store "$DRM" "Quillon and Bramwell, typed in by hand"
-MAC_BEFORE="$(voice_sum "$(voice_dir "$DRM")")"
-RCRM="$(run_release "$DRM" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRM/secrets" GCLOUD_CALL_LOG="$DRM/gcalls" \
-  FIREBASE_CALL_LOG="$DRM/calls" FIREBASE_VOICE_LOG="$DRM/voice-at-deploy")"
-OUT="$(stripped "$DRM/out")"
-if [ "$RCRM" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: the files this release uploads are usable" &&
-   ! printf '%s' "$OUT" | grep -qiE "restored|stored copy|Secret Manager and leave" &&
-   ! grep -qF "AUNTIE_VOICE_FILES" "$DRM/gcalls" &&
-   [ "$(cat "$DRM/voice-at-deploy" 2>/dev/null)" = "3 $MAC_BEFORE" ]; then
-  ok "voice restore: files already in the checkout are used as they are, and Secret Manager is not asked for a copy"
-else
-  bad "voice restore: a checkout with its own files was not left to them (rc=$RCRM)"
-  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
-fi
-if [ "$(voice_sum "$(voice_dir "$DRM")")" = "$MAC_BEFORE" ] && [ -s "$(voice_dir "$DRM")/corpus/exemplars.md" ]; then
-  ok "voice restore: files already in the checkout are still there, unchanged, after the release"
-else
-  bad "voice restore: the release changed or removed voice files it did not restore"
-fi
+# --- the Mac: is the stored copy these files? --------------------------------
+# The files are in the checkout. The release ships them, never replaces or
+# removes them, and restores nothing. It also asks whether the copy stored for
+# the scheduled release is the same files, because an edit released from the
+# Mac and never stored is undone by the next scheduled run. Every answer to
+# that question, and no answer at all, is at most a yellow warning: none of
+# them may stop the release in hand, which has its files.
+#
+# voice_repacked <voice dir>: those files as a bundle packed another way (other
+# compression level, other key order, indented JSON). Same files, other bytes,
+# which is what a different Node on the Mac would store.
+voice_repacked() {
+  node -e '
+    const fs = require("fs"), zlib = require("zlib");
+    const files = {};
+    for (const f of ["corpus/exemplars.md", "02_Channel_Playbook.md", "01_Voice_Bible.md"]) {
+      files[f] = fs.readFileSync(process.argv[1] + "/" + f, "utf8");
+    }
+    const json = JSON.stringify({ files, format: "auntie-voice/1" }, null, 2);
+    process.stdout.write(zlib.gzipSync(json, { level: 1 }).toString("base64"));
+  ' "$1"
+}
+
+# drift_case <label> <stored value, or - for no secret> <said> <warned> [VAR=VAL ...]
+#   <said>    a line the output has to carry
+#   <warned>  1 when the output must name the command that stores the files,
+#             0 when it must not
+# Whatever is stored, the release finishes, deploys functions:default once with
+# the checkout's own files, leaves them as they were and repeats no name.
+drift_case() {
+  local label="$1" value="$2" said="$3" warned="$4"; shift 4
+  local d rc out before pushes
+  d="$(admin_repo)"
+  voice_files "$d" "$GOOD_NAMES"
+  if [ "$value" = "-" ]; then voice_store "$d"; value=""; else voice_store "$d" "$value"; fi
+  before="$(voice_sum "$(voice_dir "$d")")"
+  rc="$(run_release "$d" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$d/secrets" GCLOUD_CALL_LOG="$d/gcalls" \
+    FIREBASE_CALL_LOG="$d/calls" FIREBASE_VOICE_LOG="$d/voice-at-deploy" "$@")"
+  out="$(stripped "$d/out")"
+  pushes="$(printf '%s\n' "$out" | grep -cF "node scripts/voice-secret.mjs push")"
+  if [ "$rc" = "0" ] && printf '%s' "$out" | grep -qF "$said" &&
+     { { [ "$warned" = "1" ] && [ "$pushes" = "1" ]; } || { [ "$warned" = "0" ] && [ "$pushes" = "0" ]; }; } &&
+     ! printf '%s' "$out" | grep -qF "REFUSED"; then
+    ok "voice compare: a stored copy that $label is told so, and the release goes on"
+  else
+    bad "voice compare: a stored copy that $label stopped the release, or was reported wrongly (rc=$rc, push named $pushes time(s))"
+    printf '%s\n' "$out" | grep -i "voice" | tail -8
+  fi
+  if [ "$(admin_calls "$d/calls" functions:default)" = "1" ] &&
+     [ "$(cat "$d/voice-at-deploy" 2>/dev/null)" = "3 $before" ] &&
+     [ "$(voice_sum "$(voice_dir "$d")")" = "$before" ] && [ -s "$(voice_dir "$d")/corpus/exemplars.md" ] &&
+     printf '%s' "$out" | grep -qF "voice: the files this release uploads are usable" &&
+     ! printf '%s' "$out" | grep -qiE "restored|Secret Manager and leave"; then
+    ok "voice compare: with a stored copy that $label, the checkout's own files deploy and are left as they were"
+  else
+    bad "voice compare: with a stored copy that $label, the checkout's files were not the ones deployed, or were changed"
+    printf '%s\n' "$out" | grep -i "voice" | tail -8
+  fi
+  voice_quiet "a release told its stored copy $label" "$out" "$value"
+  voice_quiet "the gcloud command lines of a release told its stored copy $label" "$(cat "$d/gcalls" 2>/dev/null)" "$value"
+}
+
+SRC_SAME="$(mktemp -d)"; voice_write "$SRC_SAME" "$GOOD_NAMES"
+SRC_OTHER="$(mktemp -d)"; voice_write "$SRC_OTHER" $'kin: Quillon\nkinfolk: Bramwell\nauntie: Thessaly\n'
+drift_case "is these files" "$STORED" \
+  "voice: the stored copy (AUNTIE_VOICE_FILES) holds the same 3 files" 0
+drift_case "is these files packed another way" "$(voice_repacked "$SRC_SAME")" \
+  "voice: the stored copy (AUNTIE_VOICE_FILES) holds the same 3 files" 0
+drift_case "holds other files" "$(voice_bundle "$DPM" "$SRC_OTHER")" \
+  "voice: THE STORED COPY IS NOT THESE FILES" 1
+drift_case "does not exist" "-" \
+  "voice: NO COPY IS STORED for the scheduled release" 1
+# What the Mac's release was first tested against (#2399): a stored copy a
+# hosted release would refuse. Here it is a warning, never a refusal.
+drift_case "cannot be used" "Quillon and Bramwell, typed in by hand" \
+  "voice: THE STORED COPY CANNOT BE USED" 1
+# The mirror of the went-quiet refusal above. There, a checkout with no files
+# had nothing to ship. Here the files are in the checkout, so a Secret Manager
+# that answered step 0c and not this step costs a comparison and nothing else.
+drift_case "could not be asked for after step 0c" "$STORED" \
+  "voice: NOT COMPARED with the copy stored for the scheduled release" 1 GCLOUD_LIST_ANSWERS=1
+drift_case "is listed and not handed over" "$STORED" \
+  "voice: NOT COMPARED with the copy stored for the scheduled release" 1 GCLOUD_VOICE_ACCESS=denied
+rm -rf "$SRC_SAME" "$SRC_OTHER"
+
+# A run that does not upload the admin functions has no business with the voice
+# files, stored or not. Neither rule above may reach it: not the refusal of a
+# checkout with no files and a Secret Manager gone quiet, and not the
+# comparison. Both runs here have a store that answers step 0c once and then
+# nothing, and holds a copy a hosted release would refuse.
+NO_ADMIN_ENV=(RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0
+  RELEASE_RETRY_KEEP=0 GCLOUD_LIST_ANSWERS=1)
+for with_files in no yes; do
+  DRO="$(admin_repo)"
+  [ "$with_files" = "yes" ] && voice_files "$DRO" "$GOOD_NAMES"
+  voice_store "$DRO" "Quillon and Bramwell, typed in by hand"
+  RCRO="$(run_release "$DRO" "${NO_ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRO/secrets" GCLOUD_CALL_LOG="$DRO/gcalls" \
+    FIREBASE_CALL_LOG="$DRO/calls")"
+  OUT="$(stripped "$DRO/out")"
+  if [ "$RCRO" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: not looked at" &&
+     printf '%s' "$OUT" | grep -qF "client config: every declared VITE_* value resolved" &&
+     ! printf '%s' "$OUT" | grep -qF "AUNTIE_VOICE_FILES" && ! grep -qF "AUNTIE_VOICE_FILES" "$DRO/gcalls" &&
+     ! printf '%s' "$OUT" | grep -qiE "REFUSED|stored copy" &&
+     [ "$(cat "$DRO/repo/.release-state" 2>/dev/null)" = "$(cd "$DRO/repo" && git rev-parse HEAD)" ]; then
+    ok "voice: a run without the admin functions (voice files in the checkout: $with_files) never asks for the stored copy and is not stopped by a Secret Manager gone quiet"
+  else
+    bad "voice: a run without the admin functions (voice files in the checkout: $with_files) asked for the stored copy or was stopped (rc=$RCRO)"
+    printf '%s\n' "$OUT" | grep -iE "voice|REFUSED" | tail -8
+  fi
+done
 
 # Some of the files, not all: nothing is restored over them, and the one that
 # is there is left alone.

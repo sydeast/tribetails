@@ -119,6 +119,11 @@ Everything else that used to live here moved to `docs/runbooks/` on
    It ends with `voice: stored 3 files as AUNTIE_VOICE_FILES and read them
    back`, or `already holds these 3 files` when nothing changed.
 
+   If you forget, the release reminds you. Step 1b compares the stored copy
+   with this checkout's files and prints a yellow warning with the same
+   `push` command when they differ or nothing is stored. It warns and goes
+   on; it never stops the release.
+
 ---
 
 ## Run it
@@ -416,6 +421,8 @@ for the quoted text.
 | "REFUSED: the stored copy of Ask Auntie's voice files cannot be used" | The copy in Secret Manager is empty, damaged or fails the names check, and this checkout has no files of its own. Nothing deployed. Store a good copy from the Mac (item 8 under [Before a release](#before-a-release)) and rerun |
 | "REFUSED: the stored copy of Ask Auntie's voice files could not be asked for" | Secret Manager answered step 0c and then dropped the request for the voice files. Nothing deployed. Rerun |
 | "voice: NOT IN THIS CHECKOUT" in yellow | The admin functions shipped without Ask Auntie's voice files, so every draft errors. The lines under it say whether no copy is stored or Secret Manager could not be asked. Store one (same item 8), then release again |
+| "voice: THE STORED COPY IS NOT THESE FILES", "NO COPY IS STORED" or "THE STORED COPY CANNOT BE USED" in yellow | This release shipped the voice files in this checkout and is fine. The copy the scheduled release ships is different, missing or damaged. Run `node scripts/voice-secret.mjs push` from the repo root before the next Monday or Thursday run |
+| "voice: NOT COMPARED with the copy stored for the scheduled release" in yellow | This release shipped the voice files in this checkout and is fine. Secret Manager did not answer, so nobody knows whether the stored copy matches. If you edited the voice files since the last `push`, run it again |
 | Signing errors at step 1c | `auntieos-admin/android/local.properties` is missing a key |
 | `communication with agent failed` on `git push` | 1Password is locked. Unlock it and rerun |
 

@@ -88,7 +88,7 @@ and prints `resumed:` instead of refusing. It uses the same rule as the release
 | 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
 | 0c | Client build config (`VITE_*`) | Writes each web app's `.env.production.local` from Secret Manager. Runs before step 1 because `vite build` inlines these values; a value that arrives later ships as an empty string. See "Client build config (`VITE_*`) comes from the store too". |
 | 1 | `npm run check` | Typecheck, lint, contracts, seeds, functions build, test, web builds. The functions build runs before the tests because `functionTargetLoading.test.ts` loads `lib/index.js` and refuses a missing or stale one (#1401). Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
-| 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. Under `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` it then runs `auntieos-admin/web/functions/checkVoice.js` on the voice files the admin codebase uploads: files that are present and that `generate.js` would refuse stop the release here. A checkout with none of them (the hosted runner) gets the copy stored in Secret Manager as `AUNTIE_VOICE_FILES`, restored by `scripts/voice-secret.mjs` for the length of the run and checked the same way; a stored copy that cannot be used stops the release, and no stored copy at all is reported and goes on (#2399). See "Ask Auntie's voice files on the runner". Neither script prints a line of a voice file, only a reason and counts. |
+| 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. Under `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` it then runs `auntieos-admin/web/functions/checkVoice.js` on the voice files the admin codebase uploads: files that are present and that `generate.js` would refuse stop the release here. A checkout with none of them (the hosted runner) gets the copy stored in Secret Manager as `AUNTIE_VOICE_FILES`, restored by `scripts/voice-secret.mjs` for the length of the run and checked the same way; a stored copy that cannot be used stops the release, and no stored copy at all is reported and goes on (#2399). A checkout that has the files (the Mac) ships its own, and is told in yellow when the stored copy is not the same files; that never stops it. See "Ask Auntie's voice files on the runner". Neither script prints a line of a voice file, only a reason and counts. |
 | 1c | Android build | Assembles **both** signed release APKs, operator and portal. Runs before the first deploy so a build failure costs nothing; the uploads are step 6b. When Gradle's output says it is "running on Java" the wrong version, the refusal names the JDK instead of the signing keys. |
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
@@ -1060,7 +1060,10 @@ The release job, in order, and only when the mode is `preflight` or `on`:
    checkout has none; see
    [Ask Auntie's voice files on the runner](#ask-aunties-voice-files-on-the-runner).
 10. Deletes everything step 7 wrote, and the voice files if a cancelled run
-    left them behind, in an `always()` step.
+    left them behind, in an `always()` step. That covers the workspace and
+    the two places in the temp directory a killed process can leave them: the
+    folder the restore checks them in (`voice-restore-*`) and the zip
+    `firebase-tools` packs the functions into (`firebase-functions-*`).
 
 **Cost of a full run.** The runner starts empty every run, so it has no
 `.release-state` and deploys the whole functions fleet (about an hour), on top
@@ -1302,7 +1305,8 @@ which is also the way to find out whether it is.
 
 A hosted release ships the stored copy, not the Mac's. If you edit the voice
 files, release from the Mac and skip the push, the next Monday or Thursday
-run puts the older voice back.
+run puts the older voice back. The release from the Mac warns about that in
+yellow (the second table below).
 
 What step 1b does on the runner:
 
@@ -1314,9 +1318,25 @@ What step 1b does on the runner:
 | No answer, after answering step 0c of the same run | Refuses before any deploy. A dropped request: run it again |
 | No answer at any point in the run (no gcloud, signed out, `RELEASE_SKIP_CLIENT_SECRETS=1`) | Warns and goes on, as for no copy. The runner does not get here: step 0c refuses first |
 
-A release from the Mac uses the files already in the checkout and does not
-read the secret. To see when the stored copy last changed, without printing
-it:
+A release from the Mac ships the files already in the checkout, whatever the
+secret holds. It reads the secret for one thing: once its own files pass
+`checkVoice.js`, step 1b runs `node scripts/voice-secret.mjs compare`, which
+hashes both sides in memory and says whether the stored copy is the same
+files. It writes the stored copy nowhere and prints no hash.
+
+| The stored copy | The release from the Mac prints |
+|---|---|
+| Holds the same files | `voice: the stored copy (AUNTIE_VOICE_FILES) holds the same 3 files` |
+| Holds other files | Yellow: `THE STORED COPY IS NOT THESE FILES`, and the `push` command |
+| Does not exist | Yellow: `NO COPY IS STORED`, and the `push` command |
+| Is empty or damaged | Yellow: `THE STORED COPY CANNOT BE USED`, and the `push` command |
+| Could not be read (no gcloud, signed out, a dropped request) | Yellow: `NOT COMPARED`, and the `push` command |
+
+None of these stops the release, a Secret Manager that answered step 0c and
+then went quiet included. The release in hand has its files; the warning is
+about the next scheduled one.
+
+To see when the stored copy last changed, without printing it:
 
 ```bash
 gcloud secrets versions list AUNTIE_VOICE_FILES --project auntieos-ttpc

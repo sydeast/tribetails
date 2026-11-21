@@ -236,7 +236,7 @@ CLEAN_BODY="$(awk '
 ' "$WF")"
 for path in 'auntieos-release.keystore' 'auntieos-admin/android/local.properties' \
             'mytribe/local.properties' '.android/debug.keystore' 'gradle.properties' 'gha-creds-' \
-            'auntieos-admin/web/functions/voice'; do
+            'auntieos-admin/web/functions/voice' 'voice-restore-' 'firebase-functions-'; do
   if printf '%s' "$CLEAN_BODY" | grep >/dev/null -cF "$path"; then
     ok "cleanup removes $path"
   else
@@ -346,12 +346,17 @@ SANDBOX="$(mktemp -d)"
 # The voice files are sentinels too: off a runner, the cleanup must not delete
 # the copy a developer's checkout holds.
 VOICE_DIR=auntieos-admin/web/functions/voice
+# And two in the temp directory, where the same files can be left by a process
+# that was killed: the folder voice-secret.mjs checks the stored copy in, and
+# the zip firebase-tools packs a functions codebase into. tmp/keep.txt is
+# somebody else's file there, which no run may touch.
 SENTINELS="home/.android/debug.keystore gradle/gradle.properties ws/mytribe/local.properties
-  ws/auntieos-admin/android/local.properties ws/$VOICE_DIR/01_Voice_Bible.md ws/$VOICE_DIR/corpus/exemplars.md"
+  ws/auntieos-admin/android/local.properties ws/$VOICE_DIR/01_Voice_Bible.md ws/$VOICE_DIR/corpus/exemplars.md
+  tmp/voice-restore-Ab12Cd/corpus/exemplars.md tmp/firebase-functions-Ab12Cd.zip tmp/keep.txt"
 seed_sandbox() {
   rm -rf "${SANDBOX:?}"/*
   mkdir -p "$SANDBOX/home/.android" "$SANDBOX/gradle" "$SANDBOX/ws/mytribe" "$SANDBOX/ws/auntieos-admin/android" "$SANDBOX/rt" \
-           "$SANDBOX/ws/$VOICE_DIR/corpus"
+           "$SANDBOX/ws/$VOICE_DIR/corpus" "$SANDBOX/tmp/voice-restore-Ab12Cd/corpus"
   for f in $SENTINELS; do
     printf 'sentinel\n' > "$SANDBOX/$f"
   done
@@ -363,11 +368,14 @@ sandbox_intact() {
 }
 # run_body <name> <GITHUB_ACTIONS> <RUNNER_TEMP>: runs with only the variables
 # named here plus PATH, from the sandbox workspace. Echoes the exit code.
+# TMPDIR is the sandbox's own, always: the cleanup sweeps the temp directory,
+# and left unset that would be this machine's /tmp.
 run_body() {
   local body rc
   body="$(step_run_body "$1")"
   [ -n "$body" ] || { echo "empty"; return; }
   ( cd "$SANDBOX/ws" && env -i PATH="$PATH" HOME="$SANDBOX/home" GRADLE_USER_HOME="$SANDBOX/gradle" \
+      TMPDIR="$SANDBOX/tmp" \
       ${2:+GITHUB_ACTIONS="$2"} ${3:+RUNNER_TEMP="$3"} \
       AUNTIEOS_KEYSTORE_B64=eA== AUNTIEOS_KEYSTORE_PASSWORD=x AUNTIEOS_KEY_ALIAS=x AUNTIEOS_KEY_PASSWORD=x \
       AUNTIEOS_ANDROID_SENTRY_DSN=x MYTRIBE_DEBUG_KEYSTORE_B64=eA== MAPBOX_DOWNLOADS_TOKEN=x ANDROID_MAPBOX_PUBLIC_TOKEN=x SENTRY_AUTH_TOKEN=x \
@@ -406,6 +414,15 @@ if [ "$rc" = "0" ] && [ ! -e "$SANDBOX/ws/$VOICE_DIR" ] &&
   ok "cleanup on a runner removes Ask Auntie's voice files from the workspace"
 else
   bad "cleanup on a runner exited $rc or left the voice files in the workspace: $(head -2 "$SANDBOX/out")"
+fi
+# The same run, in the temp directory: the two leftovers that can hold the
+# voice files are gone, and a file that is neither is still there.
+if [ "$rc" = "0" ] && [ ! -e "$SANDBOX/tmp/voice-restore-Ab12Cd" ] &&
+   [ ! -e "$SANDBOX/tmp/firebase-functions-Ab12Cd.zip" ] &&
+   [ "$(cat "$SANDBOX/tmp/keep.txt" 2>/dev/null)" = "sentinel" ]; then
+  ok "cleanup on a runner removes a killed restore's folder and a killed deploy's zip from the temp directory, and nothing else there"
+else
+  bad "cleanup on a runner left a copy of the voice files in the temp directory, or removed another file there: $(ls "$SANDBOX/tmp" 2>/dev/null | tr '\n' ' ')"
 fi
 rm -rf "$SANDBOX"
 

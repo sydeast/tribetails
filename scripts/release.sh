@@ -2277,7 +2277,17 @@ fi
 # rerun asks again.
 #
 # Files already in the checkout are checked as they are and never replaced.
-# That is the Mac: a release from it asks Secret Manager nothing here.
+# That is the Mac, and its release ships them whatever Secret Manager holds.
+#
+# It does ask one thing, once its own files have passed: is the stored copy
+# these files? The scheduled release ships the stored copy, so an edit that
+# was released from the Mac and never stored is undone by the next scheduled
+# run, and nothing else would say so. `voice-secret.mjs compare` answers by
+# hash, in memory. THIS NEVER STOPS A RELEASE. A copy that differs, is
+# missing or is damaged, and a Secret Manager that does not answer (even one
+# that answered step 0c), each get a yellow warning with the command that
+# stores the files. The release in hand has its files and is not the one at
+# risk.
 #
 # Neither script prints a line of a voice file, only a reason and counts.
 STEP="checking Ask Auntie's voice files"
@@ -2342,6 +2352,43 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
       grn "voice: the files this release uploads are usable"
       if [ "$VOICE_RESTORED" = "1" ]; then
         grn "  They came from Secret Manager and leave the checkout when this run ends."
+      else
+        # The checkout's own files. Every arm below goes on, the catch-all
+        # included: see "THIS NEVER STOPS A RELEASE" above. The script prints
+        # which answer it was, and the yellow lines say what to do about it.
+        STEP="comparing Ask Auntie's voice files with the stored copy"
+        VOICE_COMPARE_RC=0
+        node "$ROOT/scripts/voice-secret.mjs" compare --project "$PROJECT" || VOICE_COMPARE_RC=$?
+        case "$VOICE_COMPARE_RC" in
+          0) ;;
+          3)
+            ylw "voice: NO COPY IS STORED for the scheduled release. This release ships"
+            ylw "  the files in this checkout. A scheduled release has none, so it would"
+            ylw "  ship the admin functions without them and Ask Auntie would answer"
+            ylw "  every draft with an error. Store them, from the repo root:"
+            ylw "    node scripts/voice-secret.mjs push"
+            ;;
+          7)
+            ylw "voice: THE STORED COPY IS NOT THESE FILES. This release ships the files"
+            ylw "  in this checkout. The scheduled release ships the stored copy, so its"
+            ylw "  next run would put that one back. To store the files in this"
+            ylw "  checkout, from the repo root:"
+            ylw "    node scripts/voice-secret.mjs push"
+            ;;
+          8)
+            ylw "voice: THE STORED COPY CANNOT BE USED (the line above). This release"
+            ylw "  ships the files in this checkout. A scheduled release would refuse at"
+            ylw "  this step. Store a good copy, from the repo root:"
+            ylw "    node scripts/voice-secret.mjs push"
+            ;;
+          *)
+            ylw "voice: NOT COMPARED with the copy stored for the scheduled release (the"
+            ylw "  line above). This release ships the files in this checkout either"
+            ylw "  way. If they changed since they were last stored, from the repo root:"
+            ylw "    node scripts/voice-secret.mjs push"
+            ;;
+        esac
+        STEP="checking Ask Auntie's voice files"
       fi
       ;;
     3)

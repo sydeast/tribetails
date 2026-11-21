@@ -5,6 +5,7 @@
  *   node scripts/voice-secret.mjs restore [--project P]   release step 1b
  *   node scripts/voice-secret.mjs clean                   release exit
  *   node scripts/voice-secret.mjs push [--project P]      the operator, on the Mac
+ *   node scripts/voice-secret.mjs compare [--project P]   release step 1b, on the Mac
  *
  * WHY THIS EXISTS
  * `generateAuntieCopy` reads three files from auntieos-admin/web/functions/voice/
@@ -44,6 +45,24 @@
  *   6  some of the voice files are already in the checkout. Nothing was
  *      written over them.
  *
+ * EXIT CODES OF `compare`. It runs in a checkout that has the files, the Mac,
+ * and answers one question: is the stored copy these files? A hosted release
+ * ships the stored copy, so a copy that fell behind puts the older voice back
+ * on the next scheduled run. release.sh warns on every answer but 0 and never
+ * stops on any of them. 3, 4 and 5 mean what they mean for `restore`:
+ *   0  the stored copy holds the same three files
+ *   3  Secret Manager answered, and it holds no such secret
+ *   4  Secret Manager could not be asked
+ *   5  Secret Manager lists the secret and would not hand over its value
+ *   6  the checkout does not have all three files, so there is nothing to
+ *      compare
+ *   7  the stored copy holds different files
+ *   8  the stored copy cannot be used: empty, or not a bundle
+ * The two sides are compared by SHA-256 of the files' text, in memory. Not by
+ * the stored string: gzip's bytes can change with the Node that packed them,
+ * and a Node upgrade would then read as an edit. The stored copy is written
+ * nowhere, and no digest is printed.
+ *
  * NOTHING HERE PRINTS A LINE OF A VOICE FILE, and the bundle never goes on a
  * command line. A release log is public. That includes error text: Node's
  * JSON.parse quotes the input it choked on, so its message is never printed.
@@ -53,6 +72,7 @@
  * `base64` a Mac and an ubuntu runner happen to carry.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -96,8 +116,7 @@ export class VoiceBundleError extends Error {}
 
 /** The voice files under `dir`, as the text Secret Manager stores. */
 export function packVoice(dir) {
-  const files = {};
-  for (const file of VOICE_FILES) files[keyOf(file)] = fs.readFileSync(path.join(dir, file), 'utf8');
+  const files = readVoiceFiles(dir);
   const json = JSON.stringify({ format: BUNDLE_FORMAT, files });
   return zlib.gzipSync(Buffer.from(json, 'utf8'), { level: 9 }).toString('base64');
 }
@@ -135,6 +154,26 @@ export function unpackVoice(stored) {
   const extra = Object.keys(files).filter((k) => !VOICE_KEYS.includes(k)).length;
   if (extra) throw new VoiceBundleError(`it holds ${extra} file(s) that are not voice files`);
   return Object.fromEntries(VOICE_KEYS.map((k) => [k, files[k]]));
+}
+
+/** The voice files under `dir`, as `{ key: text }`. */
+function readVoiceFiles(dir) {
+  return Object.fromEntries(VOICE_FILES.map((file) => [keyOf(file), fs.readFileSync(path.join(dir, file), 'utf8')]));
+}
+
+/**
+ * One digest for a set of voice files: what they say, whatever packed them.
+ * Each file goes in with its name and its length, so text cannot move from the
+ * end of one file to the start of the next and hash the same.
+ */
+export function voiceDigest(files) {
+  const hash = crypto.createHash('sha256');
+  for (const key of VOICE_KEYS) {
+    const text = Buffer.from(files[key], 'utf8');
+    hash.update(`${key}\n${text.length}\n`);
+    hash.update(text);
+  }
+  return hash.digest('hex');
 }
 
 /** Write `files` under `dir`, with `mode` on each file. */
@@ -282,6 +321,48 @@ function clean() {
   return 0;
 }
 
+function compare(project) {
+  const dir = path.join(FUNCTIONS_DIR, 'voice');
+  const here = VOICE_FILES.filter((f) => fs.existsSync(path.join(dir, f))).length;
+  if (here !== VOICE_FILES.length) {
+    console.error(
+      `voice: ${here} of the ${VOICE_FILES.length} voice files are in this checkout, so there is nothing to ` +
+        'compare the stored copy with.',
+    );
+    return 6;
+  }
+  const mine = voiceDigest(readVoiceFiles(dir));
+
+  const stored = readStored(project);
+  if (stored.status === 'absent') {
+    console.error(`voice: Secret Manager holds no ${SECRET_NAME}.`);
+    return 3;
+  }
+  if (stored.status === 'unasked') {
+    console.error(`voice: Secret Manager could not be asked for ${SECRET_NAME}. ${stored.why}`);
+    return 4;
+  }
+  if (stored.status === 'unreadable') {
+    console.error(`voice: ${SECRET_NAME} is in Secret Manager and its value could not be read. ${stored.why}`);
+    return 5;
+  }
+
+  let theirs;
+  try {
+    theirs = voiceDigest(unpackVoice(stored.value));
+  } catch (e) {
+    if (!(e instanceof VoiceBundleError)) throw e;
+    console.error(`voice: the stored copy (${SECRET_NAME}) cannot be used: ${e.message}.`);
+    return 8;
+  }
+  if (theirs !== mine) {
+    console.error(`voice: the stored copy (${SECRET_NAME}) does not hold the files in this checkout.`);
+    return 7;
+  }
+  console.log(`voice: the stored copy (${SECRET_NAME}) holds the same ${VOICE_FILES.length} files`);
+  return 0;
+}
+
 /** One gcloud call that changes the store. Returns '' or why it failed. */
 function gcloudWrite(args, input) {
   const r = spawnSync('gcloud', args, {
@@ -373,11 +454,14 @@ function main(argv) {
       return clean();
     case 'push':
       return push(project);
+    case 'compare':
+      return compare(project);
     default:
-      console.error('usage: node scripts/voice-secret.mjs restore|clean|push [--project P]');
+      console.error('usage: node scripts/voice-secret.mjs restore|clean|push|compare [--project P]');
       console.error('  restore  put the stored voice files into a checkout that has none (release step 1b)');
       console.error('  clean    take them out again');
       console.error(`  push     store this checkout's voice files, after: ${SYNC_COMMAND}`);
+      console.error("  compare  say whether the stored copy is this checkout's voice files");
       return 2;
   }
 }
