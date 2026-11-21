@@ -24,6 +24,10 @@ import {
   partPaidSummary,
   paidDollarsOf,
   payBlockedReason,
+  paymentHistoryOf,
+  paymentRowDayLabel,
+  paymentRowIsCredit,
+  paymentRowMethodLabel,
   NOTHING_TO_PAY,
   quoteActorLabel,
 } from '../lib/invoiceFormat';
@@ -392,6 +396,8 @@ export function InvoiceDetail() {
   // #2410: an open bill the server says cannot take a payment. No pay option
   // is drawn for it, and its sentence goes where they would be.
   const payBlocked = payBlockedReason(inv);
+  // #2334: each payment on this bill, how it was paid, the day and the amount.
+  const history = paymentHistoryOf(inv);
   // A quote still waiting for an answer. `quoteDecision` is what separates it
   // from one already answered: a DECLINED quote keeps `status: 'quote'` on the
   // server (see functions/src/portal/quoteDecision.ts), and an ACCEPTED one is
@@ -644,10 +650,27 @@ export function InvoiceDetail() {
               </div>
             </section>
 
-            {inv.paymentsHistory && (
-              <section className="glass card d2">
+            {(history.length > 0 || inv.paymentsHistory) && (
+              <section className="glass card d2" data-testid="payment-history">
                 <div className="sectlabel">Payment History</div>
-                <p className="note">{inv.paymentsHistory}</p>
+                {history.map((p) => {
+                  const credit = paymentRowIsCredit(p);
+                  const day = paymentRowDayLabel(p);
+                  return (
+                    <div key={p.paymentId} className={`pay ${credit ? 'p2' : 'p1'}`} data-testid="payment-history-row">
+                      <div className="ic" aria-hidden="true">
+                        {credit ? '\u{1F381}' : '\u{1F4B3}'}
+                      </div>
+                      <div className="info">
+                        <b>{paymentRowMethodLabel(p)}</b>
+                        {day && <small>{day}</small>}
+                      </div>
+                      <div className="pamt">{formatCentsUsd(p.amountCents)}</div>
+                    </div>
+                  );
+                })}
+                {/* Migrated bills carry the old system's free text as well. */}
+                {inv.paymentsHistory && <p className="note">{inv.paymentsHistory}</p>}
               </section>
             )}
           </div>

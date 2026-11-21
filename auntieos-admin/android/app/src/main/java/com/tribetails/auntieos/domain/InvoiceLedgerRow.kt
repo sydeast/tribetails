@@ -104,9 +104,27 @@ fun ledgerRowDateLabel(row: GetInvoiceLedgerResultLedgerPayment): String =
  * to supply the noun and this one is an unlabelled line under the amount. It is
  * the same voice, not a third one.
  */
-fun ledgerRowMethodLabel(row: GetInvoiceLedgerResultLedgerPayment): String {
-    val method = row.method.trim()
-    return if (method.isEmpty()) "no method recorded" else method
+fun ledgerRowMethodLabel(row: GetInvoiceLedgerResultLedgerPayment): String =
+    paymentMethodLabel(row.method, row.methodLabel)
+
+/**
+ * #2334: what a checkout payment with no stored method reads as. The server's
+ * own words, and the twin of the web's `ONLINE_PAYMENT_LABEL`.
+ */
+const val ONLINE_PAYMENT_LABEL = "Online payment"
+
+/**
+ * #2334: the Method words for any payment row. The server's plain words win
+ * (Card, Klarna, Affirm, "Online payment"); a server older than the field sends
+ * none, and the stored word for a checkout payment, `stripe`, is never shown.
+ * The twin of the web's `paymentMethodLabel`, down to the string.
+ */
+fun paymentMethodLabel(method: String?, methodLabel: String?): String {
+    val label = methodLabel.orEmpty().trim()
+    if (label.isNotEmpty()) return label
+    val stored = method.orEmpty().trim()
+    if (stored.equals("stripe", ignoreCase = true)) return ONLINE_PAYMENT_LABEL
+    return if (stored.isEmpty()) "no method recorded" else stored
 }
 
 /**

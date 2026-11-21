@@ -80,6 +80,27 @@ internal fun decodeInvoiceDtoPayMethod(raw: Map<String, Any?>?): InvoiceDtoPayMe
         instructions = raw?.get("instructions") as? String,
     )
 
+/** `InvoiceDtoPayment`, shared across callables. */
+data class InvoiceDtoPayment(
+    val paymentId: String,
+    val methodLabel: String,
+    val paidDay: String?,
+    val amountCents: Long,
+)
+
+/**
+ * Fail-soft decode of `InvoiceDtoPayment` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeInvoiceDtoPayment(raw: Map<String, Any?>?): InvoiceDtoPayment =
+    InvoiceDtoPayment(
+        paymentId = (raw?.get("paymentId") as? String).orEmpty(),
+        methodLabel = (raw?.get("methodLabel") as? String).orEmpty(),
+        paidDay = raw?.get("paidDay") as? String,
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+    )
+
 /** `InvoiceDto`, shared across callables. */
 data class InvoiceDto(
     val id: String,
@@ -117,6 +138,7 @@ data class InvoiceDto(
     val lineItems: List<InvoiceLineItemDto>? = null,
     val payMethods: List<InvoiceDtoPayMethod>,
     val payBlockedReason: String?,
+    val payments: List<InvoiceDtoPayment>,
 )
 
 /**
@@ -156,6 +178,7 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
         payMethods = (raw?.get("payMethods") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayMethod(nested) } },
         payBlockedReason = raw?.get("payBlockedReason") as? String,
+        payments = (raw?.get("payments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayment(nested) } },
     )
 
 // ---------- acceptQuote ----------
@@ -579,6 +602,7 @@ data class GetInvoiceLedgerResultPayment(
     val paidAt: String?,
     val recordedBy: String?,
     val sourcePaymentId: String?,
+    val methodLabel: String,
 )
 
 /**
@@ -595,6 +619,7 @@ internal fun decodeGetInvoiceLedgerResultPayment(raw: Map<String, Any?>?): GetIn
         paidAt = raw?.get("paidAt") as? String,
         recordedBy = raw?.get("recordedBy") as? String,
         sourcePaymentId = raw?.get("sourcePaymentId") as? String,
+        methodLabel = (raw?.get("methodLabel") as? String).orEmpty(),
     )
 
 /** Nested in the `getInvoiceLedger` contract. */
@@ -635,6 +660,7 @@ data class GetInvoiceLedgerResultLedgerPayment(
     val appliedInvoiceId: String,
     val appliedInvoiceNumber: String,
     val method: String,
+    val methodLabel: String,
     val reference: String,
     val date: String,
     val notes: String,
@@ -662,6 +688,7 @@ internal fun decodeGetInvoiceLedgerResultLedgerPayment(raw: Map<String, Any?>?):
         appliedInvoiceId = (raw?.get("appliedInvoiceId") as? String).orEmpty(),
         appliedInvoiceNumber = (raw?.get("appliedInvoiceNumber") as? String).orEmpty(),
         method = (raw?.get("method") as? String).orEmpty(),
+        methodLabel = (raw?.get("methodLabel") as? String).orEmpty(),
         reference = (raw?.get("reference") as? String).orEmpty(),
         date = (raw?.get("date") as? String).orEmpty(),
         notes = (raw?.get("notes") as? String).orEmpty(),
@@ -889,6 +916,7 @@ data class ListPaymentsResultPayment(
     val appliedInvoiceId: String,
     val appliedInvoiceNumber: String,
     val method: String,
+    val methodLabel: String,
     val reference: String,
     val date: String,
     val notes: String,
@@ -920,6 +948,7 @@ internal fun decodeListPaymentsResultPayment(raw: Map<String, Any?>?): ListPayme
         appliedInvoiceId = (raw?.get("appliedInvoiceId") as? String).orEmpty(),
         appliedInvoiceNumber = (raw?.get("appliedInvoiceNumber") as? String).orEmpty(),
         method = (raw?.get("method") as? String).orEmpty(),
+        methodLabel = (raw?.get("methodLabel") as? String).orEmpty(),
         reference = (raw?.get("reference") as? String).orEmpty(),
         date = (raw?.get("date") as? String).orEmpty(),
         notes = (raw?.get("notes") as? String).orEmpty(),

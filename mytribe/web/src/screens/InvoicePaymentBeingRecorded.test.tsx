@@ -104,6 +104,7 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditRedeemedAtMs: null,
   writtenOffCents: null,
   payBlockedReason: null,
+  payments: [],
   payMethods: [CARD],
 };
 const PAID_INVOICE: GetMyInvoicesResult['paid'][number] = { ...OPEN_INVOICE, amountDue: 0, isPaid: true, status: 'paid', paidCents: 5000, payMethods: [] };
