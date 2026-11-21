@@ -347,8 +347,8 @@ const SPECIFIC_STEMS = {
     'guarding', 'accident', 'trigger', 'destruct', 'fight', 'attack', 'territor', 'hiss',
     // The same in plain words: hiding, barking at people, fear.
     'bark', 'howl', 'whin', 'yelp', 'yowl', 'cower', 'fear', 'afraid', 'frighten', 'scare', 'timid',
-    'nervous', 'skittish', 'jumpy', 'spook', 'startl', 'panic', 'stress', 'trembl', 'snap', 'chew',
-    'scratch', 'claw', 'swat', 'sneak', 'bully', 'grump', 'cranky', 'moody', 'feisty', 'stubborn',
+    'nervous', 'skittish', 'jumpy', 'spook', 'startl', 'panic', 'stress', 'trembl', 'hate',
+    'claw', 'swat', 'sneak', 'bully', 'grump', 'cranky', 'moody', 'feisty', 'stubborn',
     'protective', 'possessive', 'jealous', 'dominan', 'wary', 'cautious', 'stranger', 'spray',
   ],
   away: [
@@ -363,6 +363,7 @@ const SPECIFIC_WORDS = {
   entry: [
     'pin', 'pins', 'fob', 'fobs', 'armed', 'arming', 'spare', 'entry', 'entrance', 'mailbox', 'wifi', 'wi-fi',
     'hide-a-key', 'deck', 'blinds', 'let (?:myself|yourself|ourselves|me|us|them) (?:in|out)', 'way in',
+    'in through', 'through the (?:back|front|side|garage|yard)',
     'under the (?:mat|rug|pot|planter|rock|flowerpot)', 'lights? (?:on|off)',
   ],
   medicine: [
@@ -382,7 +383,9 @@ const SPECIFIC_WORDS = {
     'never let', 'keep (?:\\p{L}+ )?away',
     'hide', 'hides', 'hid', 'hiding', 'hidden', 'shy', 'shyness', 'terrified', 'terrifies', 'terrifying',
     'scary', 'shaking', 'shakes', 'shook', 'pacing', 'mouthy', 'picky', 'pulls', 'pulling',
-    'jump(?:s|ed|ing)? (?:on|up)', 'warm(?:s|ed)? up to', 'get(?:s)? along', 'got along',
+    'jump(?:s|ed|ing)? (?:on|up)', 'snaps? at', 'chewed', 'chew(?:s|ing)? (?:up|the|on the)',
+    'scratch(?:es|ed|ing)? (?:at|the|up)', 'come out from', 'ran (?:up|down)stairs', 'not a fan of',
+    "(?:would not|wouldn't|won't|will not|didn't|did not) come out", 'warm(?:s|ed)? up to', 'get(?:s)? along', 'got along',
     "(?:does not|doesn't|did not|didn't|won't|will not|can't|cannot) (?:like|stand|tolerate|handle|trust)",
     'other (?:dogs|cats|animals|pets|people|kin)', 'got out', 'gets out', 'slipped out',
     'ran away', 'runs? away', 'running away',
@@ -390,12 +393,15 @@ const SPECIFIC_WORDS = {
   ],
   away: [
     // "while you're away", but not "right away" or "put away".
-    '(?<!(?:right|straight|put|far|tucked|packed|stored|cleared|washed|tidied|faded|gave|give|given) )away',
+    '(?<!(?:right|straight|put|far|tucked|packed|stored|cleared|washed|tidied|faded|gave|give|given|squared|wipe|wiped|wiping|swept|brushed|scrubbed|it) )away',
     "(?:you're|you are|you were|you'll be|they're|they are|they'll be|y'all are|we're) (?:gone|out|back|home)",
     'out of (?:town|state|the country)', 'back home', 'welcome (?:back|home)', 'home safe', 'home safely',
     'safe (?:trip|flight|journey|drive)', 'get(?:s|ting)? back', 'got back', '(?:be|are|is|be getting) back',
     'back (?:on |by |next |this )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|tonight|weekend|week)',
-    "see you (?:when|once) you(?:'re| are| get)", 'land', 'lands', 'landed', 'landing', 'fly', 'flying', 'flew',
+    "see you (?:when|once) you(?:'re| are| get)", 'see you (?:on )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
+    'landed', 'fly', 'flying', 'come home', 'comes home', 'coming home', 'get home', 'gets home', 'getting home',
+    'come back', 'comes back', 'coming back', 'home soon', 'heading out', 'been gone',
+    '(?:before|after|once|until|till|when) you (?:leave|left|go|head|fly|drive)',
     'on holiday', 'your holidays?', 'holidaying', 'house sit(?:ting)?', 'empty house',
     "(?:nobody|no one|no-one)(?:'s| is)? home", 'misse[sd] (?:you|y\'all|everyone|them|her|his|their)',
     'mail', 'package', 'packages', 'parcel', 'parcels', 'newspapers?', 'bins', 'trash', 'garbage', 'recycling',

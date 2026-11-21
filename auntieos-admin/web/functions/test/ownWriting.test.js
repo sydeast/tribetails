@@ -292,6 +292,7 @@ describe('household specifics: an example is a style sample only', () => {
       'The slider in the den sticks a little.',
       'Your neighbour has the other set now.',
       'I let myself in through the side and all was quiet.',
+      'I came in through the back and all was quiet.',
     ],
     away: [
       'Hope you have a wonderful trip, we will take good care of everyone while you are away.',
@@ -306,6 +307,12 @@ describe('household specifics: an example is a style sample only', () => {
       'The bins went out and the house is quiet.',
       'Let me know when you get back and I will stop by.',
       'Enjoy your holiday, we have everything here.',
+      'See you when you come home, all is well.',
+      'We will be here until you come back.',
+      'Everyone has been good since you have been gone.',
+      'Before you leave, let me know where the leash is.',
+      'See you Sunday, have fun!',
+      'Have a great week away, everyone is fine.',
     ],
     medicine: [
       'She took half a pill of gabapentin with her supper.',
@@ -340,6 +347,10 @@ describe('household specifics: an example is a style sample only', () => {
       'She jumps on people when they come in.',
       'He was shaking during the storm, so we cuddled.',
       'She chewed the corner of the rug again.',
+      'She would not come out from the closet.',
+      'He hates the vacuum, so I left it in the cupboard.',
+      'She snaps at the other cat over the food bowl.',
+      'He scratched at the couch until I gave him a toy.',
     ],
     address: [
       'We took the long way down Quarry Road and back.',
@@ -379,6 +390,11 @@ describe('household specifics: an example is a style sample only', () => {
     'What a terrific afternoon of play, belly rubs and a long nap.',
     'All tucked in and happy, fresh water in every bowl.',
     'She was so happy to see me and we played fetch until she was tired out.',
+    'Time flew by, we had such fun this afternoon.',
+    'She loved her ear scratches and her new chew toy today.',
+    'Got everything squared away, bowls clean and water fresh.',
+    'I will snap a few photos for you next visit, she looked so cute.',
+    'Every little moment lands just right when we play together.',
   ];
   it('keeps plain sign-offs and generic visit wording, two Kin placeholders included', () => {
     for (const t of MUST_SURVIVE) assert.strictEqual(own.householdSpecific(t), null, t);
