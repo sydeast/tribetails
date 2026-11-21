@@ -708,6 +708,21 @@ describe('InvoiceDetail', () => {
     expect(factValue('Last reminder')).toBe(formatReminderTime(reminderSent().lastReminderAtMs!));
   });
 
+  it('#2515: a reminder held at its send time reads "held, not sent" on open, and a later send reads as sent', async () => {
+    const at = Date.UTC(2026, 8, 13, 14, 0, 0);
+    render(
+      <InvoiceDetail
+        invoice={entry({ reminderNotifiedAtMs: at, reminderNotifiedAppOnly: false, reminderHeldAtMs: at + 5 * 60 * 1000 })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(factValue('Last reminder')).toBe(`${formatReminderTime(at)}, held, not sent`);
+    sendInvoiceReminder.mockResolvedValue(reminderSent(false));
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    expect(await screen.findByText('Reminder sent.')).toBeInTheDocument();
+    expect(factValue('Last reminder')).toBe(formatReminderTime(reminderSent().lastReminderAtMs!));
+  });
   it('#832: shows when the last reminder went out, and "none sent" when there is none', () => {
     const { unmount } = render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
     expect(factValue('Last reminder')).toBe('none sent');

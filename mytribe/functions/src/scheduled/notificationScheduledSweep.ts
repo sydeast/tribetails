@@ -71,16 +71,27 @@ export async function drainScheduledNotifications(now: number): Promise<{ promot
    * (`notifications/queuedCopyHold.ts`). The switch is read once per run.
    * Both lines say the copies will not be sent later (`final`).
    */
-  const { queuedCopyVerdict, startQueuedCopyGate }: typeof QueuedCopyHold = await import(
+  const { queuedCopyVerdict, startQueuedCopyGate, heldStampOf }: typeof QueuedCopyHold = await import(
     '../notifications/queuedCopyHold.js'
   );
   const gate = startQueuedCopyGate();
-  /** Takes one row off the queue; false when another run already did. */
-  const takeOff = (ref: FirebaseFirestore.DocumentReference): Promise<boolean> =>
+  /**
+   * Takes one row off the queue; false when another run already did.
+   *
+   * #2515: a reminder's invoice or visit gets its held stamp in the same
+   * commit (`heldStampOf`), so it never reads as a reminder that went out.
+   * Only on a document that exists: a merge would make one out of nothing.
+   */
+  const takeOff = (ref: FirebaseFirestore.DocumentReference, row: Record<string, unknown>): Promise<boolean> =>
     db().runTransaction(async (tx) => {
+      const stamp = heldStampOf(row);
       const fresh = await tx.get(ref);
       if (!fresh.exists) return false;
+      const target = stamp === null ? null : await tx.get(db().doc(stamp.path));
       tx.delete(ref);
+      if (stamp !== null && target?.exists === true) {
+        tx.set(db().doc(stamp.path), { [stamp.field]: now }, { merge: true });
+      }
       return true;
     });
   await withHeldNoticeBatch('marketingBlast', { atMs: now, final: true }, (heldBatch) =>
@@ -156,7 +167,7 @@ export async function drainScheduledNotifications(now: number): Promise<{ promot
           }
           if (verdict === 'hold') {
             try {
-              if (await takeOff(doc.ref)) {
+              if (await takeOff(doc.ref, data)) {
                 held += 1;
                 countHeldNotice(queuedBatch, key, 'off', [key, `scheduled:${doc.id}`].join('\u0000'));
               }

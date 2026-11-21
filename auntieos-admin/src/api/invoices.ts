@@ -183,6 +183,13 @@ export interface InvoiceEntry {
    * "app only" for an explicit true alone.
    */
   reminderNotifiedAppOnly?: boolean | null;
+  /**
+   * #2515: when the send-time check held the reminder on record back because
+   * notices to households were turned off (ms epoch). The sent stamp above is
+   * kept so the reminder is not raised again; `lastReminderLabel` reads a sent
+   * stamp no later than this one as "held, not sent".
+   */
+  reminderHeldAtMs?: number | null;
   createdAt: Timestamp | null;
   /**
    * Stamped by Task 5.1's `archiveInvoice` callable, cleared by `unarchiveInvoice`.

@@ -28,6 +28,7 @@ import { runKincareReminderScan } from '../src/scheduled/kincareReminderCron';
 import { runInvoiceOverdueScan, runInvoiceRemindersScan } from '../src/scheduled/invoiceRemindersCron';
 import { scheduleMarketingBlastHandler } from '../src/admin/scheduleMarketingBlast';
 import { drainScheduledNotifications } from '../src/scheduled/notificationScheduledSweep';
+import { heldStampOf } from '../src/notifications/queuedCopyHold';
 import type { CallableRequest } from 'firebase-functions/v2/https';
 
 /**
@@ -1007,6 +1008,112 @@ describe('#2478 a household copy queued for later, notices turned off before its
     expect(await drainScheduledNotifications(NOW + 5 * 60 * 1000)).toEqual({ promoted: 2, held: 0 });
     expect(ctx.writes.filter((w) => w.path.startsWith('notificationDispatch/'))).toHaveLength(2);
     expect(notSent(ctx.writes)).toEqual([]);
+    // #2515: a reminder that went out carries no held stamp.
+    expect(ctx.docs['invoices/inv1']).not.toHaveProperty('reminderHeldAtMs');
+  });
+
+  /**
+   * #2515 (lead decision 2026-11-21): the held reminder stays gone, and its
+   * invoice or visit says it was held. The sent stamp stays (it is what keeps
+   * the reminder from coming back), and the hold's time is written beside it,
+   * so "Last reminder" reads "held, not sent".
+   */
+  describe('#2515 the invoice or visit records the reminder as held', () => {
+    const HELD_AT = NOW + 5 * 60 * 1000;
+
+    it('an invoice reminder held at its send time stamps the invoice as held, at or after its sent stamp', async () => {
+      const ctx = invoicesDb(2, '2026-11-15', true);
+      await runInvoiceRemindersScan(NOW, TODAY);
+      setLive(ctx.docs, false);
+      await drainScheduledNotifications(HELD_AT);
+      for (const id of ['inv1', 'inv2']) {
+        expect(ctx.docs[`invoices/${id}`]).toMatchObject({
+          status: 'open',
+          amountDue: 120,
+          reminderNotifiedAtMs: NOW,
+          reminderHeldAtMs: HELD_AT,
+        });
+      }
+      // The once-ever gate stays: the reminder job does not raise it again.
+      setLive(ctx.docs, true);
+      expect(await runInvoiceRemindersScan(NOW + 24 * HOUR, '2026-11-15')).toBe(0);
+      expect(ctx.docs['invoices/inv1']).toMatchObject({ reminderNotifiedAtMs: NOW, reminderHeldAtMs: HELD_AT });
+    });
+
+    it('an overdue notice held at its send time stamps overdueHeldAtMs', async () => {
+      const ctx = invoicesDb(1, '2026-11-01', true);
+      await runInvoiceOverdueScan(NOW, TODAY);
+      setLive(ctx.docs, false);
+      await drainScheduledNotifications(HELD_AT);
+      expect(ctx.docs['invoices/inv1']).toMatchObject({ overdueNotifiedAtMs: NOW, overdueHeldAtMs: HELD_AT });
+      expect(ctx.docs['invoices/inv1']).not.toHaveProperty('reminderHeldAtMs');
+    });
+
+    it('a visit reminder held at its send time stamps the booking', async () => {
+      const ctx = visitsDb(2, true);
+      await runKincareReminderScan(NOW, TICK);
+      setLive(ctx.docs, false);
+      await drainScheduledNotifications(HELD_AT);
+      expect(ctx.docs['families/fam1/bookings/bk1']).toMatchObject({
+        upcomingReminderNotifiedAtMs: NOW,
+        upcomingReminderHeldAtMs: HELD_AT,
+      });
+      expect(ctx.docs['families/fam2/bookings/bk2']).toMatchObject({ upcomingReminderHeldAtMs: HELD_AT });
+    });
+
+    it('a pressed reminder (no target on the row) is stamped by the invoice id it carries', async () => {
+      const ctx = queueDb(false, {
+        'invoices/inv9': { status: 'open', kinfolkId: 'fam1', reminderNotifiedAtMs: NOW },
+        'scheduledNotifications/pressed': row('invoice.reminder', { data: { kinfolkId: 'fam1', invoiceId: 'inv9' } }),
+      });
+      expect(await drainScheduledNotifications(HELD_AT)).toEqual({ promoted: 0, held: 1 });
+      expect(ctx.docs['invoices/inv9']).toMatchObject({ reminderNotifiedAtMs: NOW, reminderHeldAtMs: HELD_AT });
+    });
+
+    it('NEGATIVE: an invoice that no longer exists is not made out of nothing', async () => {
+      const ctx = queueDb(false, {
+        'scheduledNotifications/gone': row('invoice.reminder', {
+          data: { kinfolkId: 'fam1', invoiceId: 'inv-gone' },
+          targetType: 'invoice',
+          targetId: 'inv-gone',
+        }),
+      });
+      expect(await drainScheduledNotifications(HELD_AT)).toEqual({ promoted: 0, held: 1 });
+      expect(ctx.docs['invoices/inv-gone']).toBeUndefined();
+      expect(ctx.writes.filter((w) => w.path.startsWith('invoices/'))).toEqual([]);
+    });
+
+    it('where each reminder records its hold, and nowhere for an id that is not one', () => {
+      expect(heldStampOf({ key: 'invoice.reminder', data: { invoiceId: 'inv1' } })).toEqual({
+        path: 'invoices/inv1',
+        field: 'reminderHeldAtMs',
+      });
+      expect(heldStampOf({ key: 'invoice.overdue', data: {}, targetType: 'invoice', targetId: 'inv2' })).toEqual({
+        path: 'invoices/inv2',
+        field: 'overdueHeldAtMs',
+      });
+      expect(heldStampOf({ key: 'kincare.upcoming.reminder', data: { kinfolkId: 'fam1', bookingId: 'bk1' } })).toEqual({
+        path: 'families/fam1/bookings/bk1',
+        field: 'upcomingReminderHeldAtMs',
+      });
+      expect(heldStampOf({ key: 'invoice.reminder', data: { invoiceId: 'a/b' } })).toBeNull();
+      expect(heldStampOf({ key: 'invoice.reminder', data: {} })).toBeNull();
+      expect(heldStampOf({ key: 'kincare.upcoming.reminder', data: { kinfolkId: 'fam1' } })).toBeNull();
+      expect(heldStampOf({ key: 'kintale.published', data: { invoiceId: 'inv1' } })).toBeNull();
+    });
+
+    it('NEGATIVE: a held copy that is not a reminder stamps nothing', async () => {
+      const ctx = queueDb(false, {
+        'invoices/inv9': { status: 'open', kinfolkId: 'fam1' },
+        'scheduledNotifications/other': row('invoice.payment.applied', {
+          data: { kinfolkId: 'fam1', invoiceId: 'inv9' },
+          targetType: 'invoice',
+          targetId: 'inv9',
+        }),
+      });
+      expect(await drainScheduledNotifications(HELD_AT)).toEqual({ promoted: 0, held: 1 });
+      expect(ctx.docs['invoices/inv9']).toEqual({ status: 'open', kinfolkId: 'fam1' });
+    });
   });
 
   it('ERROR: a switch that cannot be read neither sends nor drops the copy; the next tick sends it', async () => {

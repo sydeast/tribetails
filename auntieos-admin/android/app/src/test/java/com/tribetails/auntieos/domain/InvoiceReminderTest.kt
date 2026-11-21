@@ -84,6 +84,27 @@ class InvoiceReminderTest {
     }
 
     @Test
+    fun `#2515 a reminder held at its send time reads held, not sent`() {
+        val heldAt = t + 5 * 60 * 1000
+        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, utc, appOnly = false, nowMs = t, heldAtMs = heldAt))
+        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, utc, appOnly = true, nowMs = t, heldAtMs = heldAt))
+        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, utc, nowMs = t, heldAtMs = t))
+        // A reminder sent after the hold stamps a later time and reads as sent.
+        assertEquals("Sep 14, 4:10 PM", lastReminderLabel(heldAt + 60 * 60 * 1000, utc, nowMs = t, heldAtMs = heldAt))
+        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, utc, nowMs = t, heldAtMs = null))
+        assertEquals("none sent", lastReminderLabel(null, utc, heldAtMs = heldAt))
+    }
+
+    @Test
+    fun `#2515 the list line says held instead of reminded`() {
+        val heldAt = t + 5 * 60 * 1000
+        assertEquals("reminder held, not sent", reminderListLine(t, false, heldAt, utc, t))
+        assertEquals("reminded Sep 14, 3:05 PM, app only", reminderListLine(t, true, null, utc, t))
+        assertEquals("reminded Sep 14, 4:10 PM", reminderListLine(heldAt + 60 * 60 * 1000, false, heldAt, utc, t))
+        assertEquals("reminded none sent", reminderListLine(null, false, heldAt, utc, t))
+    }
+
+    @Test
     fun `formats month, day and clock time`() {
         assertEquals("Sep 14, 3:05 PM", formatReminderTime(t, utc, t))
     }

@@ -656,6 +656,14 @@ data class Invoice(
      */
     var reminderNotifiedAppOnly: Boolean? = null,
     /**
+     * #2515: when the send-time check held the reminder on record back because
+     * notices to households were turned off (ms epoch). The sent stamp above is
+     * kept so the reminder is not raised again; `lastReminderLabel` reads a sent
+     * stamp no later than this one as "held, not sent". NULLABLE for the same
+     * Class B reason: absent on every invoice whose reminder was never held.
+     */
+    var reminderHeldAtMs: Long? = null,
+    /**
      * LEGACY (#1180): the old system's Viewed flag on migrated invoices. Nothing
      * in this system writes it and no screen reads it, so it is NOT a "viewed by
      * the household" receipt. `Any?` on purpose: migrated documents hold text

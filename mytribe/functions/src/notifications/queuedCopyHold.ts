@@ -36,7 +36,49 @@ import { loadHouseholdSendGate, passesHouseholdSendSwitch, type HouseholdSendGat
  * the invoice or the visit when they queue it (`reminderNotifiedAtMs`,
  * `overdueNotifiedAtMs`, `upcomingReminderNotifiedAtMs`), so they do not queue
  * the same copy a second time. That is the "never sent later" of the ruling.
+ *
+ * #2515 (lead decision 2026-11-21): THE HELD REMINDER STAYS GONE, AND THE
+ * INVOICE OR VISIT SAYS IT WAS HELD. The sent stamp stays, because it is the
+ * once-ever gate that keeps the reminder from coming back in a burst when
+ * notices are turned on at launch. Beside it the sweep writes the hold's time
+ * (`heldStampOf`): `reminderHeldAtMs`, `overdueHeldAtMs`,
+ * `upcomingReminderHeldAtMs`. A sent stamp no later than its held stamp is a
+ * reminder that never went out, and every "Last reminder" row reads it as
+ * "held, not sent". A real reminder sent afterwards stamps a later time, so
+ * it reads as sent again with nothing to clear.
  */
+
+/** The reminder keys whose source document carries a held stamp, and where. */
+export interface HeldStamp {
+  /** The document path: an invoice, or a household's booking. */
+  path: string;
+  field: 'reminderHeldAtMs' | 'overdueHeldAtMs' | 'upcomingReminderHeldAtMs';
+}
+
+function idOf(v: unknown): string {
+  return typeof v === 'string' && v !== '' && !v.includes('/') ? v : '';
+}
+
+/** #2515: where a held reminder row records that it was held, or null for any other row. */
+export function heldStampOf(row: Record<string, unknown>): HeldStamp | null {
+  const key = row.key;
+  const data = (row.data ?? {}) as Record<string, unknown>;
+  if (key === 'invoice.reminder' || key === 'invoice.overdue') {
+    const invoiceId = idOf(data.invoiceId) || (row.targetType === 'invoice' ? idOf(row.targetId) : '');
+    if (invoiceId === '') return null;
+    return {
+      path: `invoices/${invoiceId}`,
+      field: key === 'invoice.reminder' ? 'reminderHeldAtMs' : 'overdueHeldAtMs',
+    };
+  }
+  if (key === 'kincare.upcoming.reminder') {
+    const kinfolkId = idOf(data.kinfolkId);
+    const bookingId = idOf(data.bookingId);
+    if (kinfolkId === '' || bookingId === '') return null;
+    return { path: `families/${kinfolkId}/bookings/${bookingId}`, field: 'upcomingReminderHeldAtMs' };
+  }
+  return null;
+}
 
 /** True when a queued row is a household's copy. */
 export function isQueuedHouseholdCopy(key: string, stream: unknown): boolean {

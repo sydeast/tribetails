@@ -119,7 +119,10 @@ digest, and any other notice that waits in a queue. The payment, invoice,
 KinTale and booking confirmations locked on for Kinfolk are held the same way. With the switch off, the copy comes off the
 queue and is never sent later, even after you switch notices back on. The
 reminder jobs stamped the invoice or visit when they queued it, so they do not
-queue that reminder again. Each sweep run writes one Activity Log line with the
+queue that reminder again. The sweep also writes when it held it
+(`reminderHeldAtMs`, `overdueHeldAtMs`, `upcomingReminderHeldAtMs`, #2515), so
+the invoice's "Last reminder" row reads "held, not sent" and the invoice list
+reads "reminder held, not sent" instead of claiming it went out. Each sweep run writes one Activity Log line with the
 count: `Held back 2 invoice reminders: notices to households are turned off.
 They will not be sent later`. If the switch cannot be read, the copy stays
 queued and the next run asks again. Copies for you and your Aunties are not

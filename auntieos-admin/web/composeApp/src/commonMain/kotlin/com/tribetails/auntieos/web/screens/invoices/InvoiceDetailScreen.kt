@@ -845,7 +845,7 @@ private fun InvoiceDetailBody(
                         else -> invoice.dueDate
                     },
                 )
-                DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly))
+                DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly, heldAtMs = invoice.reminderHeldAtMs))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
             }

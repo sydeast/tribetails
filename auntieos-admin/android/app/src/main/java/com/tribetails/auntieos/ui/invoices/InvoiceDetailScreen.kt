@@ -932,6 +932,7 @@ private fun invoiceDetailBody(
                     com.tribetails.auntieos.domain.lastReminderLabel(
                         invoice.reminderNotifiedAtMs,
                         appOnly = invoice.reminderNotifiedAppOnly,
+                        heldAtMs = invoice.reminderHeldAtMs,
                     ),
                 )
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
