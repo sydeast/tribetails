@@ -68,6 +68,21 @@ describe('sendFromTemplate', () => {
     expect(sendMock.mock.calls[0][0].data.link).toBe('https://given');
   });
 
+  it('#2487: the confirm email links {{link}} to the address to confirm, not to the claim', async () => {
+    tplGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ subject: 'Confirm', body: 'Confirm it: {{link}}', html: null }),
+    });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.verify-email', 'catch@hanasamku.com', {
+      claimUrl: 'https://kinfolk.tribetails.com/claim?invite=i1',
+      verifyUrl: 'https://kinfolk.tribetails.com/account/action?mode=verifyEmail&oobCode=abc',
+    });
+    expect(sendMock.mock.calls[0][0].data.link).toBe(
+      'https://kinfolk.tribetails.com/account/action?mode=verifyEmail&oobCode=abc',
+    );
+  });
+
   it('#2487: leaves the data alone when the template prints no link', async () => {
     tplGet.mockResolvedValue({ exists: true, data: () => ({ subject: 'Hi', body: 'Plain', html: null }) });
     const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');

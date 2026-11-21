@@ -167,7 +167,9 @@ function withLink(
   );
   const filled = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
   if (!uses || filled(data.link)) return data;
-  const own = [data.claimUrl, data.verifyUrl, data.auntieReviewUrl].find(filled);
+  // The address to confirm comes first: the confirm email also carries the
+  // claim link, and its one action is confirming.
+  const own = [data.verifyUrl, data.claimUrl, data.auntieReviewUrl].find(filled);
   return own ? { ...data, link: own } : data;
 }
 

@@ -48,6 +48,7 @@ export const AUNTIE_REFUSED_SLUGS: ReadonlySet<string> = new Set([
   'invites',
   'packages',
   'invoices',
+  'marketing-blasts',
   'activity',
   'settings',
   'tribal-intel',

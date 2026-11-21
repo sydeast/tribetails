@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ADMIN_URL, OFFICE_NOTICE_LIST_PATH, noticeLink, officeRouteFor } from '../src/notifications/noticeLink';
+import {
+  ADMIN_URL,
+  AUNTIE_REFUSED_SLUGS,
+  OFFICE_NOTICE_LIST_PATH,
+  noticeLink,
+  officeRouteFor,
+} from '../src/notifications/noticeLink';
 import { noticeOpenTarget } from '../src/notifications/noticeOpenTarget';
 import { PORTAL_URL } from '../src/notifications/visitDates';
 
@@ -72,6 +78,19 @@ describe("noticeLink: a household's copy opens its item in MyTribe", () => {
     expect(new URL(link).origin).toBe(PORTAL_URL);
     expect(new URL(link).pathname.split('/').filter((p) => p !== '')).toHaveLength(2);
     expect(new URL(link).search).toBe('');
+  });
+});
+
+describe("an Auntie's refused screens are the admin's owner-only screens", () => {
+  it('AUNTIE_REFUSED_SLUGS is exactly the ownerOnly slugs of auntieos-admin/src/lib/nav.ts', () => {
+    const nav = readFileSync(resolve(__dirname, '../../../auntieos-admin/src/lib/nav.ts'), 'utf8');
+    const ownerOnly = new Set<string>();
+    // One nav entry per `{ ... }`; the ones marked ownerOnly name their slug.
+    for (const m of nav.matchAll(/\{[^{}]*?\bslug:\s*'([^']+)'[^{}]*?\}/g)) {
+      if (/\bownerOnly:\s*true\b/.test(m[0])) ownerOnly.add(m[1]!);
+    }
+    expect(ownerOnly.size).toBeGreaterThan(5);
+    expect([...AUNTIE_REFUSED_SLUGS].sort()).toEqual([...ownerOnly].sort());
   });
 });
 
