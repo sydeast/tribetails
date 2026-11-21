@@ -133,6 +133,18 @@ describe('invoiceStateOf and the legacy invoiceStatus field (#2471)', () => {
     // 'open' is not a positive label here either: the money still places it.
     expect(invoiceStateOf({ invoiceStatus: 'open', amountDue: 40, total: 40 })).toBe('open');
     expect(invoiceStateOf({ invoiceStatus: 'open', amountDue: 0, total: 40 })).toBe('paid');
+    // The frozen families: each reads by its label, never re-opened by a positive balance.
+    expect(invoiceStateOf({ invoiceStatus: 'credit', amountDue: 25, total: 25 })).toBe('credit');
+    expect(invoiceStateOf({ invoiceStatus: 'redeemed', amountDue: -25, total: -25, creditRedeemedAt: 1 })).toBe(
+      'redeemed',
+    );
+    expect(invoiceStateOf({ invoiceStatus: 'written_off', amountDue: 0, total: 40 })).toBe('written_off');
+    // A label the classifier has no branch for (an old 'sent') is still placed by its money.
+    expect(invoiceStateOf({ invoiceStatus: 'sent', amountDue: 40, total: 40 })).toBe('open');
+  });
+
+  it('reads a stored null status as absent, as invoiceCancelled does (`??`)', () => {
+    expect(invoiceStateOf({ status: null, invoiceStatus: 'cancelled', amountDue: 40, total: 40 })).toBe('cancelled');
   });
 
   it('lets a stored status win over the legacy field, as invoiceCancelled does', () => {
