@@ -11,16 +11,22 @@ import com.tribetails.auntieos.web.ui.components.serviceTone
  * same words.
  */
 
-/** `account.welcome.kinfolk` as "Account welcome kinfolk": the last resort for a key with no label. */
+/** `account.welcome.kinfolk` as "Account welcome Kinfolk": the last resort for a key with no label. */
 fun humanizeKey(raw: String): String {
     val words = raw.trim()
         .split(Regex("[._\\-\\s]+"))
         .filter { it.isNotEmpty() }
-        .joinToString(" ")
-        .lowercase()
+        .joinToString(" ") { KEY_WORDS[it.lowercase()] ?: it.lowercase() }
     return words.replaceFirstChar { it.uppercaseChar() }
 }
 
+/** #1887: words a stored key spells in lower case, as the app spells them. */
+private val KEY_WORDS = mapOf(
+    "pet" to "Kin", "pets" to "Kin", "kin" to "Kin", "kinfolk" to "Kinfolk",
+    "kintale" to "KinTale", "kintales" to "KinTales", "kincare" to "KinCare",
+    "auntie" to "Auntie", "aunties" to "Aunties", "tribe" to "Tribe",
+    "sms" to "SMS", "api" to "API",
+)
 /** A notification card's headline: its catalog title, else its key as words, never the key itself. */
 fun notificationHeadline(key: String, title: String): String {
     val k = key.trim()

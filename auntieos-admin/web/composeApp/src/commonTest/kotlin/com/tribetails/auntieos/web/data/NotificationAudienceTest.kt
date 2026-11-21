@@ -163,7 +163,7 @@ class NotificationAudienceTest {
         assertEquals("Label", NotificationCatalogEntry(key = "k", label = "Label", description = "Desc").displayTitle())
         assertEquals("Desc", NotificationCatalogEntry(key = "k", description = "Desc").displayTitle())
         // #1592: the key as words, never the key itself.
-        assertEquals("Account welcome kinfolk", NotificationCatalogEntry(key = "account.welcome.kinfolk").displayTitle())
+        assertEquals("Account welcome Kinfolk", NotificationCatalogEntry(key = "account.welcome.kinfolk").displayTitle())
     }
 
     private fun cat(key: String, category: String) = NotificationCatalogEntry(key = key, category = category)

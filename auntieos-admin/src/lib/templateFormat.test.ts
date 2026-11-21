@@ -87,7 +87,7 @@ describe('templateRowTitle', () => {
   });
   it('#1887: a title that is only the stored key reads as words too', () => {
     expect(templateRowTitle(tpl({ title: 'account.welcome.kinfolk', templateId: 'account.welcome.kinfolk' }))).toBe(
-      'Account welcome kinfolk',
+      'Account welcome Kinfolk',
     );
   });
 });

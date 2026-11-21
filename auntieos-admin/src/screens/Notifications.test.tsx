@@ -200,9 +200,9 @@ describe('Notifications screen', () => {
     expect(screen.getByRole('tab', { name: 'Visits' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'visit' })).toBeNull();
     expect(within(screen.getByRole('listitem')).getByText('Visits')).toBeInTheDocument();
-    expect(screen.getByText('Account welcome kinfolk')).toBeInTheDocument();
+    expect(screen.getByText('Account welcome Kinfolk')).toBeInTheDocument();
     expect(screen.queryByText('account.welcome.kinfolk')).toBeNull();
-    expect(screen.getByRole('checkbox', { name: 'Select Account welcome kinfolk' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select Account welcome Kinfolk' })).toBeInTheDocument();
   });
 
   it('#2277: the visit note row names who wrote the note, before the category', () => {

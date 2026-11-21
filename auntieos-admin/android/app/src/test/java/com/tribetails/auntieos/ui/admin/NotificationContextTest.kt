@@ -86,12 +86,12 @@ class NotificationContextTest {
 
     @Test fun `reads the key as words for rows dispatched before titles existed (#1592)`() {
         val entry = NotificationEntry(id = "n1", key = "account.welcome.kinfolk")
-        assertEquals("Account welcome kinfolk", notificationHeadline(entry))
+        assertEquals("Account welcome Kinfolk", notificationHeadline(entry))
     }
 
     @Test fun `a title that is only the key is treated as missing (#1592)`() {
         val entry = NotificationEntry(id = "n1", key = "account.welcome.kinfolk", title = "account.welcome.kinfolk")
-        assertEquals("Account welcome kinfolk", notificationHeadline(entry))
+        assertEquals("Account welcome Kinfolk", notificationHeadline(entry))
     }
 
     @Test fun `falls back to a word when there is no key either`() {

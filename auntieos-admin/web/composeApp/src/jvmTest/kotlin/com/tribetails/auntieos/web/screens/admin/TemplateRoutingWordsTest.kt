@@ -68,7 +68,7 @@ class TemplateRoutingWordsTest {
     fun aKeyTheRowsDoNotHoldReadsAsWords() {
         val rows = listOf(row("invoice.new", "New invoice"))
         assertEquals("New invoice", catalogKeyNameFor("invoice.new", rows))
-        assertEquals("Account welcome kinfolk", catalogKeyNameFor("account.welcome.kinfolk", rows))
+        assertEquals("Account welcome Kinfolk", catalogKeyNameFor("account.welcome.kinfolk", rows))
         assertEquals("Notification", catalogKeyNameFor("", rows))
     }
 
