@@ -362,6 +362,7 @@ describe('deliveryPhrase never promises a delivery it cannot prove', () => {
       'recipient_hard_bounced',
       'template_missing',
       'template_text_empty',
+      'template_broken',
       'unknown',
     ]) {
       expect(deliveryPhrase('skipped', code, null).detail).not.toContain(code);

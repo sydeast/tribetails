@@ -2,7 +2,14 @@ import { db } from '../../lib/firestoreAdmin';
 import { getTwilio, getTwilioFromNumber } from '../../lib/twilio';
 import { describeProviderFailure } from '../../lib/providerFailure';
 import { redactRecipient } from '../../lib/suppressions';
-import { HOUSEHOLD_NOTICE_ROUTE, householdSms, kinForStoredTemplate, renderPlainText } from '../templateParsers';
+import { logEvent } from '../../lib/logger';
+import {
+  HOUSEHOLD_NOTICE_ROUTE,
+  householdSms,
+  kinForStoredTemplate,
+  renderPlainText,
+  templateRenderFailure,
+} from '../templateParsers';
 import { keepWholeMessage } from './pushChannel';
 import { AUNTIE_SCHEDULE_URL as ADMIN_URL, PORTAL_URL } from '../visitDates';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
@@ -71,6 +78,29 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
     };
   }
 
+  // #2251: wording stored with an unclosed {{#if}} (imported before the
+  // importer refused one) used to throw here on every send. Still no generic
+  // text, by the same ruling: a visible skip the Activity Log names, and an
+  // `error` line naming the template so the office can fix it.
+  const textData = { ...kinForStoredTemplate(data, [tpl.text]), recipientUid, notificationKey: def.key };
+  const failure = templateRenderFailure([tpl.text], textData);
+  if (failure !== null) {
+    logEvent({
+      severity: 'error',
+      function: 'smsChannel',
+      event: 'notification.template.broken',
+      uid: recipientUid,
+      extra: {
+        key: def.key,
+        channel: 'sms',
+        templateId,
+        reason: failure,
+        action: 'skipped the text message; open this template in the Template Bank and fix its text message wording',
+      },
+    });
+    return { skipped: true, skipReason: 'template_broken' };
+  }
+
   const phone = await lookupRecipientPhone(recipientUid);
   if (!phone) {
     // Fail-soft: undeliverable, not an error. Do NOT throw (no Sentry, and the
@@ -82,11 +112,7 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
 
   // #2321: a text message is plain text, so nothing is escaped for a web page.
   // #2093: a template stored before the quote wording changed still reads whole.
-  const rendered = renderPlainText(tpl.text, {
-    ...kinForStoredTemplate(data, [tpl.text]),
-    recipientUid,
-    notificationKey: def.key,
-  });
+  const rendered = renderPlainText(tpl.text, textData);
   // #2280: a household's text message is short and links into MyTribe, where
   // the whole message is.
   // #2371: the link opens this notice's entry, and a cut message is written

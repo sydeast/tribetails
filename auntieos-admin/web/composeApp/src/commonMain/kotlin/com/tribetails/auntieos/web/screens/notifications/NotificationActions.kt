@@ -168,7 +168,8 @@ fun applicableActions(entry: NotificationEntry, pending: Set<String>? = null): L
     val opens = when (val route = notificationOpenRoute(entry)) {
         is NotificationOpenRoute.Target ->
             notificationTargetScreen(route.targetType, route.targetId) != NotificationTargetScreen.None
-        is NotificationOpenRoute.UnappliedPayment, is NotificationOpenRoute.VisitRequest -> true
+        is NotificationOpenRoute.UnappliedPayment, is NotificationOpenRoute.VisitRequest,
+        is NotificationOpenRoute.KinRemoval -> true
         NotificationOpenRoute.None -> false
     }
     if (opens) {
@@ -279,6 +280,8 @@ suspend fun answerBookingRequest(
 /** #2030: the server takes at most this many characters of note with an answer. */
 const val HOUSEHOLD_NOTE_MAX = 500
 
+/** #2121: the admin notice for a household's request to remove a Kin with history. */
+const val KIN_REMOVAL_REQUESTED_KEY = "kin.removal.requested"
 /** #1003: the admin notice for a card payment that could not be applied. */
 const val UNAPPLIED_PAYMENT_NOTICE_KEY = "invoice.payment.unapplied"
 
@@ -346,6 +349,12 @@ sealed class NotificationOpenRoute {
      */
     data class VisitRequest(val kinfolkId: String, val batchId: String) : NotificationOpenRoute()
 
+    /**
+     * #2121: a "Kinfolk asked to remove a Kin" row opens the waiting removal
+     * requests on Bookings with this one marked. Its target is the household,
+     * whose profile has no place to answer it.
+     */
+    data class KinRemoval(val requestId: String) : NotificationOpenRoute()
     /** #2367: a booking target whose ids fail [isSafeNoticeId]: Open goes nowhere. */
     data object None : NotificationOpenRoute()
 }
@@ -364,6 +373,13 @@ private fun NotificationEntry.dataString(key: String): String =
  * target table. A booking target whose ids fail [isSafeNoticeId] opens nothing.
  */
 fun notificationOpenRoute(entry: NotificationEntry): NotificationOpenRoute {
+    // #2121: the removal request the notice names, as admin web opens it
+    // (`/bookings?kinRemoval=`). Without a usable request id the row keeps its
+    // household target, as on web.
+    if (entry.key.trim() == KIN_REMOVAL_REQUESTED_KEY) {
+        val requestId = entry.dataString("requestId")
+        if (isSafeNoticeId(requestId)) return NotificationOpenRoute.KinRemoval(requestId)
+    }
     wholeBookingTarget(entry)?.let { (kinfolkId, batchId) ->
         return NotificationOpenRoute.VisitRequest(kinfolkId, batchId)
     }
