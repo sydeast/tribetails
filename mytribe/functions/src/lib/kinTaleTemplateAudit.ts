@@ -139,7 +139,8 @@ function nameOf(data: TemplateData | undefined): string {
 /**
  * Write the line for one committed template write. Returns the change it
  * recorded, or null for a write that is not a line. A failed line write is
- * logged at `error` and rethrown so the trigger's retry policy and Sentry see it.
+ * logged at `error` and rethrown so the trigger reports it to Sentry. The
+ * trigger sets no retry, so that line is not written again.
  */
 export async function recordKinTaleTemplateChange(input: {
   templateId: string;

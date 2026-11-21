@@ -16,11 +16,7 @@ const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
-// #1821: the send stages its line with the real chain halves on the mock db.
-vi.mock('../src/lib/writeAuditEntry', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/lib/writeAuditEntry')>()),
-  writeAuditEntry: vi.fn().mockResolvedValue('audit-1'),
-}));
+vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 
 import { sendKinTaleReportHandler, publishGeneratedDraftHandler } from '../src/admin/kinTaleDrafts';
 import { getMyKinTalesHandler } from '../src/portal/getMyKinTales';

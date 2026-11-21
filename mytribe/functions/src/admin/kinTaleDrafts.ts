@@ -7,7 +7,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { wrapCallable } from '../lib/wrapCallable';
 import { isOwner, isOwnerClaim, staffBypass } from '../lib/staffGate';
 import { draftMadeBy, draftWentOut, isKinTaleDraft, messageDraftStanding } from '../lib/generatedDraftType';
-import { auditHashableDoc, readAuditChain, stageAuditEntry, writeAuditEntry } from '../lib/writeAuditEntry';
+import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { auditActorPayload, resolveAuditActor } from '../lib/auditActor';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -393,9 +393,6 @@ export async function sendKinTaleReportHandler(
 
   const { reportId, sentVia, deliveryReceiptId } = parsed.data;
   const { buildCareTaskStamp, CARE_TASKS_FIELD } = await import('../lib/careTaskStamp.js');
-  // #1821: who sent it, for the Activity Log line staged with the send. Read
-  // before the transaction: it is the caller's role, not the tale's state.
-  const actor = await resolveAuditActor(req.auth, 'sendKinTaleReport');
   const reportRef = db().collection('kin_care_reports').doc(reportId);
   const outOfScope = 'This KinTale is not in your test household.';
 
@@ -431,11 +428,6 @@ export async function sendKinTaleReportHandler(
       throw new HttpsError('permission-denied', outOfScope);
     }
 
-    // #1821: the send's Activity Log line is staged with the send, so a sent
-    // tale always has its line and a replayed send (answered above) never
-    // writes a second one. Every read before the first write.
-    const chain = await readAuditChain(db(), tx);
-
     const now = new Date().toISOString();
     const template =
       templateSnap && templateSnap.exists ? ((templateSnap.data() ?? {}) as Record<string, unknown>) : null;
@@ -467,31 +459,47 @@ export async function sendKinTaleReportHandler(
       updatedAt: now,
     });
 
-    const kinfolkId = either(report['kinfolkId'], '');
-    stageAuditEntry(
-      db(),
-      tx,
-      auditHashableDoc(
-        {
-          event: AUDIT_EVENTS.CONTENT_KINTALE_SENT,
-          severity: 'info',
-          status: 'SUCCESS',
-          actorRole: actor.actorRole,
-          actorUid,
-          targetUid: reportId,
-          targetCollection: 'kin_care_reports',
-          ...(kinfolkId !== '' ? { familyId: kinfolkId } : {}),
-          // Words only. The tale's title and text stay on the tale.
-          description: SENT_KINTALE_WORDS,
-          payload: { reportId, visitId: sessionId, ...auditActorPayload(actor) },
-        },
-        now,
-      ),
-      chain,
-    );
-
-    return { alreadySent: false as const, source: careTasks.source, done: careTasks.done.length };
+    return {
+      alreadySent: false as const,
+      source: careTasks.source,
+      done: careTasks.done.length,
+      kinfolkId: either(report['kinfolkId'], ''),
+      sessionId,
+    };
   });
+
+  // #1821: the send's Activity Log line, after the send has committed and only
+  // for a real send, so a replay (answered above) never writes a second one.
+  // It stays out of the transaction: Android and the desktop console tell the
+  // household before this call, so a failed line must not fail the send, and
+  // every send would otherwise contend on the audit chain's head.
+  if (!outcome.alreadySent) {
+    try {
+      const actor = await resolveAuditActor(req.auth, 'sendKinTaleReport');
+      await writeAuditEntry({
+        event: AUDIT_EVENTS.CONTENT_KINTALE_SENT,
+        severity: 'info',
+        status: 'SUCCESS',
+        actorRole: actor.actorRole,
+        actorUid,
+        targetUid: reportId,
+        targetCollection: 'kin_care_reports',
+        ...(outcome.kinfolkId !== '' ? { familyId: outcome.kinfolkId } : {}),
+        // Words only. The tale's title and text stay on the tale.
+        description: SENT_KINTALE_WORDS,
+        payload: { reportId, visitId: outcome.sessionId, ...auditActorPayload(actor) },
+      });
+    } catch (err) {
+      logEvent({
+        severity: 'error',
+        function: 'sendKinTaleReport',
+        event: 'audit.write.failed',
+        uid: actorUid,
+        extra: { reportId },
+        errorMessage: (err as Error)?.message,
+      });
+    }
+  }
 
   logEvent({
     severity: outcome.alreadySent ? 'info' : outcome.source === 'templateMissing' ? 'warn' : 'info',
