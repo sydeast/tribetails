@@ -149,15 +149,29 @@ export interface CreateKinCareSessionResult {
 }
 
 /**
+ * #2347: the field an Android draft carries when its Kin were chosen with
+ * choosing Kin switched on. The app writes it `true` only from a form that drew
+ * the picker under the flag; an Android build from before 2026-11-14 (81b02238)
+ * drew an ungated picker and never writes it.
+ */
+export const KIN_CHOSEN_WITH_FLAG_ON_FIELD = 'kinChosenWithFlagOn';
+/**
  * #2347: the Kin an Android draft (`enhanced_bookings/{id}`) was saved with,
  * or null when there is no such draft for this household (the visit is then
  * made under the new-visit rule). An empty list is a draft for every Kin.
+ *
+ * Lead decision 2026-11-21: a subset counts only when it was chosen while
+ * choosing Kin was on, which the draft says with `kinChosenWithFlagOn: true`
+ * (exactly `true`). A draft without it is an older build's, whose picker saved
+ * subsets with choosing off, and is booked for every Kin (2026-11-12 ruling:
+ * the server forces the whole active roster, so an older app is harmless).
  */
 async function storedDraftKinIds(enhancedId: string, kinfolkId: string): Promise<string[] | null> {
   const snap = await db().collection('enhanced_bookings').doc(enhancedId).get();
   if (!snap.exists) return null;
   const data = (snap.data() ?? {}) as Record<string, unknown>;
   if (typeof data['kinfolkId'] !== 'string' || data['kinfolkId'].trim() !== kinfolkId) return null;
+  if (data[KIN_CHOSEN_WITH_FLAG_ON_FIELD] !== true) return [];
   const ids = data['kinIds'];
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && id.trim() !== '') : [];
 }
@@ -258,7 +272,9 @@ export async function createKinCareSessionHandler(
   // draft and a household request already do through approval, even when
   // choosing Kin has been switched off since. The Kin come from the stored
   // draft, not from the caller: the ones still in care are kept, and a draft
-  // that named none (or none still in care) covers the whole home.
+  // that named none (or none still in care) covers the whole home. A subset is
+  // kept only from a draft stamped `kinChosenWithFlagOn: true`; an unstamped
+  // draft (an older build's ungated picker) covers the whole home.
   const draftKinIds = enhancedId !== null ? await storedDraftKinIds(enhancedId, args.kinfolkId) : null;
   const { kinIds, kinNames } =
     draftKinIds !== null

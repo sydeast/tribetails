@@ -2614,13 +2614,17 @@ registry.
   them), and a client shows a Kin picker with every Kin chosen to begin with.
 - The roster is frozen on the booking when it is written. A Kin added later is
   on the next visit made, never on an existing one, and an approval keeps the
-  Kin the request was stored with. That includes an admin Android draft
-  approved through `createKinCareSession` with `enhancedBookingId` (#2347):
-  the Kin come from the stored `enhanced_bookings` draft, the ones still in
-  care, whatever the flag says now.
+  Kin the request was stored with.
 - GATE: `resolveKinfolkAccess`. A household reads its own; the owner reads the
   household it names; an Auntie is admitted by `lib/auntieAccess.ts` for the
   visit's Kin editor.
+- An admin Android draft approved through `createKinCareSession` with
+  `enhancedBookingId` (#2347): the Kin come from the stored `enhanced_bookings`
+  draft, never from the caller. A draft stamped `kinChosenWithFlagOn: true`
+  (saved by an app that offered the picker only with choosing switched on)
+  keeps its Kin still in care, whatever the flag says now. A draft without the
+  stamp (saved by an Android build from before 2026-11-14, whose picker was not
+  gated) is booked for every Kin in care, as the 2026-11-12 ruling has it.
 - Callers: admin web, admin Android, the desktop console, the kinfolk portal
   web app and the kinfolk portal Android app.
 

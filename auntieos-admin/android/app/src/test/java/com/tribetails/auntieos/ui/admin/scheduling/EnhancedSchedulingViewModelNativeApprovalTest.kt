@@ -22,6 +22,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -121,20 +123,22 @@ class EnhancedSchedulingViewModelNativeApprovalTest {
     }
 
     /**
-     * #2347 (operator ruling 2026-11-20, "keep"): a draft saved for some Kin
-     * keeps them through approval, even with choosing Kin switched off since.
-     * The approval rewrites the draft with its Kin as saved and asks for the
-     * visit with them; the server reads the stored draft's Kin, not the switch
-     * (`createKinCareSession`, `storedDraftKinIds`).
+     * #2347 (operator ruling 2026-11-20, "keep"; lead decision 2026-11-21): a
+     * draft whose Kin were chosen with choosing on (`kinChosenWithFlagOn`) keeps
+     * them through approval, even with choosing Kin switched off since. The
+     * approval rewrites the draft with its Kin and its stamp as saved and asks
+     * for the visit with them; the server reads the stored draft's Kin and stamp,
+     * not the switch (`createKinCareSession`, `storedDraftKinIds`).
      */
     @Test
-    fun `a draft narrowed to some Kin is approved with those Kin, never every Kin`() = runTest(testDispatcher) {
+    fun `a draft narrowed with choosing on is approved with those Kin and keeps its stamp`() = runTest(testDispatcher) {
         val saved = io.mockk.slot<EnhancedBooking>()
         coEvery { bookingRepo.updateBooking(capture(saved)) } returns Result.success(Unit)
         val vm = buildViewModel()
-        vm.approveBooking(booking().copy(kinIds = listOf("k2"), kinNames = listOf("Gravy")))
+        vm.approveBooking(booking().copy(kinIds = listOf("k2"), kinNames = listOf("Gravy"), kinChosenWithFlagOn = true))
         assertEquals(listOf("k2"), saved.captured.kinIds)
         assertEquals(listOf("Gravy"), saved.captured.kinNames)
+        assertTrue(saved.captured.kinChosenWithFlagOn)
         assertEquals(BookingStatus.ACCEPTED, saved.captured.status)
         coVerify(exactly = 1) {
             kinCareRepo.createKinCareSession(
@@ -149,6 +153,21 @@ class EnhancedSchedulingViewModelNativeApprovalTest {
             )
         }
     }
+    /**
+     * An older build's draft (no stamp) narrowed with choosing off: approving it
+     * never adds the stamp, whatever the switch says now, so the server books
+     * every Kin for it.
+     */
+    @Test
+    fun `approving an unstamped narrowed draft never stamps it`() = runTest(testDispatcher) {
+        val saved = io.mockk.slot<EnhancedBooking>()
+        coEvery { bookingRepo.updateBooking(capture(saved)) } returns Result.success(Unit)
+        val vm = buildViewModel()
+        vm.approveBooking(booking().copy(kinIds = listOf("k2"), kinNames = listOf("Gravy")))
+        assertFalse(saved.captured.kinChosenWithFlagOn)
+        assertEquals(BookingStatus.ACCEPTED, saved.captured.status)
+    }
+
     @Test
     fun `a draft saved for every Kin is approved for every Kin`() = runTest(testDispatcher) {
         val vm = buildViewModel()
