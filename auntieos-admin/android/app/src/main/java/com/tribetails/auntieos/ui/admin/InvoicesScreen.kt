@@ -130,12 +130,12 @@ internal fun invoiceListSubtitle(
     archivedHidden: Int,
     mode: ArchivedMode = ArchivedMode.Hide,
 ): String {
-    val base = "$visible of $inScope shown. Tap a row to open the invoice."
+    val base = "$visible of $inScope shown"
     if (archivedHidden <= 0) return base
     val plural = if (archivedHidden == 1) "" else "s"
     // #1609: under Only archived the hidden rows are the ones NOT archived.
     val what = if (mode == ArchivedMode.Only) "invoice$plural not archived" else "archived invoice$plural"
-    return "$base $archivedHidden $what hidden, counted within the invoices loaded here."
+    return "$base · $archivedHidden $what hidden"
 }
 /**
  * #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
