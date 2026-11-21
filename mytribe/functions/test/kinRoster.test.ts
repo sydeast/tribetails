@@ -368,3 +368,39 @@ describe('kinRosterForNewVisit, operator ruling 2026-11-12: every visit covers e
     }
   });
 });
+describe('ruling 2026-11-20 (#1822): a newly adopted Kin joins visits booked from then on', () => {
+  it('a visit booked after the adoption names the new Kin, whichever side added it, while the earlier visit keeps its Kin', async () => {
+    const before = {
+      queryDocs: {
+        'families/3/kin': [{ id: 'fam-a', data: { name: 'Biscuit', legacyKinId: 'flat-a' } }],
+        kin: [{ id: 'flat-a', data: { name: 'Biscuit', kinfolkId: '3' } }],
+      },
+    };
+    mocks.dbFn.mockReturnValue(buildDbMock(before).db);
+    const { kinRosterForNewVisit, materializeKinRoster } = await import('../src/lib/kinRoster');
+    const earlier = await kinRosterForNewVisit('3', undefined, { chooseKin: false });
+    expect(earlier).toEqual({ kinIds: ['flat-a'], kinNames: ['Biscuit'] });
+    // The household adds Gravy in MyTribe, and the office adds Pepper itself.
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          'families/3/kin': [
+            ...before.queryDocs['families/3/kin'],
+            { id: 'fam-g', data: { name: 'Gravy', legacyKinId: 'flat-g' } },
+          ],
+          kin: [
+            ...before.queryDocs.kin,
+            { id: 'flat-g', data: { name: 'Gravy', kinfolkId: '3' } },
+            { id: 'flat-p', data: { name: 'Pepper', kinfolkId: '3' } },
+          ],
+        },
+      }).db,
+    );
+    expect(await kinRosterForNewVisit('3', undefined, { chooseKin: false })).toEqual({
+      kinIds: ['flat-a', 'flat-g', 'flat-p'],
+      kinNames: ['Biscuit', 'Gravy', 'Pepper'],
+    });
+    // The visit already booked is not rewritten by reading it again.
+    expect(await materializeKinRoster('3', earlier.kinIds)).toEqual({ kinIds: ['flat-a'], kinNames: ['Biscuit'] });
+  });
+});

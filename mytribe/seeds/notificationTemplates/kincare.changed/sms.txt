@@ -1,1 +1,1 @@
-It's Auntie. The {{serviceType}} for {{kinName}} on {{bookingDate}} was updated.
+{{#if kinAdded}}It's Auntie. {{addedKinName}} is now on {{visitCount}} of your visits, first up {{nextVisit.weekday}} {{nextVisit.date}}. Every date: {{portalUrl}}{{else}}It's Auntie. The {{serviceType}} for {{kinName}} on {{bookingDate}} was updated.{{/if}}

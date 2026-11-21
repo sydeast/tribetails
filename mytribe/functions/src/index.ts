@@ -561,6 +561,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // row that a client may change has exactly one server-side owner.
   setVisitLifecycle: () => require('./admin/setVisitLifecycle'),
   updateKinCareSession: () => require('./admin/updateKinCareSession'),
+  // #1822: the owner's "Add <Kin> to the N upcoming visits" for a Kin adopted
+  // after those visits were booked. Writes only `kinIds`/`kinNames`.
+  addKinToUpcomingVisits: () => require('./admin/addKinToUpcomingVisits'),
   // #582: measures a recorded arrival against the household's stored coordinate
   // and stamps the DISTANCE on the visit. It owns no status, so it sits after the
   // three callables that do: `setVisitLifecycle` records THAT an arrival

@@ -505,7 +505,8 @@ export const HOUSEHOLD_NOTICE_RULES: Readonly<Record<string, HouseholdNoticeRule
   'kincare.auntie.arrived': { line: visitLine, target: 'visit' },
   'kincare.auntie.departed': { line: visitLine, target: 'visit' },
   'kincare.unavailable': { line: visitLine, target: 'visit' },
-  'kincare.changed': { line: visitLine, target: 'visit' },
+  // #1822: one notice for a Kin added to several visits reads as the count and the first.
+  'kincare.changed': { line: confirmLine, target: 'visit' },
   'kincare.cancel.declined': { line: visitLine, target: 'visit' },
   'kincare.request.declined': { line: requestLine, target: 'request' },
   'kincare.upcoming.reminder': { line: visitLine, target: 'visit' },

@@ -481,6 +481,31 @@ class KinCareRepository(
                 ?: error("The Kin of this household could not be loaded.")
         }.onFailure { AuntieLog.e("getHouseholdKinRoster failed", it) }
 
+    /**
+     * #1822: how many of the household's upcoming visits do not carry this Kin
+     * ([apply] false), or put the Kin on them ([apply] true), through
+     * `addKinToUpcomingVisits`. Owner only; the server refuses an Auntie and
+     * leaves every started or past visit as it is.
+     */
+    suspend fun addKinToUpcomingVisits(
+        kinfolkId: String,
+        kinId: String,
+        apply: Boolean,
+    ): Result<com.tribetails.auntieos.domain.AddKinToVisitsAnswer> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            val mode = authGate.requireTestMode()
+            val payload = mapOf(
+                "kinfolkId" to mode.scopedKinfolkId(kinfolkId),
+                "kinId" to kinId,
+                "apply" to apply,
+            )
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("addKinToUpcomingVisits").call(payload).awaitCallable().data as? Map<String, Any?>
+            com.tribetails.auntieos.domain.addKinToVisitsAnswerOf(raw)
+                ?: error("The upcoming visits could not be checked.")
+        }.onFailure { AuntieLog.e("addKinToUpcomingVisits failed", it) }
+
     // ---- Care-ops session callables (1E §A.9) ----
 
     /**

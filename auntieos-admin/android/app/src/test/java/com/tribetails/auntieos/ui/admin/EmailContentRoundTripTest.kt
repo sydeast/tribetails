@@ -136,7 +136,9 @@ class EmailContentRoundTripTest {
 
     /**
      * Ruling C4: every seed the server stores, read from the repo. Each must round-trip byte
-     * for byte, and the two `{{#each visits}}` seeds must come out with their list locked.
+     * for byte, and every `{{#each visits}}` seed must come out with its whole loop in one
+     * locked block: the `<ul>` day list of the two booking seeds, or the opening paragraph of
+     * the two change seeds, whose Kin-added branch (#1822) lists the days inline.
      */
     @Test fun everyStoredSeedRoundTripsByteForByte() {
         val files = seedsRoot().listFiles().orEmpty()
@@ -151,14 +153,35 @@ class EmailContentRoundTripTest {
             assertEquals(file.parentFile.name, html, serializeEmailContent(blocks))
             if ("{{#each" in html) {
                 loopSeeds += file.parentFile.name
-                val list = blocks[1]
-                assertTrue(file.parentFile.name, list is EmailBlock.LockedBlock)
-                assertTrue(file.parentFile.name, (list as EmailBlock.LockedBlock).raw.startsWith("<ul>"))
-                assertTrue(file.parentFile.name, "{{#each visits}}" in list.raw && "{{/each}}" in list.raw)
+                // Exactly one block holds the loop, whole (opener and closer together), and it is
+                // locked; no editable block carries either half of it.
+                val holding = blocks.filter { "{{#each" in rawOf(it) || "{{/each}}" in rawOf(it) }
+                assertEquals(file.parentFile.name, 1, holding.size)
+                val loop = holding.single()
+                assertTrue(file.parentFile.name, loop is EmailBlock.LockedBlock)
+                loop as EmailBlock.LockedBlock
+                assertTrue(file.parentFile.name, "{{#each visits}}" in loop.raw && "{{/each}}" in loop.raw)
+                if (file.parentFile.name in listLoopSeeds) {
+                    // The day-list form: the loop is the `<ul>` right after the greeting.
+                    assertTrue(file.parentFile.name, blocks[1] === loop)
+                    assertTrue(file.parentFile.name, loop.raw.startsWith("<ul>"))
+                } else {
+                    // The inline form (#1822's Kin-added branch): one day per line inside the
+                    // `{{#if kinAdded}}` of the opening paragraph, which the helper locks (C5).
+                    assertTrue(file.parentFile.name, blocks[0] === loop)
+                    assertTrue(file.parentFile.name, loop.raw.startsWith("<p>") && "{{#if kinAdded}}" in loop.raw)
+                }
             }
         }
-        assertEquals(listOf("assignment.assigned", "kincare.booking.confirm"), loopSeeds)
+        assertEquals(
+            listOf("assignment.assigned", "assignment.changed", "kincare.booking.confirm", "kincare.changed"),
+            loopSeeds,
+        )
     }
+
+    private val listLoopSeeds = setOf("assignment.assigned", "kincare.booking.confirm")
+
+    private fun rawOf(block: EmailBlock): String = serializeEmailContent(listOf(block))
 
     private fun kindsOf(blocks: List<EmailBlock>): List<String> = blocks.map { block ->
         when (block) {

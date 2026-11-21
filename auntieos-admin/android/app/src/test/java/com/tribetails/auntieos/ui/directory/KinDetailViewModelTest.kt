@@ -10,6 +10,7 @@ import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.KinRemovalRequestRepository
 import com.tribetails.auntieos.data.repository.KinRemovalRequestRow
 import com.tribetails.auntieos.data.repository.KinRemovalResolution
+import com.tribetails.auntieos.domain.AddKinToVisitsAnswer
 import io.mockk.CapturingSlot
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -78,6 +79,8 @@ class KinDetailViewModelTest {
         coEvery { kinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { removalRepo.list(any()) } returns Result.success(emptyList())
+        coEvery { kinCareRepo.addKinToUpcomingVisits(any(), any(), any()) } returns
+            Result.success(AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 0, added = 0))
     }
 
     @After
@@ -399,5 +402,77 @@ class KinDetailViewModelTest {
         assertEquals("This removal request has already been answered.", state.removalActionError)
         assertEquals("kf1_fk1", state.removalActionErrorFor)
         assertNull(state.removalMessage)
+    }
+
+    // ── #1822: adding this Kin to visits booked before it joined ───────────
+    @Test
+    fun `the upcoming visits missing this Kin are counted for its household, after the page is drawable`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", false) } returns
+            Result.success(AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 3, added = 0))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertEquals(3, state.missingVisits)
+        assertNull(state.missingError)
+        assertTrue(!state.missingLoading)
+        coVerify(exactly = 0) { kinCareRepo.addKinToUpcomingVisits(any(), any(), true) }
+    }
+    @Test
+    fun `a failed count is its own error, and the page stands`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.addKinToUpcomingVisits(any(), any(), false) } returns Result.failure(RuntimeException("offline"))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        assertEquals("offline", vm.uiState.value.missingError)
+        assertNull(vm.uiState.value.missingVisits)
+        assertEquals("Biscuit", vm.uiState.value.kin?.name)
+    }
+    @Test
+    fun `a pet with no household asks nothing`() = runTest(testDispatcher) {
+        coEvery { repo.getKinByIds(any()) } returns Result.success(mapOf("k1" to biscuit.copy(kinfolkId = "")))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        coVerify(exactly = 0) { kinCareRepo.addKinToUpcomingVisits(any(), any(), any()) }
+        assertNull(vm.uiState.value.missingVisits)
+    }
+    @Test
+    fun `adding puts the Kin on the visits, says so, and reads the count again`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", false) } returnsMany listOf(
+            Result.success(AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 2, added = 0)),
+            Result.success(AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 0, added = 0)),
+        )
+        coEvery { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", true) } returns
+            Result.success(AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 2, added = 2))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        vm.addToUpcomingVisits("kf1", "k1", "Biscuit")
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertEquals("Added Biscuit to 2 upcoming visits.", state.addToVisitsMessage)
+        assertEquals(0, state.missingVisits)
+        assertTrue(!state.addingToVisits)
+        assertNull(state.addToVisitsError)
+        coVerify(exactly = 1) { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", true) }
+        coVerify(exactly = 2) { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", false) }
+    }
+    @Test
+    fun `a refused add keeps the count and shows the reason`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", false) } returns
+            Result.success(AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 2, added = 0))
+        coEvery { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", true) } returns
+            Result.failure(RuntimeException("Only the owner can add a Kin to visits already booked."))
+        val vm = viewModel()
+        vm.load("k1")
+        advanceUntilIdle()
+        vm.addToUpcomingVisits("kf1", "k1", "Biscuit")
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertEquals("Only the owner can add a Kin to visits already booked.", state.addToVisitsError)
+        assertEquals(2, state.missingVisits)
+        assertNull(state.addToVisitsMessage)
+        assertTrue(!state.addingToVisits)
     }
 }
