@@ -147,7 +147,10 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'markConversationRead',
   'markConversationUnread',
   'markAllThreadsRead',
-  'getRecordingAudio', // the voicemail and call recordings in the same Inbox
+  // getRecordingAudio was here. It plays the business line's voicemails and
+  // call recordings, which only the Inbox Channels panel lists, and that panel
+  // is the owner's on every client (#2444; the rules give `voicemails` and
+  // `calls_log` to the owner). The business phone is rule 4, so it came out.
 
   // ── Herself ────────────────────────────────────────────────────────────
   'getMyAdminNotificationPrefs',
