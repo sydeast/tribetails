@@ -440,10 +440,18 @@ describe('an Auntie never reaches Tribal Intel', () => {
     expect(railLink('Tribal Intel')).toBeNull();
   });
 
-  // The retired address has no route of its own, so it opens no screen for anyone.
+  // #2429: the retired address redirects, and carries the same guard as the
+  // screen it lands on, so it sends her Home and never to the notes.
   it('opens no notes screen for her at the old /training-docs address', async () => {
     await boot('/training-docs', AUNTIE_CLAIMS);
-    await settleRouter();
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
+  });
+
+  it('sends a double-claimed account Home from the old /training-docs address', async () => {
+    await boot('/training-docs', DOUBLE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
     expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
   });
 });
@@ -462,6 +470,13 @@ describe('the owner and the test admin keep Tribal Intel', () => {
       await boot('/tribal-intel', claims);
       expect(await screen.findByText('TRIBAL INTEL SCREEN')).toBeInTheDocument();
       expect(window.location.pathname).toBe('/tribal-intel');
+    });
+
+    // #2429: the old address used to show the not-found card to everyone.
+    it(`sends the ${who} from the old /training-docs address to Tribal Intel`, async () => {
+      await boot('/training-docs', claims);
+      await waitFor(() => expect(window.location.pathname).toBe('/tribal-intel'));
+      expect(await screen.findByText('TRIBAL INTEL SCREEN')).toBeInTheDocument();
     });
   }
 
