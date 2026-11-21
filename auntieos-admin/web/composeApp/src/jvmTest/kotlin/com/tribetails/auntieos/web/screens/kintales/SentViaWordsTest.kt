@@ -33,4 +33,19 @@ class SentViaWordsTest {
         assertNull(sentViaWords("dispatch_v2"))
         assertNull(sentViaWords("kin_care_reports"))
     }
+
+    @Test
+    fun sentAtReadsAsADateAndTimeOnTheBusinessClock() {
+        // #2551: May is daylight time in Chicago, so 09:50Z reads 04:50.
+        val chicago = kotlinx.datetime.TimeZone.of("America/Chicago")
+        assertEquals("May 30 · 04:50", sentAtWords("2026-05-30T09:50:00Z", chicago, currentYear = 2026))
+        assertEquals("Nov 10, 2026 · 22:32", sentAtWords("2026-11-11T04:32:00Z", chicago, currentYear = 2027))
+    }
+
+    @Test
+    fun aSentAtThatDoesNotReadIsNeverPrinted() {
+        val chicago = kotlinx.datetime.TimeZone.of("America/Chicago")
+        assertNull(sentAtWords("not a time", chicago))
+        assertNull(sentAtWords("", chicago))
+    }
 }

@@ -970,17 +970,18 @@ private fun DeliveryPanel(report: KinCareReport) {
     DenPanel(title = "Delivery") {
         Column {
             if (report.sentAt.isNotBlank()) {
-                AuntieKeyValueRow(label = "Sent at", value = report.sentAt, valueMono = true)
+                // #2551: a date and time in words on the business clock, never the stored stamp.
+                AuntieKeyValueRow(label = "Sent at", value = sentAtWords(report.sentAt, businessTimeZone()) ?: "Not recorded")
             }
             if (report.sentVia.isNotBlank()) {
                 // #1817: in words. "pending" and "catalog" are markers, not channels.
                 AuntieKeyValueRow(label = "Sent via", value = sentViaWords(report.sentVia) ?: "Not recorded")
             }
             if (report.deliveryReceiptId.isNotBlank()) {
+                // #2551: the receipt's dispatch id is a stored id. Say that one is on file.
                 AuntieKeyValueRow(
                     label = "Receipt",
-                    value = report.deliveryReceiptId,
-                    valueMono = true,
+                    value = RECEIPT_ON_FILE,
                     showDivider = false,
                 )
             }

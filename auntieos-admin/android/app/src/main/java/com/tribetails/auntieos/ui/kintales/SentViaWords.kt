@@ -30,3 +30,22 @@ private val SENT_VIA_WORDS = mapOf(
     "sms" to "text",
     "push" to "push",
 )
+
+/**
+ * #2551: the Delivery panel's "Sent at" in the auntieOS form (#1828): the
+ * business clock, month as a word, 24-hour, as [com.tribetails.auntieos.ui.admin.shortIso]
+ * writes it for the same tale elsewhere ("May 30 · 04:50"). Null when the
+ * stored value does not read as a time, so the stored stamp never shows.
+ */
+internal fun sentAtWords(
+    raw: String?,
+    zone: java.time.ZoneId,
+    currentYear: Int = java.time.LocalDate.now(zone).year,
+): String? {
+    val text = raw?.trim().orEmpty()
+    if (text.length < 16 || com.tribetails.auntieos.domain.storedBusinessLocal(text, zone) == null) return null
+    return com.tribetails.auntieos.ui.admin.shortIso(text, currentYear, zone)
+}
+
+/** #2551: the Receipt row says one is on file. The dispatch id behind it is a stored id. */
+internal const val RECEIPT_ON_FILE = "On file"
