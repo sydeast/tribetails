@@ -20,7 +20,9 @@ import { toNotificationListItem } from '../src/portal/listMyNotifications';
 
 /**
  * #2061: an approved Push draft for one household is sent, or the screen is
- * told exactly why not. The send gate and the household's own settings apply.
+ * told exactly why not. The household's own settings and the operator's switch
+ * for the notice apply; since #1834 "Send notices to households" does not,
+ * because a push to one household is a single message.
  */
 
 const ACTIVE_PRIMARY = { role: 'PRIMARY', status: 'ACTIVE' };
@@ -85,25 +87,24 @@ describe('sendHouseholdPush (#2061)', () => {
     });
   });
 
-  it('SAD: the send gate is shut, so nothing is written or pushed and the reason says so', async () => {
+  it('#1834 HAPPY: notices to households switched off, the push still goes (a single message passes)', async () => {
     const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, 'business_settings/business_settings': { householdNotificationsLive: false } });
 
     const res = await sendHouseholdPushHandler(req());
 
-    expect(res).toEqual({ ok: true, outcome: 'held', reason: 'household_notices_off' });
-    expect(mocks.multicast).not.toHaveBeenCalled();
-    // Nothing for the household; the draft takes its claim and remembers the answer (#2293).
-    expect([...new Set(ctx.writes.map((w) => w.path))]).toEqual([draftPath]);
-    expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'held', pushReason: 'household_notices_off' });
+    expect(res).toEqual({ ok: true, outcome: 'sent', reason: null });
+    expect(mocks.multicast).toHaveBeenCalledTimes(1);
+    expect(ctx.writes.find((w) => w.path === noticePath)?.data).toMatchObject({ key: 'message.reply', recipientUid: 'uid_kin' });
   });
 
-  it('SAD: the gate absent (the pre-launch default) holds the push too', async () => {
+  it('#1834 HAPPY: the switch absent (the pre-launch default) does not hold the push either', async () => {
     seed({ ...HOUSEHOLD, ...PUSH_ON, 'business_settings/business_settings': { businessName: 'The Office' } });
-    expect((await sendHouseholdPushHandler(req())).reason).toBe('household_notices_off');
-    expect(mocks.multicast).not.toHaveBeenCalled();
+    const res = await sendHouseholdPushHandler(req());
+    expect(res.outcome).toBe('sent');
+    expect(res.reason).not.toBe('household_notices_off');
   });
 
-  it('SAD: a household nobody has signed in to is named first, before the gate', async () => {
+  it('SAD: a household nobody has signed in to is held, whatever the switch says', async () => {
     const ctx = seed({ [draftPath]: DRAFT, 'kinfolk/fam1': { firstName: 'Test' }, 'business_settings/business_settings': { householdNotificationsLive: false } });
     const res = await sendHouseholdPushHandler(req());
     expect(res).toEqual({ ok: true, outcome: 'held', reason: 'household_has_no_portal_account' });
@@ -296,11 +297,18 @@ describe('sendHouseholdPush checks its draft (#2295)', () => {
     expect(ctx.docs[noticePath]).toMatchObject({ data: { kinfolkId: 'fam1', draftId: 'draft1' } });
   });
   it('HAPPY (#2293): a held push is stamped held on its draft, then sent on a later try', async () => {
-    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, 'business_settings/business_settings': { householdNotificationsLive: false } });
+    // #1834: the send switch no longer holds a push to one household, so the
+    // hold here is the operator's own switch for the notice.
+    const ctx = seed({
+      ...HOUSEHOLD,
+      ...PUSH_ON,
+      ...LIVE,
+      'businessSettings/notifications': { byKey: { 'message.reply': { enabled: false } } },
+    });
     expect((await sendHouseholdPushHandler(req())).outcome).toBe('held');
-    expect(ctx.docs[draftPath]).toMatchObject({ status: 'approved', pushOutcome: 'held', pushReason: 'household_notices_off' });
+    expect(ctx.docs[draftPath]).toMatchObject({ status: 'approved', pushOutcome: 'held', pushReason: 'notice_turned_off' });
     expect(typeof ctx.docs[draftPath]!['pushAttemptedAt']).toBe('string');
-    ctx.docs['business_settings/business_settings'] = { householdNotificationsLive: true };
+    ctx.docs['businessSettings/notifications'] = { byKey: { 'message.reply': { enabled: true } } };
     expect((await sendHouseholdPushHandler(req())).outcome).toBe('sent');
     expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'sent', pushReason: '' });
     // A third try finds it sent and the draft still reads sent, never null.

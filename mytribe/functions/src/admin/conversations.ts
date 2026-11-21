@@ -117,9 +117,9 @@ const ReplyArgs = z.object({
  *
  * Sent from the server, after the message is written, never from the client.
  * Every admin client (web, Android, desktop) replies through this callable, so
- * this one place covers all three. The household send gate, the operator's
- * channel switches and the household's own preferences all apply inside the
- * dispatcher. One notice per reply: `dedupeKey` is the message id, so a second
+ * this one place covers all three. The operator's channel switches and the
+ * household's own preferences apply inside the dispatcher; since #1834 the
+ * household send switch does not hold it, a reply being a single message. One notice per reply: `dedupeKey` is the message id, so a second
  * reply a minute later is a second notice, and a retry of this one is not.
  *
  * Best-effort: the reply is already in the thread, and a notice that cannot be

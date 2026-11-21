@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.marketing
 
+import com.tribetails.auntieos.domain.HELD_SEND_PREFIX
+import com.tribetails.auntieos.domain.blastCountsText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -162,7 +164,12 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                 }
             }
             state.scheduleError?.let { err ->
-                AuntieBanner(tone = AuntieBannerTone.Error, title = "Schedule failed") {
+                // #1834: a blast held while notices to households are off is not a failure.
+                val held = err.startsWith(HELD_SEND_PREFIX)
+                AuntieBanner(
+                    tone = if (held) AuntieBannerTone.Warning else AuntieBannerTone.Error,
+                    title = if (held) "Blast held" else "Schedule failed",
+                ) {
                     Text(err, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
                 }
             }
@@ -546,9 +553,9 @@ internal fun blastMeta(blast: MarketingBlastRow, zone: ZoneId): String {
             if (blast.dispatched == 0) {
                 "$head, never queued"
             } else {
-                "$head, ${blast.dispatched} sent, ${blast.suppressed} suppressed, stopped part-way"
+                "$head, ${blastCountsText(blast.dispatched, blast.suppressed, blast.heldAtSend)}, stopped part-way"
             }
-        else -> "$head, ${blast.dispatched} sent, ${blast.suppressed} suppressed"
+        else -> "$head, ${blastCountsText(blast.dispatched, blast.suppressed, blast.heldAtSend)}"
     }
 }
 

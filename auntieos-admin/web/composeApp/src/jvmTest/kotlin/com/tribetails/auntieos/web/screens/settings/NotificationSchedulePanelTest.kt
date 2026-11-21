@@ -141,8 +141,11 @@ class NotificationSchedulePanelTest {
 
     @Test
     fun `the switch line says what off holds back and what still goes`() {
-        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("notices to households are held back, a KinTale or an invoice you send included"))
-        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("Four things still go: a broadcast, a single email or text message you write, an invite, a password reset"))
+        // #1834 ruling: broadcasts are held, a message to one household still goes.
+        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("notices to households are held back, a KinTale or an invoice you send included, and so are broadcasts and marketing blasts"))
+        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("A message you write to one household still goes: an email, a text, a push, an inbox reply."))
+        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("Invites and password resets still go too"))
+        assertFalse(HOUSEHOLD_SWITCH_TIP.contains("Four things still go"))
         assertFalse(HOUSEHOLD_SWITCH_TIP.contains("nothing is sent", ignoreCase = true))
     }
 

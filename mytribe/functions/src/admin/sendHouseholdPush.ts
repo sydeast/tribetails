@@ -14,7 +14,6 @@ import {
   HOUSEHOLD_SHORT_LINE_MAX,
   householdPushShelfLine,
 } from '../notifications/templateParsers';
-import { loadHouseholdSendGate } from '../notifications/householdSendGate';
 import { loadBusinessOverride, loadUserPrefs, notificationDisabledFor, resolveChannels } from '../notifications/prefs';
 
 /**
@@ -30,11 +29,15 @@ import { loadBusinessOverride, loadUserPrefs, notificationDisabledFor, resolveCh
  *
  *   1. Nobody in the household has signed in to the portal: there is no
  *      account to push to (`resolveKinfolkUid`, the membership-checked login).
- *   2. The household send gate (`householdNotificationsLive`) is shut. Nothing
- *      is written and nothing is sent, exactly as the dispatcher holds a
- *      household copy. Fails closed on a read error, as the gate does.
- *   3. The operator turned household message notices off (Settings,
+ *   2. The operator turned household message notices off (Settings,
  *      Notifications). Nothing is written.
+ *
+ * NOT THE HOUSEHOLD SEND SWITCH (#1834, ruling 2026-11-20). A Communicate push
+ * is a single message the owner writes to one household, and single messages
+ * go with "Send notices to households" off; only broadcasts are held by it
+ * (`notifications/householdSendGate.ts`). This send used to be held by the switch
+ * (#2061); `household_notices_off` stays in the reasons below so a client
+ * reading an older reply still has a sentence for it.
  *
  * Past those, the notice is written to the household's notifications list, and
  * the push goes to their devices only when their own settings allow push for
@@ -54,8 +57,8 @@ import { loadBusinessOverride, loadUserPrefs, notificationDisabledFor, resolveCh
  * push went out (`pushOutcome`): a retry after a push that went out sends
  * nothing and says so; a retry after one that did not (push off, no device, a
  * refused send) tries the push again. A held send writes nothing for the
- * household, so trying again after the operator switches household notices on
- * goes through.
+ * household, so trying again after the operator turns the notice back on goes
+ * through.
  *
  * ── THE DRAFT IS CHECKED FIRST (#2295) ───────────────────────────────────────
  * Before anything else the `generated_drafts` doc is read and the send is
@@ -116,7 +119,7 @@ export const Args = z.object({
  * state the clients turn into a sentence; none is an error.
  *
  *   household_has_no_portal_account  no signed-in member to send to (nothing written)
- *   household_notices_off            the send gate is shut (nothing written)
+ *   household_notices_off            no longer sent (#1834); kept for older replies
  *   notice_turned_off                the operator turned this notice off (nothing written)
  *   household_push_off               on their list; their settings keep push off
  *   no_device                        on their list; no phone or browser is signed in for push
@@ -356,11 +359,6 @@ async function deliverHouseholdPush(
     return held('household_has_no_portal_account');
   }
 
-  const gate = await loadHouseholdSendGate(db());
-  if (!gate.live) {
-    log('household.push.held', { reason: 'household_notices_off', gateState: gate.state });
-    return held('household_notices_off');
-  }
 
   const def = getNotificationDef(HOUSEHOLD_PUSH_NOTIFICATION_KEY);
   const [userPrefs, businessOverride] = await Promise.all([

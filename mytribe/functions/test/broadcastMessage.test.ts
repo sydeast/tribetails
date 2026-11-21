@@ -212,7 +212,7 @@ describe('broadcastMessage suppression', () => {
  */
 describe('broadcastMessage names the business from settings (#1381)', () => {
   it('titles a subject-less push with the business name, and the email footer names it too', async () => {
-    const ctx = kinfolkDb({}, { 'business_settings/business_settings': { businessName: 'Test Business' } });
+    const ctx = kinfolkDb({}, { 'business_settings/business_settings': { businessName: 'Test Business', householdNotificationsLive: true } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await broadcastMessageHandler(
       req({ criteria: { kind: 'all' }, channels: ['push'], body: 'Body' }),
@@ -284,7 +284,7 @@ describe('broadcastMessage notification preferences', () => {
     expect(res.reach).toEqual({ targeted: 1, reached: 1, suppressedByPrefs: 0 });
   });
 
-  it('honors the operator gate: the kinfolk stream disabled silences the broadcast', async () => {
+  it('honors the operator gate: the kinfolk stream disabled holds the whole broadcast (#1834)', async () => {
     const ctx = oneKinfolkDb({
       'businessSettings/notifications': {
         byKey: { 'broadcast.message': { enabled: true, channels: {}, streams: { kinfolk: { enabled: false } } } },
@@ -292,12 +292,16 @@ describe('broadcastMessage notification preferences', () => {
       'clients/u1': prefsDoc({ email: true, sms: true, push: true }),
     });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await broadcastMessageHandler(
-      req({ criteria: { kind: 'all' }, channels: ['email', 'sms', 'push'], subject: 'Hi', body: 'B' }),
-    );
+    // It used to walk every household and count each one as silenced by its
+    // preferences, which blamed the households for the operator's own switch.
+    await expect(
+      broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['email', 'sms', 'push'], subject: 'Hi', body: 'B' }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition', message: 'held_notice_turned_off' });
     expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
     expect(mocks.twilioCreate).not.toHaveBeenCalled();
-    expect(res.reach).toEqual({ targeted: 1, reached: 0, suppressedByPrefs: 1 });
+    expect(rowWrites(ctx)).toEqual([]);
   });
 
   it('lets the operator force SMS on for a household that never opted in', async () => {
@@ -967,7 +971,7 @@ describe('broadcastMessage fills merge fields per household (#1610)', () => {
         const ctx = buildDbMock({ writeThrough: true,
           docs: {
             'clients/u1': prefsDoc({ sms: true }),
-            'business_settings/business_settings': { businessName: 'Test Business' },
+            'business_settings/business_settings': { businessName: 'Test Business', householdNotificationsLive: true },
           },
           queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', phoneNumber: '+14155552671', uid: 'u1' } }] },
         });
@@ -997,5 +1001,210 @@ describe('broadcastMessage fills merge fields per household (#1610)', () => {
     ).rejects.toMatchObject({ code: 'invalid-argument', message: 'unsupported_merge_fields: firstname, kinName' });
     expect(ctx.writes).toHaveLength(0);
     expect(mocks.twilioCreate).not.toHaveBeenCalled();
+  });
+});
+
+
+/**
+ * #1834 (operator ruling, 2026-11-20): with notices to households switched off,
+ * a broadcast is held as a whole. Nothing is sent, nothing is stored to go
+ * later, the owner is told, and the Activity Log gets one line.
+ */
+describe('broadcastMessage is held while notices to households are off (#1834)', () => {
+  const KEY = 'bcast_1757700000000_ab12cd';
+  const OFF = { 'business_settings/business_settings': { householdNotificationsLive: false } };
+  const send = (over: Record<string, unknown> = {}) => ({
+    criteria: { kind: 'all' },
+    channels: ['inapp', 'email', 'sms', 'push'],
+    subject: 'Hi',
+    body: 'Body',
+    ...over,
+  });
+  const auditCalls = () => (writeAuditEntry as any).mock.calls.map((c: any[]) => c[0]);
+  function expectNothingSent(ctx: ReturnType<typeof kinfolkDb>) {
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+    expect(mocks.twilioCreate).not.toHaveBeenCalled();
+    expect(mocks.multicast).not.toHaveBeenCalled();
+    // No row, no roster, no notifications entry: nothing for a sweep to finish.
+    expect(ctx.writes.filter((w) => w.path.startsWith('broadcasts/'))).toEqual([]);
+    expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toEqual([]);
+  }
+
+  it('SAD: switched off, it is refused with the held token and nothing goes', async () => {
+    const ctx = kinfolkDb({}, OFF);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(broadcastMessageHandler(req(send()))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'held_household_notices_off',
+      details: { held: 'off' },
+    });
+    expectNothingSent(ctx);
+  });
+
+  it('SAD: the switch absent (the pre-launch default) holds it too', async () => {
+    const ctx = kinfolkDb({}, { 'business_settings/business_settings': { businessName: 'The Office' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(broadcastMessageHandler(req(send()))).rejects.toMatchObject({ message: 'held_household_notices_off' });
+    expectNothingSent(ctx);
+  });
+
+  it('writes ONE Activity Log line saying it was held and will not go later', async () => {
+    const ctx = kinfolkDb({}, OFF);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(broadcastMessageHandler(req(send()))).rejects.toBeTruthy();
+    const lines = auditCalls();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      status: 'NOT_SENT',
+      event: 'NOTIFICATION_NOT_SENT',
+      actorUid: 'admin1',
+      description: 'Held back a broadcast to 2 households: notices to households are turned off. It will not be sent later',
+      payload: { key: 'broadcast.message', outcome: 'held', households: 2 },
+    });
+  });
+
+  it('SAD: broadcasts turned off in Settings are held with their own token and line', async () => {
+    const ctx = kinfolkDb({}, { 'businessSettings/notifications': { byKey: { 'broadcast.message': { enabled: false } } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(broadcastMessageHandler(req(send()))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'held_notice_turned_off',
+    });
+    expectNothingSent(ctx);
+    expect(auditCalls()[0]?.description).toBe(
+      'Did not send a broadcast to 2 households: this notification is turned off in Settings. It will not be sent later',
+    );
+  });
+
+  it('NEGATIVE: no recipients is still "no recipients", not held', async () => {
+    const ctx = buildDbMock({ writeThrough: true, docs: { ...OFF }, queryDocs: { kinfolk: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(broadcastMessageHandler(req(send()))).rejects.toMatchObject({ message: 'no_recipients' });
+    expect(auditCalls()).toEqual([]);
+  });
+
+  it('a key whose broadcast already went is answered from its row, not held', async () => {
+    const ctx = kinfolkDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const first = await broadcastMessageHandler(req(send({ idempotencyKey: KEY, channels: ['email'] })));
+    const emails = mocks.sendTemplatedEmail.mock.calls.length;
+    await ctx.db.doc('business_settings/business_settings').set({ householdNotificationsLive: false });
+    const again = await broadcastMessageHandler(req(send({ idempotencyKey: KEY, channels: ['email'] })));
+    expect(again.deduped).toBe(true);
+    expect(again.broadcastId).toBe(first.broadcastId);
+    expect(mocks.sendTemplatedEmail.mock.calls.length).toBe(emails);
+  });
+
+  it('a key left at failed reached nobody, so it is held like a new one and not re-run', async () => {
+    const ctx = kinfolkDb({}, { ...OFF, [`broadcasts/${KEY}`]: { actorUid: 'admin1', fanoutState: 'failed' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(broadcastMessageHandler(req(send({ idempotencyKey: KEY })))).rejects.toMatchObject({
+      message: 'held_household_notices_off',
+    });
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+    expect(ctx.writes.filter((w) => w.path.startsWith('broadcasts/'))).toEqual([]);
+  });
+
+  it('HAPPY: switched on, the same broadcast goes as before', async () => {
+    const ctx = kinfolkDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await broadcastMessageHandler(req(send()));
+    expect(res.ok).toBe(true);
+    expect(res.reach.reached).toBe(1);
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
+  });
+
+  describe('a broadcast still sending when notices are turned off', () => {
+    const START = 1_760_000_000_000;
+    let clock = START;
+    beforeEach(() => {
+      clock = START;
+      vi.spyOn(Date, 'now').mockImplementation(() => clock);
+      mocks.sendTemplatedEmail.mockImplementation(async () => {
+        clock += 400;
+        return 'sg-1';
+      });
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+    function bigDb(n: number) {
+      const docs: Record<string, any> = {};
+      const rows = Array.from({ length: n }, (_, i) => ({
+        id: `k${i}`,
+        data: { status: 'active', tags: [], email: `k${i}@x.com`, phoneNumber: '', uid: `u${i}` },
+      }));
+      for (const r of rows) {
+        docs[`clients/${r.data.uid}`] = prefsDoc({ email: true, sms: false, push: false });
+        docs[`kinfolk/${r.id}`] = r.data;
+      }
+      return buildDbMock({ writeThrough: true, docs, queryDocs: { kinfolk: rows } });
+    }
+
+    it('ERROR: a settings read that fails does not stop it; the next readable tick finishes it', async () => {
+      const ctx = bigDb(120);
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'S', body: 'B' }),
+      );
+      expect(res.pending).toBe(true);
+      const sentBefore = mocks.sendTemplatedEmail.mock.calls.length;
+      (writeAuditEntry as any).mockClear();
+      const realDoc = ctx.db.doc.bind(ctx.db);
+      const spy = vi.spyOn(ctx.db, 'doc').mockImplementation(((path: string) =>
+        path.startsWith('business_settings/')
+          ? { get: () => Promise.reject(new Error('unavailable')) }
+          : realDoc(path)) as any);
+      clock += 1_000;
+      await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 30_000 });
+      expect(mocks.sendTemplatedEmail.mock.calls.length).toBe(sentBefore);
+      const row = (await ctx.db.collection('broadcasts').doc(res.broadcastId).get()).data();
+      expect(row.cancelRequestedAtMs).toBeNull();
+      expect(auditCalls().filter((l: any) => l.event === 'NOTIFICATION_NOT_SENT')).toEqual([]);
+
+      spy.mockRestore();
+      for (let i = 0; i < 20; i += 1) {
+        const r = await ctx.db.collection('broadcasts').doc(res.broadcastId).get();
+        if (r.data()?.fanoutState === 'complete') break;
+        clock += 1_000;
+        await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 30_000 });
+      }
+      expect(new Set(mocks.sendTemplatedEmail.mock.calls.map((c: any[]) => c[0].to)).size).toBe(120);
+    });
+
+    it('the sweep stops the rest, never sends it later, and writes one line', async () => {
+      const ctx = bigDb(120);
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'S', body: 'B' }),
+      );
+      expect(res.pending).toBe(true);
+      const sentBefore = mocks.sendTemplatedEmail.mock.calls.length;
+      (writeAuditEntry as any).mockClear();
+      await ctx.db.doc('business_settings/business_settings').set({ householdNotificationsLive: false });
+
+      for (let i = 0; i < 5; i += 1) {
+        clock += 1_000;
+        await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 30_000 });
+      }
+
+      expect(mocks.sendTemplatedEmail.mock.calls.length).toBe(sentBefore);
+      const row = (await ctx.db.collection('broadcasts').doc(res.broadcastId).get()).data();
+      expect(typeof row.cancelRequestedAtMs).toBe('number');
+      expect(row.heldReason).toBe('off');
+      const lines = auditCalls().filter((l: any) => l.event === 'NOTIFICATION_NOT_SENT');
+      expect(lines).toHaveLength(1);
+      expect(lines[0].description).toBe(
+        'Stopped a broadcast part-way: notices to households were turned off. What already went cannot be recalled, and the rest will not be sent',
+      );
+
+      // Switching notices back on does not finish it: held means never sent later.
+      await ctx.db.doc('business_settings/business_settings').set({ householdNotificationsLive: true });
+      for (let i = 0; i < 3; i += 1) {
+        clock += 1_000;
+        await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 30_000 });
+      }
+      expect(mocks.sendTemplatedEmail.mock.calls.length).toBe(sentBefore);
+    });
   });
 });
