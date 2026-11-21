@@ -85,12 +85,14 @@ export function visitClockInFlight(sessionId: string | null): string | null {
 /**
  * Settle the write stamped `seq`. Ignored when a newer write (or an `ask`) has
  * started on the same visit since, so a late dispatch cannot overwrite it.
+ * True when this write was still the visit's latest and its state landed.
  */
-export function settleVisitClockWrite(sessionId: string, seq: number, state: LifecycleWriteState): void {
+export function settleVisitClockWrite(sessionId: string, seq: number, state: LifecycleWriteState): boolean {
   const entry = entries.get(sessionId);
-  if (entry === undefined || entry.seq !== seq) return;
+  if (entry === undefined || entry.seq !== seq) return false;
   entries.set(sessionId, { seq, state, action: entry.action });
   emit();
+  return true;
 }
 
 /** Clear one visit's sentence and invalidate any write still settling. */

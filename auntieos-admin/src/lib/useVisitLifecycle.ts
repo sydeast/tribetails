@@ -29,7 +29,6 @@ import {
   visitClockInFlight,
   settleVisitClockWrite,
   useVisitClockState,
-  visitClockState,
   type LifecycleWriteState,
 } from './visitClockOutcome';
 import {
@@ -268,11 +267,13 @@ export function useVisitLifecycle(
       // known so far, so neither late part can erase the other.
       let said: string | null = null;
       let rangeNote = '';
-      const resay = (): void => {
+      // The sentence as it landed, or null when a newer write on this visit
+      // has replaced it.
+      const resay = (): string | null => {
         // #2038: an undo tells the household nothing, and the card says so.
         const notice = action === 'UNDO_ARRIVAL' ? undoNotice() : said === null ? checking.trim() : said;
         const message = [moved, notice, rangeNote].filter((part) => part !== '').join(' ');
-        settleVisitClockWrite(id, seq, { status: 'done', message });
+        return settleVisitClockWrite(id, seq, { status: 'done', message }) ? message : null;
       };
 
       // The second half, once the server has recorded what the household was
@@ -281,18 +282,19 @@ export function useVisitLifecycle(
       // Written to the STORE, not to this component, which may have unmounted.
       void res.notification.then((outcome) => {
         said = visitNoticeOutcomeSentence(outcome, household, auntie);
-        resay();
-        // #1815: and once more where the operator is looking, unless a newer
-        // write on this visit has already replaced the sentence.
-        const now = visitClockState(id);
-        if (now.status === 'done' && now.message.includes(said)) announceVisitClock(id, now.message);
+        const landed = resay();
+        // #1815: and once more where the operator is looking. Only a real
+        // answer about the household: no sentence means there is none to
+        // repeat, and an undo's own answer is the one below.
+        if (landed !== null && said !== '' && action !== 'UNDO_ARRIVAL') announceVisitClock(id, landed);
       });
 
       // #2357: and, for an undo, what came off their notifications list.
       if (action === 'UNDO_ARRIVAL' && res.undone !== undefined) {
         void res.undone.then((off) => {
           undone = off;
-          resay();
+          const landed = resay();
+          if (landed !== null) announceVisitClock(id, landed);
         });
       }
 

@@ -302,6 +302,56 @@ describe('the finished sentence is said again where the operator is looking (#18
     });
     expect(showToast).not.toHaveBeenCalled();
   });
+
+  it('says nothing when the server has no answer about the household', async () => {
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 'dre1',
+      action: 'ON_MY_WAY',
+      from: 'SCHEDULED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
+    });
+    render(<Sessions onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /^OMW$/ }));
+    await user.click(screen.getByRole('button', { name: /yes, mark it on the way/i }));
+    await reactAct(async () => {
+      await Promise.resolve();
+    });
+    expect(patchVisitLifecycle).toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('an undo toasts its finished sentence, never its checking line', async () => {
+    let settleUndone: (v: null) => void = () => {};
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'ARRIVED', startTime: at(0, 14), arrivedAt: at(0, 14) })]),
+    );
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 'dre1',
+      action: 'UNDO_ARRIVAL',
+      from: 'ARRIVED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      // The server's notice step has nothing to say about an undo.
+      notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
+      undone: new Promise((r) => (settleUndone = r)),
+    });
+    render(<Sessions onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /^Undo arrived$/ }));
+    await user.click(screen.getByRole('button', { name: /yes, undo the arrival/i }));
+    await reactAct(async () => {
+      await Promise.resolve();
+    });
+    expect(patchVisitLifecycle).toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+
+    await reactAct(async () => {
+      settleUndone(null);
+    });
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]).not.toMatch(/checking/i);
+  });
 });
 
 // #2185: an Auntie never sees Settings (ruling 2026-11-13). With the switch
