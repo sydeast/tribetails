@@ -75,6 +75,8 @@ import kotlinx.coroutines.launch
 import com.tribetails.auntieos.web.screens.booking.NewBookingMath
 import com.tribetails.auntieos.web.screens.booking.SeriesDecisionDialog
 import com.tribetails.auntieos.web.screens.booking.groupIncomingBySeries
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Admin notification inbox ("The Den · Notifications").
@@ -409,7 +411,7 @@ private fun Heading(unreadCount: Int) {
     val typo = AuntieTheme.typography
 
     DenScreenHeading(
-        kicker = "The Den · Notifications",
+        kicker = navKicker(Destination.Notifications),
         title = "Notifications",
         subtitle = "Events that need you, and the household each one is about. Activity Log keeps the audit trail.",
         trailing = {

@@ -55,6 +55,8 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.StatCard
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 // ── feature flag ─────────────────────────────────────────────────────────────
 // auntieos.trainingDocs.create, read via the ambient LocalFeatureFlags (central
@@ -149,7 +151,7 @@ fun TrainingDocumentsScreen(
                     DenScreenHeading(
                         // Renamed "Tribal Intel" (LOCKED Decision 3). TODO(auntie copy):
                         // final subtitle wording is author-owned; the name is decided.
-                        kicker = "The Den · Tribal Intel",
+                        kicker = railKicker(RailScreen.TRIBAL_INTEL),
                         title = "Tribal",
                         accentTail = "Intel.",
                         subtitle = TRIBAL_INTEL_SUBTITLE,

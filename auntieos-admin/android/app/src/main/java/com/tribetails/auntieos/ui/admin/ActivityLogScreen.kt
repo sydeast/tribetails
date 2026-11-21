@@ -66,6 +66,8 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 import java.time.LocalDate
 import java.time.ZoneId
 import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Activity log (hash-chain audit trail) in the Den aesthetic, drawn to
@@ -168,7 +170,7 @@ fun ActivityLogScreen(
                     .padding(horizontal = 16.dp, vertical = 16.dp),
             ) {
                 DenScreenHeading(
-                    kicker     = "The Den · Activity log",
+                    kicker     = railKicker(RailScreen.ACTIVITY),
                     title      = "Every move,",
                     accentTail = "sealed.",
                     subtitle   = "A tamper-evident audit trail, newest first. Every login, edit and system event the app records, sealed into the SHA-256 hash chain. Tap an entry for the full record. Re-verify walks the chain server-side.",

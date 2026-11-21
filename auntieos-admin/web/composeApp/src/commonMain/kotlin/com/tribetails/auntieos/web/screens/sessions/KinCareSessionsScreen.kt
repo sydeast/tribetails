@@ -102,6 +102,8 @@ import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.ui.components.color
 import kotlinx.coroutines.launch
 import com.tribetails.auntieos.web.ui.components.AuntieDialog
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // ---- Sub-routes inside Auntie Time (drill into operational detail) ----
 
@@ -295,7 +297,7 @@ internal fun AuntieTimeListScreen(
         // mislabeled Schedule subtitle was removed; that content lives here, not nowhere.
         // TODO(auntie copy): any subtitle rewording to surface "route" is author-owned.
         DenScreenHeading(
-            kicker     = "Care Ops · Auntie Time",
+            kicker     = navKicker(Destination.Sessions),
             title      = "Auntie",
             accentTail = "Time.",
             subtitle   = if (archiveOpen) {

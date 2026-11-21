@@ -201,6 +201,8 @@ import com.tribetails.auntieos.ui.components.color
 import com.tribetails.auntieos.ui.components.tagToneRole
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Admin Settings, rebuilt in the Den aesthetic by adapting the redesigned web
@@ -323,7 +325,7 @@ internal fun AdminSettingsSectionNav(
                 .verticalScroll(rememberScrollState())
         ) {
             DenScreenHeading(
-                kicker = "The Den · Settings",
+                kicker = railKicker(RailScreen.SETTINGS),
                 title = "How the Den",
                 accentTail = "runs.",
                 subtitle = "Pick a section to view and edit it. Each one saves on its own.",
@@ -3549,7 +3551,7 @@ private fun VetClinicsPanel(
 
     Column(verticalArrangement = Arrangement.spacedBy(dims.space5)) {
         DenScreenHeading(
-            kicker = "The Den · Directory",
+            kicker = railKicker(RailScreen.SETTINGS),
             title = "Vet",
             accentTail = "clinics",
             subtitle = "The shared bank every household and the kinfolk portal pick from. " +

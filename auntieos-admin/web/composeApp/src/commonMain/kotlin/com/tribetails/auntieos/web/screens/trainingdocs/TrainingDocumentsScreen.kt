@@ -55,6 +55,8 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatCard
 import kotlinx.coroutines.flow.Flow
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Client-side comm-type narrowing for the Tribal Intel library. A null selection
@@ -113,7 +115,7 @@ fun TrainingDocumentsScreen() {
         DenScreenHeading(
             // Renamed "Tribal Intel" (LOCKED Decision 3). TODO(auntie copy): final
             // subtitle wording is author-owned; the heading name is the decided rename.
-            kicker     = "The Den · Tribal Intel",
+            kicker     = navKicker(Destination.TrainingDocs),
             title      = "Tribal",
             accentTail = "Intel.",
             subtitle   = TRIBAL_INTEL_SUBTITLE,

@@ -11,6 +11,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Toggle } from '../components/Toggle';
 import { LoadingRow } from '../components/LoadingRow';
+import { navKicker } from '../lib/nav';
 
 /** One togglable flag: stable dotted key + operator label + what it gates. */
 export interface FlagMeta {
@@ -101,7 +102,7 @@ export function FeatureFlags() {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Admin"
+        kicker={navKicker('featureFlags')}
         title="Feature"
         accentTail="flags."
         subtitle="Turn a feature on or off. A change takes effect the next time the app loads."

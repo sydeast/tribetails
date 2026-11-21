@@ -56,6 +56,8 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Den-redesign Form Schemas list ("The Den · Admin"), matched to
@@ -294,7 +296,7 @@ fun FormSchemaListScreen(
         ) {
             item {
                 DenScreenHeading(
-                    kicker = "The Den · Admin",
+                    kicker = railKicker(RailScreen.FORM_SCHEMAS),
                     title = "Form",
                     accentTail = "Schemas",
                     subtitle = "Author the dynamic forms kinfolk fill out.",

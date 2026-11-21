@@ -69,7 +69,7 @@ fun HouseholdDataScreen(
                         // screen. Android's Directory tab is already labelled
                         // "Kinfolk", so the mock's separate Kinfolk step would
                         // name a screen that does not exist here.
-                        kicker = "The Den · Directory",
+                        kicker = railKicker(RailScreen.DIRECTORY),
                         crumbs = listOf(
                             DenCrumb("Directory", onDirectory),
                             DenCrumb(kinfolkName, onBack),

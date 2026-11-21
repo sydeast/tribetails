@@ -83,6 +83,8 @@ import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 private enum class Bucket(val label: String) {
     Failed ("Needs another look"),
@@ -197,7 +199,7 @@ fun KinTaleLogsScreen(
                     Spacer(Modifier.size(4.dp))
 
                     DenScreenHeading(
-                        kicker   = "The Den · KinTales",
+                        kicker   = railKicker(RailScreen.KINTALES),
                         title    = "KinTales",
                         subtitle = "Every recap that goes home to a Kinfolk after care",
                         // The mock's `.head .ico`: the ClipboardList tile in the

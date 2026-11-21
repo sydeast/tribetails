@@ -50,6 +50,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton } from '../components/Buttons';
 import { NeedsTriageSection } from '../components/NeedsTriageSection';
 import './KinTales.css';
+import { navKicker } from '../lib/nav';
 
 // The logs mock (`ui-ideas/auntieos-kintale-logs-2026-05-27.html`) puts a
 // Lucide line icon on the heading tile, on every row's status tile and on every
@@ -371,7 +372,7 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
           the search row, then the triage queue and the buckets. */}
       <div className="d1">
         <DenScreenHeading
-          kicker="The Den · KinTales"
+          kicker={navKicker('kintales')}
           title="KinTales"
           subtitle="Every recap that goes home to a Kinfolk after care, and every draft still waiting to go. Newest first."
           // The mock's `.head .ico`: the ClipboardList tile in the orange wash,

@@ -33,6 +33,8 @@ import com.tribetails.auntieos.web.ui.components.DenScreenHeading
 import com.tribetails.auntieos.web.ui.components.EmptyHint
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /** One togglable flag row: stable key + operator-facing label + what it gates. */
 internal data class FlagMeta(val key: String, val label: String, val detail: String)
@@ -71,7 +73,7 @@ fun FeatureFlagsScreen() {
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker = "The Den · Admin",
+            kicker = navKicker(Destination.FeatureFlags),
             title = "Feature",
             accentTail = "flags.",
             subtitle = "Turn a feature on or off. A change takes effect the next time the app loads.",

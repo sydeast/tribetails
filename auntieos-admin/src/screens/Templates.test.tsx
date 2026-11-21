@@ -199,7 +199,7 @@ describe('Templates screen', () => {
     const { container } = render(<Templates />);
     await screen.findByText('Booking Confirmed');
     const heading = container.querySelector('.den-heading') as HTMLElement;
-    expect(within(heading).getByText('The Den · Admin')).toHaveClass('den-heading-kicker');
+    expect(within(heading).getByText('More · Templates')).toHaveClass('den-heading-kicker');
     const leading = heading.querySelector('.den-heading-leading');
     expect(leading?.querySelector('.templates__hero-tile')).not.toBeNull();
     // The tile comes before the title block, the way the mock's `.micon` does.

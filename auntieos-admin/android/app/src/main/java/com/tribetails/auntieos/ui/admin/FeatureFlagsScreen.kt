@@ -34,6 +34,8 @@ import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /** One togglable flag row: stable key + operator-facing label + what it gates. */
 internal data class FlagMeta(val key: String, val label: String, val detail: String)
@@ -99,7 +101,7 @@ fun FeatureFlagsScreen(onBack: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 16.dp),
         ) {
             DenScreenHeading(
-                kicker = "The Den · Admin",
+                kicker = railKicker(RailScreen.FEATURE_FLAGS),
                 title = "Feature",
                 accentTail = "flags.",
                 subtitle = FEATURE_FLAGS_SUBTITLE,

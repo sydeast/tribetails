@@ -66,6 +66,8 @@ import com.tribetails.auntieos.ui.components.ShimmerCard
 import com.tribetails.auntieos.ui.components.SortMenu
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.util.SortOption
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Directory in the Den vocabulary, matched to its mock
@@ -154,7 +156,7 @@ fun DirectoryScreen(
                     // ── Editorial head: mono kicker + serif title + Add CTA ──────
                     item {
                         DenScreenHeading(
-                            kicker = "The Den · Directory",
+                            kicker = railKicker(RailScreen.DIRECTORY),
                             title = "Your",
                             accentTail = "kinfolk",
                             trailing = if (selectedTab == 0) {

@@ -102,6 +102,8 @@ import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Communicate: the Den comms surface.
@@ -648,7 +650,7 @@ fun CommunicateScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker = "Care Ops · Communicate",
+            kicker = navKicker(Destination.Communicate),
             title = "Talk to your",
             accentTail = "kinfolk.",
             subtitle = "Pull a saved template or write from scratch, let Auntie draft it, then approve before it goes home.",

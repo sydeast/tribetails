@@ -70,6 +70,8 @@ import com.tribetails.auntieos.ui.components.ShimmerCard
 import com.tribetails.auntieos.ui.components.StatCard
 import com.tribetails.auntieos.ui.components.color
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Den invoices view ("The Den · Invoices"), ported from the redesigned web spec
@@ -380,7 +382,7 @@ fun InvoicesScreen(
             ) {
                 item {
                     DenScreenHeading(
-                        kicker = "Care Ops · Invoices",
+                        kicker = railKicker(RailScreen.INVOICES),
                         title = "Getting",
                         accentTail = "paid.",
                         trailing = {

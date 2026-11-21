@@ -82,6 +82,8 @@ import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.StatCard
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // In-memory search box. The source EmailTemplate model carries no search index and
 // TemplateService has no search callable, so this only narrows the already-loaded
@@ -214,7 +216,7 @@ fun TemplateBankBody(
 
     Column(Modifier.fillMaxWidth()) {
         DenScreenHeading(
-            kicker = "The Den · Admin",
+            kicker = navKicker(Destination.Templates),
             title = "Template",
             accentTail = "Bank.",
             subtitle = "Browse, preview, and edit the email templates SendGrid delivers.",

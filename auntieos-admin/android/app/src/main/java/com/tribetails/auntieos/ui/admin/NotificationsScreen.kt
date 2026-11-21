@@ -74,6 +74,8 @@ import com.tribetails.auntieos.ui.components.StatCard
 import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Admin notification inbox ("The Den · Notifications"). Android port of the
@@ -475,7 +477,7 @@ private fun Heading(unreadCount: Int) {
     val typo = AuntieTheme.typography
 
     DenScreenHeading(
-        kicker = "The Den · Notifications",
+        kicker = railKicker(RailScreen.NOTIFICATIONS),
         title = "Notifications",
         subtitle = "Business-side notifications dispatched to your account.",
         trailing = {

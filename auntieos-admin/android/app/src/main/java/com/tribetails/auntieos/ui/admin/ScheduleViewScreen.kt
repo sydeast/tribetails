@@ -353,7 +353,7 @@ private fun ScheduleViewScreenContent(
                 // navigator below (#755), the way the mock draws it, so it is not
                 // repeated on `detail`; the explanation is the info tooltip.
                 DenScreenHeading(
-                    kicker = "Care Ops · Schedule",
+                    kicker = railKicker(RailScreen.SCHEDULE),
                     title = "Schedule",
                     accentTail = "${state.viewMode.displayName.lowercase(Locale.US)}.",
                     subtitle = "Every KinCare visit on the books, with Google Calendar busy windows and your own blocked time laid over them.",

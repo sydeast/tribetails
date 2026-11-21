@@ -60,6 +60,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { navKicker } from '../lib/nav';
 
 /** A row with no write in flight gets this, rather than a fresh empty Set each render. */
 const NO_PENDING: ReadonlySet<NotificationPendingKind> = new Set();
@@ -407,7 +408,7 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Notifications"
+        kicker={navKicker('notifications')}
         title="Notifications"
         subtitle="Events that need you, and the household each one is about. Activity Log keeps the audit trail."
         trailing={unreadCount > 0 ? <span className="notif-badge">{unreadCount} unread</span> : undefined}

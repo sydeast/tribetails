@@ -22,6 +22,7 @@ import { Dialog } from '../components/Dialog';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { TagChip } from '../components/TagChip';
 import './TagsEditor.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * The Business-settings Tags panel: manage the two tag vocabularies (household
@@ -390,7 +391,7 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
           page heading read as a doubled header inside the panel. */}
       {onBack ? (
         <DenScreenHeading
-          kicker="The Den · Admin"
+          kicker={navKicker('settings')}
           title="Tags"
           subtitle="Manage the tags you put on households and Kin."
           trailing={<GhostButton label="Back to settings" onClick={onBack} disabled={busy} />}

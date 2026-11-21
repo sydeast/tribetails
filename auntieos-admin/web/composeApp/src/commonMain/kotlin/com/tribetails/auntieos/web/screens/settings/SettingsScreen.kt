@@ -183,6 +183,8 @@ import com.tribetails.auntieos.web.ui.components.tagPaintRole
 import com.tribetails.auntieos.web.ui.components.ThemeSwatchCard
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Settings, rebuilt in the Den aesthetic.
@@ -394,7 +396,7 @@ fun SettingsScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Settings",
+            kicker     = navKicker(Destination.Settings),
             title      = "How the Den",
             accentTail = "runs.",
             subtitle   = "Pick a section on the left to edit your profile, business details, hours, notifications and more.",

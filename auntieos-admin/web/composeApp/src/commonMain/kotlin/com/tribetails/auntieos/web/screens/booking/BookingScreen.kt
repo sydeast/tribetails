@@ -97,6 +97,8 @@ import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.color
 import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 private sealed interface BookingRoute {
     data object List   : BookingRoute
@@ -369,7 +371,7 @@ private fun BookingListScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "Care Ops · Bookings",
+            kicker     = navKicker(Destination.Bookings),
             title      = "Bookings",
             subtitle   = "Pending requests and scheduled visits.",
             trailing   = {

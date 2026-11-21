@@ -64,6 +64,8 @@ import com.tribetails.auntieos.web.ui.components.SegmentedPicker
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // Mockup right-column "live preview" pane. Renders the schema exactly as a kinfolk
 // would see it via the shared runtime renderer (DynamicFormFields, the same widget
@@ -112,7 +114,7 @@ fun FormSchemaEditorScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Form Schemas",
+            kicker     = navKicker(Destination.FormSchemas),
             title      = if (creating) "New" else "Edit",
             accentTail = "form schema",
             subtitle   = if (state.schema.id.isNotBlank()) "${state.schema.id} · v${state.schema.version}" else null,

@@ -112,6 +112,8 @@ import kotlinx.coroutines.launch
 import com.tribetails.auntieos.web.util.businessTimeZone
 import com.tribetails.auntieos.web.screens.sessions.businessDayOf
 import com.tribetails.auntieos.web.util.businessTodayIso
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // The header Receipt / Send-reminder actions and the Payments panel's Record
 // payment (real generateReceipt / sendInvoiceReminder / recordPayment callables)
@@ -136,7 +138,7 @@ fun InvoiceDetailScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "Care Ops · Invoices",
+            kicker     = navKicker(Destination.Invoices),
             title      = "Invoice",
             accentTail = "Detail.",
             subtitle   = "Full billing record.",

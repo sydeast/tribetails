@@ -16,6 +16,7 @@ import { useAdminAccess } from '../lib/access';
 import { validateKinAge, validateKinWeight } from '../lib/kinMeasures';
 import { KinVetField } from '../components/KinVetField';
 import './KinEdit.css';
+import { navKicker } from '../lib/nav';
 
 interface KinEditProps {
   kinId: string;
@@ -305,7 +306,7 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Directory"
+        kicker={navKicker('directory')}
         title={`Edit ${kinName || kinId}`}
         subtitle="Kin profile editor."
         trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={busy} />}
