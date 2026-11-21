@@ -593,7 +593,7 @@ private fun BindingEditorDialog(
 
         // Audience pills: single-select; clicking the selected one clears it (nullable).
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-            AuntieFieldLabel(text = "Audience (stored, unused)")
+            AuntieFieldLabel(text = "Audience (not used yet)")
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(dims.space2),

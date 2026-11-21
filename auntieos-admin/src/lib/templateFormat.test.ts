@@ -78,9 +78,13 @@ describe('templateRowTitle', () => {
     expect(templateRowTitle(tpl({ title: 'Booking Confirmed' }))).toBe('Booking Confirmed');
   });
 
-  it('falls back to templateId when title is blank', () => {
-    expect(templateRowTitle(tpl({ title: '  ', templateId: 'booking.confirmed' }))).toBe(
-      'booking.confirmed',
+  // #1887: the walk read cards titled "account.welcome.kinfolk".
+  it('reads the stored key as words when the title is blank, never the key itself', () => {
+    expect(templateRowTitle(tpl({ title: '  ', templateId: 'booking.confirmed' }))).toBe('Booking confirmed');
+  });
+  it('#1887: a title that is only the stored key reads as words too', () => {
+    expect(templateRowTitle(tpl({ title: 'account.welcome.kinfolk', templateId: 'account.welcome.kinfolk' }))).toBe(
+      'Account welcome kinfolk',
     );
   });
 });

@@ -1,6 +1,7 @@
 import type { TemplateSummary, TemplateSection } from '../api/templates';
 import { hasTextBlock } from './emailContent';
 import type { NotificationCatalogEntry } from '../api/myNotifications';
+import { humanizeKey } from './notificationsFeed';
 
 /**
  * Pure Template Bank list classification + display helpers, kept out of the
@@ -34,7 +35,10 @@ import type { NotificationCatalogEntry } from '../api/myNotifications';
  * is doubted.
  */
 export function templateRowTitle(tpl: Pick<TemplateSummary, 'title' | 'templateId'>): string {
-  return tpl.title.trim() !== '' ? tpl.title : tpl.templateId;
+  // #1887: a stored key such as "account.welcome.kinfolk" is not a title. A
+  // doc with no title comes back titled with its id, so that reads as words.
+  const title = tpl.title.trim();
+  return title !== '' && title !== tpl.templateId.trim() ? tpl.title : humanizeKey(tpl.templateId) || 'Untitled template';
 }
 
 /**

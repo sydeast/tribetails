@@ -569,7 +569,7 @@ export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }:
             <HeaderOverflowMenu
               items={[
                 { label: 'Manage assignments', onSelect: () => setView('assignments') },
-                { label: 'Import from repo', onSelect: () => setView('import') },
+                { label: 'Template Import', onSelect: () => setView('import') },
                 { label: 'New binding', onSelect: () => setBindingOpen(true) },
               ]}
             />

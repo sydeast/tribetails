@@ -112,7 +112,7 @@ class TemplateRoutingWordsTest {
     fun theBannersNameTheNotifications() {
         val rows = listOf(row("invite.verify-email"), row("invoice.paid", "Invoice paid"))
         assertEquals(
-            "The template does not exist: Invite verify email, Invoice paid. The repo has a copy of Invoice paid. " +
+            "The template does not exist: Invite verify email, Invoice paid. A built-in copy of Invoice paid exists. " +
                 "Load it from Template Import.",
             failingKeysLine(listOf("invite.verify-email", "invoice.paid"), listOf("invoice.paid"), rows),
         )

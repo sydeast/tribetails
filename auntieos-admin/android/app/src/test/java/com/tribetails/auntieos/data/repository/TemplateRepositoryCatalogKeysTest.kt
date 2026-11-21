@@ -195,11 +195,11 @@ class TemplateRepositoryCatalogKeysTest {
             missingTemplateNote(walked("kin.removal.requested", "generic"), templateMissing = true),
         )
         assertEquals(
-            "Not in the bank yet, so this sends the repo copy. Load it from Template Import.",
+            "Not in the bank yet, so this sends the built-in copy. Load it from Template Import.",
             missingTemplateNote(walked("auth.password.reset", "repoCopy"), templateMissing = true),
         )
         assertEquals(
-            "The repo has a copy. Load it from Template Import.",
+            "A built-in copy exists. Load it from Template Import.",
             missingTemplateNote(walked("invite.verify-email", "fails", source = "direct-send"), templateMissing = true),
         )
         assertEquals(

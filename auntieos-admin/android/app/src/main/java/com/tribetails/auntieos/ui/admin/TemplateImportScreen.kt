@@ -51,7 +51,7 @@ import kotlinx.coroutines.launch
 internal fun importPlanHeadline(report: TemplateRepository.ImportReport): String {
     val writes = plannedWriteCount(report)
     if (writes == 0 && report.refused.isEmpty()) {
-        return "Every template on file already matches the repo. There is nothing to import."
+        return "Every template on file already matches the built-in copy. There is nothing to import."
     }
     val parts = buildList {
         report.counts["create"]?.takeIf { it > 0 }?.let { add("$it to create") }
@@ -99,8 +99,8 @@ internal fun tickCountLabel(ticked: Collection<String>, tickable: List<String>):
  */
 internal fun importChannelNote(channel: TemplateRepository.ImportChannel, ticked: Boolean): String =
     if (ticked && channel.outcome == "skipped") {
-        "The stored ${channel.channel} copy differs from the repo copy. " +
-            "Importing replaces your stored copy with the repo wording."
+        "The stored ${channel.channel} copy differs from the built-in copy. " +
+            "Importing replaces your stored copy with the built-in wording."
     } else {
         channel.notes.joinToString(" ")
     }
@@ -128,7 +128,7 @@ internal fun importRowSummary(row: TemplateRepository.ImportRow, ticked: Boolean
     if (row.blocked) return "Refused"
     val outcomes = row.channels.map { it.outcome }
     return when {
-        outcomes.isNotEmpty() && outcomes.all { it == "unchanged" } -> "Already matches the repo"
+        outcomes.isNotEmpty() && outcomes.all { it == "unchanged" } -> "Already matches the built-in copy"
         outcomes.contains("skipped") ->
             if (ticked) "Differs, selected for overwrite" else "Differs, not selected for overwrite"
         outcomes.contains("overwrite") -> "Will replace the stored copy"
@@ -202,7 +202,7 @@ fun TemplateImportBody(
                     report = done
                     overwrite.clear()
                     notice = if (done.written == 0) {
-                        "Nothing needed writing. Every template selected already matched the repo."
+                        "Nothing needed writing. Every template selected already matched the built-in copy."
                     } else {
                         "Wrote ${done.written} document${if (done.written == 1) "" else "s"}."
                     }
@@ -228,7 +228,7 @@ fun TemplateImportBody(
                 kicker = "The Den · Admin",
                 title = "Import",
                 accentTail = "templates.",
-                subtitle = "Load the notification templates committed to the repo into Firestore. " +
+                subtitle = "Load the built-in notification templates into your Template Bank. " +
                     "Nothing is written until you press Import.",
             )
         }
@@ -275,12 +275,12 @@ fun TemplateImportBody(
                     val n = current.needsOverwriteChoice.size
                     AuntieBanner(
                         tone = AuntieBannerTone.Warning,
-                        title = "Some stored templates differ from the repo",
+                        title = "Some stored templates differ from the built-in copies",
                         modifier = Modifier.fillMaxWidth(),
                         body = {
                             Text(
                                 "$n template${if (n == 1) " has" else "s have"} been edited since they " +
-                                    "were last imported, or were never imported from this corpus. They " +
+                                    "were last imported, or were never imported from the built-in set. They " +
                                     "are left alone unless you tick them below.",
                                 style = AuntieTheme.typography.bodySmall,
                                 color = c.textDim,
@@ -414,7 +414,7 @@ private fun ImportRowCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(row.templateId, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            Text(humanizeKey(row.templateId), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
             Text(
                 importRowSummary(row, checked),
                 style = AuntieTheme.typography.bodySmall,
@@ -459,7 +459,7 @@ private fun ImportRowCard(
             ) {
                 AuntieCheckbox(checked = checked, onCheckedChange = { onToggle() })
                 Text(
-                    "Replace the stored copy with the repo wording",
+                    "Replace the stored copy with the built-in wording",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textPrimary,
                 )

@@ -643,7 +643,7 @@ describe('Templates screen: one primary header action, the rest behind a menu', 
 
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.textContent);
-    expect(items).toEqual(['Manage assignments', 'Import from repo', 'New binding']);
+    expect(items).toEqual(['Manage assignments', 'Template Import', 'New binding']);
   });
 
   it('Manage assignments opens the assignment manager', async () => {
@@ -658,12 +658,12 @@ describe('Templates screen: one primary header action, the rest behind a menu', 
     expect(listTemplateBindings).toHaveBeenCalled();
   });
 
-  it('Import from repo opens the importer', async () => {
+  it('Template Import opens the importer', async () => {
     render(<Templates />);
     await screen.findByText('Alpha');
 
     await userEvent.click(screen.getByRole('button', { name: /more actions/i }));
-    await userEvent.click(screen.getByRole('menuitem', { name: /import from repo/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /template import/i }));
 
     expect(await screen.findByRole('button', { name: /back to template bank/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Import\s*templates\./);

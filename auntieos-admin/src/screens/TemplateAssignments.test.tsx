@@ -203,7 +203,7 @@ describe('TemplateAssignments routing table', () => {
     expect(within(kin).getByText(/sends generic wording that cannot say what happened/i)).toBeInTheDocument();
     const verify = screen.getByText('Invite verify email', ROW_KEY).closest('li')!;
     expect(within(verify).getByRole('alert').textContent).toMatch(/its next send fails/);
-    expect(within(verify).getByText('The repo has a copy. Load it from Template Import.')).toBeInTheDocument();
+    expect(within(verify).getByText('A built-in copy exists. Load it from Template Import.')).toBeInTheDocument();
     const broadcast = screen.getByText('Broadcast message', ROW_KEY).closest('li')!;
     expect(within(broadcast).getByText(/no template is used/i)).toBeInTheDocument();
   });
@@ -256,7 +256,7 @@ describe('TemplateAssignments routing table', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/template ids frozen in the catalog/i)).toBeNull();
     expect(screen.getByText(/audience is written to the binding and no sender reads it/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/audience \(stored, unused\)/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/audience \(not used yet\)/i)).toBeInTheDocument();
   });
 });
 
