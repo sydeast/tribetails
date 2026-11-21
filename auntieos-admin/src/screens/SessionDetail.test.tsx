@@ -1052,6 +1052,23 @@ describe('SessionDetail: the clock confirm and the household notice', () => {
     ).toBeInTheDocument();
   });
 
+  it('#2339: a Departed after Undo departed says the household already heard, and asks about this visit', async () => {
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'already_notified' });
+    render(<SessionDetail entry={entry({ status: 'ARRIVED', kinCareBatchId: 'b1', kinCareVisitId: 'v1' })} onBack={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^clock out$/i }));
+    const dialog = screen.getByRole('dialog');
+    expect(
+      await within(dialog).findByText('The Whitfields was already told the visit has finished, so they will not be told again.'),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/will be told/)).toBeNull();
+    const [, about] = previewVisitNotification.mock.calls.at(-1) as [string, { sessionId: string; step: string }];
+    expect(about).toMatchObject({ step: 'departed' });
+    expect(about.sessionId).not.toBe('');
+  });
+  it('#2339: On the way asks about no step, so its answer is the household one', async () => {
+    await openOnTheWay();
+    expect(previewVisitNotification.mock.calls.at(-1)).toHaveLength(1);
+  });
   it('says the switch is off in Settings when it is', async () => {
     previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_notices_off' });
     const dialog = await openOnTheWay();
