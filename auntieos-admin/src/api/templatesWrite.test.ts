@@ -10,6 +10,7 @@ import {
   isLiveNotificationKeyWarning,
   previewEmailTemplate,
   convertTemplateToVisual,
+  templateMarkupFieldErrors,
 } from './templatesWrite';
 import type { SaveTemplatePayload } from '../lib/templateFormat';
 
@@ -199,5 +200,22 @@ describe('#953 visual template callables', () => {
       subject: 'S',
       body: 'B',
     });
+  });
+});
+// #2251: the server names each field it refused, and the editor draws each one there.
+describe('templateMarkupFieldErrors', () => {
+  it('reads the field sentences off a markup refusal', () => {
+    const err = Object.assign(new Error('x'), {
+      details: { reason: 'template-markup-refused', fieldErrors: { subject: 'The subject cannot be sent as written.', bogus: 'no' } },
+    });
+    expect(templateMarkupFieldErrors(err)).toEqual({ subject: 'The subject cannot be sent as written.' });
+  });
+  it('is null for any other refusal, and for no details at all', () => {
+    expect(templateMarkupFieldErrors(Object.assign(new Error('x'), { details: { reason: 'template-exists' } }))).toBeNull();
+    expect(templateMarkupFieldErrors(new Error('x'))).toBeNull();
+    expect(templateMarkupFieldErrors(null)).toBeNull();
+    expect(
+      templateMarkupFieldErrors({ details: { reason: 'template-markup-refused', fieldErrors: { subject: '  ' } } }),
+    ).toBeNull();
   });
 });

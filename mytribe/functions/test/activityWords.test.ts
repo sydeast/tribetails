@@ -104,6 +104,10 @@ describe('activity words', () => {
     expect(notificationChannelSkippedWords('Invoice sent', 'Dre East', 'email', 'recipient_no_email')).toBe(
       'Could not send "Invoice sent" to Dre East by email: no email address on file',
     );
+    // #2251: stored wording the sender could not fill in.
+    expect(notificationChannelSkippedWords('Invoice sent', 'Dre East', 'sms', 'template_broken')).toBe(
+      'Could not send "Invoice sent" to Dre East by text message: its text message wording cannot be filled in, so fix it in Templates',
+    );
     expect(notificationChannelSkippedWords('Invoice sent', 'the office', 'email', 'business_email_unset')).toBe(
       'Could not send "Invoice sent" to the office by email: no business email is set in Settings',
     );

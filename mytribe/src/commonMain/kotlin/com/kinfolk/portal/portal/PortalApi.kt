@@ -1239,8 +1239,9 @@ class PortalApi(
     /**
      * Re-reads the card from Stripe and stores it.
      *
-     * The android client has no return trip from the external browser, so this
-     * is what "Refresh" on the billing card calls. Safe to call at any time.
+     * What "Refresh card" on the billing card calls, and what a return from
+     * Stripe's card page calls (#2427): the return link never says a card was
+     * saved, this read does. Safe to call at any time.
      */
     suspend fun syncMyPaymentMethod(kinfolkId: String? = null): PaymentMethodState {
         val raw = fns.call("syncMyPaymentMethod", buildJsonObject {

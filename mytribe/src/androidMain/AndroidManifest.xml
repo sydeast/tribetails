@@ -81,6 +81,29 @@
                 <data android:scheme="mytribe" />
                 <data android:host="invoices" />
             </intent-filter>
+            <!-- #2427: where Stripe returns a card setup made from this app,
+                 https://kinfolk.tribetails.com/app/account[?billing=saved].
+                 An exact path, NOT the web portal's own /account: claiming that
+                 would pull the web portal's return from Stripe, and the email
+                 action links under /account/, out of the browser. Verified by
+                 the same assetlinks.json as the filters above. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="kinfolk.tribetails.com" />
+                <data android:path="/app/account" />
+            </intent-filter>
+            <!-- The same return in the app's own scheme, mytribe://account, for
+                 the Open MyTribe button on the portal's signed-out return page. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mytribe" />
+                <data android:host="account" />
+            </intent-filter>
             <!-- #905: Firebase email action links. The project has ONE action URL,
                  https://kinfolk.tribetails.com/account/secure-reset, and the portal
                  web page also answers at /account/action. Every auth email (reset,
