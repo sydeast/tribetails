@@ -957,6 +957,12 @@ describe('#2478 a household copy queued for later, notices turned off before its
     expect(await drainScheduledNotifications(NOW + 10 * 60 * 1000)).toEqual({ promoted: 0, held: 0 });
     expect(sends(ctx.writes)).toEqual([]);
     expect(notSent(ctx.writes)).toHaveLength(1);
+
+    // Nor does the reminder job queue them again, today or the next business day.
+    expect(await runInvoiceRemindersScan(NOW + HOUR, TODAY)).toBe(0);
+    expect(await runInvoiceRemindersScan(NOW + 24 * HOUR, '2026-11-15')).toBe(0);
+    expect(queuedRows(ctx.docs)).toEqual([]);
+    expect(sends(ctx.writes)).toEqual([]);
   });
 
   it('visit reminders queued while on, switched off before their time: held with one line', async () => {
@@ -971,6 +977,12 @@ describe('#2478 a household copy queued for later, notices turned off before its
     expect(notSent(ctx.writes).map((l) => l.description)).toEqual([
       'Held back 3 visit reminders: notices to households are turned off. They will not be sent later',
     ]);
+
+    // Switched back on, the next hourly run does not queue them again.
+    setLive(ctx.docs, true);
+    expect(await runKincareReminderScan(NOW + HOUR, NEXT_TICK)).toBe(0);
+    expect(queuedRows(ctx.docs)).toEqual([]);
+    expect(sends(ctx.writes)).toEqual([]);
   });
 
   it('an overdue notice queued while on is held the same way', async () => {
@@ -981,6 +993,12 @@ describe('#2478 a household copy queued for later, notices turned off before its
     expect(notSent(ctx.writes).map((l) => l.description)).toEqual([
       'Held back 1 overdue invoice notice: notices to households are turned off. It will not be sent later',
     ]);
+
+    // Switched back on, the overdue job does not queue it again the next business day.
+    setLive(ctx.docs, true);
+    expect(await runInvoiceOverdueScan(NOW + 24 * HOUR, '2026-11-15')).toBe(0);
+    expect(queuedRows(ctx.docs)).toEqual([]);
+    expect(sends(ctx.writes)).toEqual([]);
   });
 
   it('still on at their time, the reminders are promoted as before and no line is written', async () => {
