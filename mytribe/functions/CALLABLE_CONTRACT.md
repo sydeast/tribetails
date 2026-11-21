@@ -1008,6 +1008,10 @@ prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
     throw here would offer a retry that collects again.
   - Refuses `tip_exceeds_amount` (`invalid-argument`) and every `apply_*` code
     (`failed-precondition`) BEFORE writing anything.
+  - #1975: refuses `fee_exceeds_amount` (`invalid-argument`) BEFORE writing
+    anything when the fee is larger than the payment. With
+    `apply.settleBalance` it is checked against the amount the transaction
+    resolves.
   - Refuses `link_wrong_household` (`failed-precondition`) BEFORE writing
     anything when `invoiceId` names an invoice of a different household than
     `kinfolkId`. A payment with no household and an invoice that carries none
