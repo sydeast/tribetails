@@ -1,0 +1,1 @@
+Account recovery was asked for {{tribeName}}. Check with the household before you complete it.

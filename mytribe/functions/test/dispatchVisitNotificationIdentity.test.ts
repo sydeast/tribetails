@@ -152,6 +152,28 @@ describe('dispatchVisitNotification names each lifecycle event (#832)', () => {
     expect(reports).toHaveLength(2);
   });
 
+  // #2487: the KinTale notice opens that KinTale, but only one of this household's.
+  it("a report notice carries the household's own KinTale, and never another household's", async () => {
+    await ctx.db.doc('kin_care_reports/tale-own').set({ kinfolkId: 'fam1' });
+    await ctx.db.doc('kin_care_reports/tale-other').set({ kinfolkId: 'fam2' });
+    await tap({ event: 'report_sent', reportId: 'tale-own' });
+    vi.setSystemTime(NOW + 30_000);
+    await tap({ event: 'report_sent', reportId: 'tale-other' });
+    vi.setSystemTime(NOW + 60_000);
+    await tap({ event: 'report_sent', reportId: 'tale-missing' });
+
+    const sent = ctx.writes.filter((w) => w.path.startsWith('notifications/') && w.data.recipientUid === 'uid_kinfolk');
+    expect(sent).toHaveLength(3);
+    const [own, other, missing] = sent.map((w) => w.data as Record<string, unknown>);
+    expect(own).toMatchObject({ targetType: 'kintale', targetId: 'tale-own' });
+    expect((own!.data as Record<string, unknown>).taleId).toBe('tale-own');
+    for (const w of [other!, missing!]) {
+      expect((w.data as Record<string, unknown>).taleId).toBeUndefined();
+      expect(w.targetType).not.toBe('kintale');
+      expect(w.targetId).not.toBe('tale-other');
+    }
+  });
+
   it('different steps of one visit never collide with each other', async () => {
     await tap({ event: 'on_my_way', etaMinutes: 10, eventAtMs: NOW });
     await tap({ event: 'arrived', eventAtMs: NOW });

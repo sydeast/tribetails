@@ -1244,10 +1244,22 @@ describe('what the model is given for a KinTale (#2052)', () => {
         ? { ...base(name), doc: () => ({ async get() { throw new Error('unavailable'); } }) }
         : base(name));
       const a = visitModel([GOOD_DRAFT]);
-      const out = await run(db, a);
+      const logs = [];
+      const orig = console.error;
+      console.error = (...x) => logs.push(x.map(String).join(' '));
+      let out;
+      try {
+        out = await run(db, a);
+      } finally {
+        console.error = orig;
+      }
       assert.strictEqual(out.generated_copy, GOOD_DRAFT);
       assert.doesNotMatch(promptOf(a), /Biscuit naps/);
       assert.match(backgroundOf(promptOf(a)), /breakfast/);
+      // The log says how many, never which.
+      const line = logs.find((l) => /Kin records could not be read/.test(l));
+      assert.ok(line, 'the failed Kin read is logged');
+      assert.doesNotMatch(line, /biscuit|k-|naps/i);
     });
   });
   describe('a draft that repeats the household background (#2052 ruling)', () => {
@@ -1284,6 +1296,54 @@ describe('what the model is given for a KinTale (#2052)', () => {
       assert.strictEqual(gen.repeatsBackground('She had a walk and a nap.', 'Biscuit naps after a walk and sulks.', ''), false);
       assert.strictEqual(gen.repeatsBackground('Biscuit naps after a walk and sulks.', '', ''), false);
       assert.strictEqual(gen.repeatsBackground('Biscuit naps after a walk and sulks.', 'Biscuit naps after a walk and sulks.', ''), true);
+    });
+    it('names the repeated words in the correction, so the second draft can steer clear of them', async () => {
+      const db = t1Db();
+      const a = visitModel([QUOTING, GOOD_DRAFT]);
+      await run(db, a);
+      assert.match(promptOf(a, 1), /"biscuit naps after a walk and sulks", "tess likes a note about breakfast"/);
+      assert.doesNotMatch(promptOf(a, 0), /CORRECTION/);
+    });
+    it('the named words go to the model only: not on screen, not in the log', async () => {
+      const db = t1Db();
+      const a = visitModel([QUOTING, QUOTING]);
+      const logs = [];
+      const orig = { log: console.log, error: console.error, warn: console.warn };
+      console.log = (...x) => logs.push(x.map(String).join(' '));
+      console.error = console.log;
+      console.warn = console.log;
+      let refused;
+      try {
+        await run(db, a).catch((e) => { refused = e; });
+      } finally {
+        Object.assign(console, orig);
+      }
+      assert.strictEqual(refused.extra.code, 'draft_repeats_background');
+      assert.doesNotMatch(`${refused.message}\n${logs.join('\n')}`, /naps after a walk|note about breakfast/i);
+    });
+    it('an everyday phrase the background holds, said after notes that put it in shorthand, is retried with that phrase named and then handed over', async () => {
+      const db = t1Db({
+        dossiers: [{ ...T1_DOSSIER, rawSummary: 'Tess loves to hear that they had a great time at the park.' }],
+      });
+      const routine = 'Biscuit, Waffle, Mochi and Pepper had a great time at the park, and all ate.';
+      const rewritten = 'Biscuit, Waffle, Mochi and Pepper loved the park today, and all ate.';
+      const a = visitModel([routine, rewritten]);
+      const out = await run(db, a, { ...T1_REQUEST, raw_notes: 'park, all ate' });
+      assert.strictEqual(a.calls.length, 2);
+      assert.match(promptOf(a, 1), /"had a great time at the park"/);
+      assert.strictEqual(out.generated_copy, rewritten);
+    });
+    it('joins overlapping runs into one passage, keeps apart runs apart, and leaves out what the visit says', () => {
+      const bg = 'Biscuit naps after a walk and sulks in the sun. Tess likes a note about breakfast every day.';
+      assert.deepStrictEqual(
+        gen.backgroundPassagesIn('Today biscuit naps after a walk and sulks in the sun, and tess likes a note about breakfast.', bg, ''),
+        ['biscuit naps after a walk and sulks in the sun', 'tess likes a note about breakfast'],
+      );
+      assert.deepStrictEqual(
+        gen.backgroundPassagesIn('Tess likes a note about breakfast.', bg, 'notes: tess likes a note about breakfast'),
+        [],
+      );
+      assert.deepStrictEqual(gen.backgroundPassagesIn('Anything at all here today.', '', ''), []);
     });
   });
   it('is told to state nothing beyond them, in the last word before the notes', async () => {

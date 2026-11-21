@@ -1855,6 +1855,23 @@ internal fun decodeGetAccountCreditHistoryResultUse(raw: Map<String, Any?>?): Ge
         invoiceNumber = raw?.get("invoiceNumber") as? String,
     )
 
+/** Nested in the `getAccountCreditHistory` contract. */
+data class GetAccountCreditHistoryResultEarlierCredit(
+    val amountCents: Long,
+    val remainingCents: Long,
+)
+
+/**
+ * Fail-soft decode of `GetAccountCreditHistoryResultEarlierCredit` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetAccountCreditHistoryResultEarlierCredit(raw: Map<String, Any?>?): GetAccountCreditHistoryResultEarlierCredit =
+    GetAccountCreditHistoryResultEarlierCredit(
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        remainingCents = (raw?.get("remainingCents") as? Number)?.toLong() ?: 0L,
+    )
+
 /** Response from the `getAccountCreditHistory` callable. */
 data class GetAccountCreditHistoryResult(
     val ok: Boolean,
@@ -1862,6 +1879,7 @@ data class GetAccountCreditHistoryResult(
     val accountBalanceCents: Long,
     val credits: List<GetAccountCreditHistoryResultCredit>,
     val uses: List<GetAccountCreditHistoryResultUse>,
+    val earlierCredit: GetAccountCreditHistoryResultEarlierCredit?,
 )
 
 /**
@@ -1876,6 +1894,7 @@ internal fun decodeGetAccountCreditHistoryResult(raw: Map<String, Any?>?): GetAc
         accountBalanceCents = (raw?.get("accountBalanceCents") as? Number)?.toLong() ?: 0L,
         credits = (raw?.get("credits") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultCredit(nested) } },
         uses = (raw?.get("uses") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultUse(nested) } },
+        earlierCredit = contractRawMap(raw?.get("earlierCredit"))?.let { nested -> decodeGetAccountCreditHistoryResultEarlierCredit(nested) },
     )
 
 // ---------- listUnappliedPayments ----------

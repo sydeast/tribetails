@@ -476,7 +476,8 @@ describe('readVoice: what the model is given from the voice files (corpus not ne
   });
   it('the system prompt says placeholders are never written', () => {
     assert.match(gen.SYSTEM_FRAMING, /Never write a bracketed placeholder/);
-    assert.match(gen.SYSTEM_FRAMING, /the exemplars and any voice training examples/);
+    assert.match(gen.SYSTEM_FRAMING, /the exemplars, any voice training examples and\n\s+the office's own writing/);
+    assert.match(gen.SYSTEM_FRAMING, /\[Name\], and contact details with \[email\], \[phone\], \[link\], \[address\] and \[number\]/);
   });
 });
 

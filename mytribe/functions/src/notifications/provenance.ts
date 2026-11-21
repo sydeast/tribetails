@@ -142,6 +142,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        'householdBookingTime',
         // #2030: the office's note to the household with its yes; null when none.
         'note',
       ],
@@ -167,6 +168,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        'householdBookingTime',
       ],
     },
     {
@@ -189,6 +191,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        'householdBookingTime',
+        'note',
       ],
     },
   ],
@@ -265,6 +269,9 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        'removed',
+        'removedCount',
+        'householdBookingTime',
       ],
     },
   ],
@@ -445,7 +452,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     {
       trigger: 'The nightly reminder sweep finds a visit coming up soon.',
       source: 'src/scheduled/kincareReminderCron.ts',
-      dataKeys: ['kinfolkId', 'bookingId', 'serviceName', 'startTimeMs'],
+      dataKeys: ['kinfolkId', 'bookingId', 'serviceName', 'startTimeMs', 'timeBlockId', 'serviceId'],
     },
   ],
   'assignment.assigned': [
@@ -539,6 +546,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        'removed',
+        'removedCount',
       ],
     },
   ],
@@ -581,6 +590,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'auntieDisplayName',
         'recipientDisplayName',
         'reportPreviewUrl',
+        'taleId',
       ],
     },
   ],
@@ -588,7 +598,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     {
       trigger: 'Someone comments on a KinTale.',
       source: 'src/triggers/onKinTaleCommentCreate.ts',
-      dataKeys: ['kinfolkId', 'taleId', 'commentId', 'authorUid', 'authorRole', 'preview'],
+      dataKeys: ['kinfolkId', 'taleId', 'commentId', 'authorUid', 'authorRole', 'preview', 'authorName', 'taleTitle'],
     },
   ],
   'kintale.note.added': [
@@ -841,7 +851,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     {
       trigger: 'Someone asks for a password reset link.',
       source: 'src/auth/requestPasswordReset.ts',
-      dataKeys: ['link', 'email', 'displayName'],
+      dataKeys: ['link', 'email', 'displayName', 'business', 'Business'],
     },
   ],
   'auth.failedLogin.attempts': [
@@ -1216,6 +1226,18 @@ export const MERGE_FIELD_LABELS: Readonly<Record<string, string>> = {
   windowEndMs: 'Window end',
   windowMinutes: 'Window length in minutes',
   windowStartMs: 'Window start',
+  // #2487: keys the emitters send that this table did not list.
+  authorName: "Author's name",
+  householdBookingTime: 'Visit time as the household sees it',
+  serviceId: 'Service reference',
+  taleTitle: 'KinTale title',
+  timeBlockId: 'Time block reference',
+  // #2487: the portal invite and recovery emails' own fields.
+  auntieReviewUrl: 'Invite review link',
+  expiresInDays: 'Days until the invite expires',
+  primaryDisplayName: "Inviter's or invitee's name",
+  secondaryDisplayName: "Invitee's name",
+  tribeName: 'Household name',
 };
 
 /** The labels for these keys, only those this table has. */

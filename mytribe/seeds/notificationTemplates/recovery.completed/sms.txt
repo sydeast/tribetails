@@ -1,0 +1,1 @@
+Your MyTribe access for {{tribeName}} is back. Set up your account: {{claimUrl}}
