@@ -43,6 +43,7 @@ import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.ReceiptText
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.web.data.CheckedSend
+import com.tribetails.auntieos.web.data.visitStatusCode
 import com.tribetails.auntieos.web.data.SendCheckAction
 import com.tribetails.auntieos.web.data.SilenceKind
 import com.tribetails.auntieos.web.data.checkedSend
@@ -1569,6 +1570,9 @@ private fun LinkedSessionsSection(
     }
 }
 
+/** #2268: a linked visit's status in words, a one-L CANCELED visit read as cancelled. */
+internal fun linkedVisitStatusLabel(status: String): String = visitStatusCode(status).lowercase().replace('_', ' ')
+
 @Composable
 private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     val c = AuntieTheme.colors
@@ -1576,7 +1580,7 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     val ruleColor = c.borderSoft
     val zone = businessTimeZone()
     val dateLabel = businessDayOf(session.completedAt, zone).ifBlank { businessDayOf(session.startTime, zone) }.ifBlank { "-" }
-    val statusLabel = session.status.lowercase().replace('_', ' ')
+    val statusLabel = linkedVisitStatusLabel(session.status)
     Row(
         modifier = Modifier
             .fillMaxWidth()
