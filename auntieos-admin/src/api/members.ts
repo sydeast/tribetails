@@ -59,7 +59,7 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
     key: 'billing_full',
     label: 'Full billing',
     description:
-      'Full access to invoices and payment methods. The household PRIMARY can grant this too; every change is audited.',
+      "Full access to invoices and payment methods. The household's primary contact can grant this too; every change is audited.",
   },
   {
     key: 'messaging_direct',
@@ -74,7 +74,7 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
   {
     key: 'kin_edit',
     label: 'Edit kin',
-    description: 'Adds or edits the household pet records.',
+    description: "Adds or edits the household's Kin records.",
   },
   {
     key: 'home_access',
@@ -428,12 +428,27 @@ export async function getInvite(inviteId: string): Promise<AdminInviteDetail> {
 }
 
 /**
- * Display name for a member row. Never blank and never a database id (#1589):
- * name, then email, then the secondary's label, then a plain "Unnamed member".
+ * Display name for a member row. Never blank, never a database id (#1589) and
+ * never an email in place of a name (#1853): the person's name, then the
+ * secondary's label, then their role in words. The email is still shown, as
+ * the email, on the line under the name.
  */
-export const UNNAMED_MEMBER = 'Unnamed member';
+export const UNNAMED_PRIMARY = 'Primary contact';
+export const UNNAMED_SECONDARY = 'Secondary kinfolk';
+function memberName(member: HouseholdMember): string | null {
+  for (const v of [member.displayName, member.secondaryLabel]) {
+    if (v !== null && v.trim() !== '') return v.trim();
+  }
+  return null;
+}
+
 export function memberLabel(member: HouseholdMember): string {
-  return member.displayName ?? member.invitedEmail ?? member.secondaryLabel ?? UNNAMED_MEMBER;
+  return memberName(member) ?? (member.role === 'PRIMARY' ? UNNAMED_PRIMARY : UNNAMED_SECONDARY);
+}
+
+/** The same, as the start of a sentence: "The primary contact will be suspended". */
+export function memberSubject(member: HouseholdMember): string {
+  return memberName(member) ?? (member.role === 'PRIMARY' ? 'The primary contact' : 'This secondary kinfolk');
 }
 
 /**
