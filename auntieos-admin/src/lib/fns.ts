@@ -84,6 +84,12 @@ export const LONG_RUNNING_CALLABLES: ReadonlySet<string> = new Set([
   'cancelMarketingBlast',
   'sendExternalMessage',
   'sendGeneratedDraft',
+  // #2434: the rest of the sends to one household. Each was cut off at 20s
+  // on a cold start and read as not sent while it went out.
+  'sendHouseholdPush',
+  'replyToConversation',
+  'sendKinTaleReport',
+  'publishGeneratedDraft',
   'mintInvite',
   'inviteKinfolkToPortal',
   'executePrimaryRecovery',
