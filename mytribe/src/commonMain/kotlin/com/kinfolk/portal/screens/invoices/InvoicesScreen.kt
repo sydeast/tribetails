@@ -114,7 +114,9 @@ fun InvoicesScreen(
                     error = error,
                     payingId = controller.paying,
                     checkingId = controller.checkingPayment,
+                    notCheckedId = controller.paymentNotChecked,
                     onPay = { controller.startPay(it) },
+                    onCheckAgain = { controller.checkPaymentAgain(it.id) },
                     onOpenInvoice = onOpenInvoice,
                     viewerUid = viewerUid,
                 )
@@ -212,7 +214,9 @@ private fun OpenInvoicesCard(
     error: String?,
     payingId: String?,
     checkingId: String?,
+    notCheckedId: String?,
     onPay: (Invoice) -> Unit,
+    onCheckAgain: (Invoice) -> Unit,
     onOpenInvoice: (String) -> Unit,
     viewerUid: String?,
 ) {
@@ -235,7 +239,9 @@ private fun OpenInvoicesCard(
                         invoice = inv,
                         paying = payingId == inv.id,
                         checking = checkingId == inv.id,
+                        notChecked = notCheckedId == inv.id,
                         onPay = { onPay(inv) },
+                        onCheckAgain = { onCheckAgain(inv) },
                         onClick = { onOpenInvoice(inv.id) },
                         viewerUid = viewerUid,
                     )
@@ -276,7 +282,9 @@ private fun OpenInvoiceRow(
     invoice: Invoice,
     paying: Boolean,
     checking: Boolean,
+    notChecked: Boolean,
     onPay: () -> Unit,
+    onCheckAgain: () -> Unit,
     onClick: () -> Unit,
     viewerUid: String?,
 ) {
@@ -320,20 +328,32 @@ private fun OpenInvoiceRow(
         // whatever its status label says (operator ruling 2026-09-27, docket Q5).
         if (offersPayment(invoice)) {
             // #2366: held back while a payment just made is still landing.
+            // #2402: and after a check that could not read the bill at all,
+            // when the button checks again instead of paying.
+            val action = openRowAction(checking = checking, notChecked = notChecked, paying = paying, amountDue = invoice.amountDue)
             KinButton(
-                label = when {
-                    checking -> "Checking payment…"
-                    paying -> "Opening checkout…"
-                    else -> "Pay ${formatUsd(invoice.amountDue)}"
-                },
-                onClick = onPay,
+                label = action.label,
+                onClick = if (action.checksAgain) onCheckAgain else onPay,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !paying && !checking && invoice.amountDue > 0.0,
+                enabled = action.enabled,
             )
         }
     }
 }
 
+/** What an open row's button says and does. Pure, so every state is tested without drawing the row. */
+internal data class OpenRowAction(val label: String, val enabled: Boolean, val checksAgain: Boolean)
+/**
+ * Checking wins: nothing can be tapped while the bill is being read. Then the
+ * check that read nothing (#2402): the button checks again, and never pays on a
+ * copy from before the payment. Only after both does the row offer Pay.
+ */
+internal fun openRowAction(checking: Boolean, notChecked: Boolean, paying: Boolean, amountDue: Double): OpenRowAction = when {
+    checking -> OpenRowAction("Checking payment…", enabled = false, checksAgain = false)
+    notChecked -> OpenRowAction("Check payment again", enabled = true, checksAgain = true)
+    paying -> OpenRowAction("Opening checkout…", enabled = false, checksAgain = false)
+    else -> OpenRowAction("Pay ${formatUsd(amountDue)}", enabled = amountDue > 0.0, checksAgain = false)
+}
 @Composable
 private fun PaidInvoiceRow(invoice: Invoice, onClick: () -> Unit) {
     val type = LocalKinfolkTypography.current
@@ -520,7 +540,20 @@ internal fun invoiceHeadline(invoice: Invoice): Pair<String, String> {
  * screen cannot offer different things.
  */
 internal fun offersPayment(invoice: Invoice): Boolean =
-    isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0
+    isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0 && invoice.payBlockedReason.isNullOrBlank()
+
+/**
+ * #2410: the server's sentence for an open bill with a balance that offers no
+ * way to pay, or null. [offersPayment] is false for it, so no screen draws a
+ * Pay button or a pay option; the invoice screen prints this where they would
+ * be, and the controller answers a stale tap with it. Null on anything that
+ * is not a bill waiting to be paid: a quote, a credit and a paid invoice
+ * already say what they are.
+ */
+internal fun payBlockedReason(invoice: Invoice): String? =
+    invoice.payBlockedReason
+        ?.takeIf { it.isNotBlank() }
+        ?.takeIf { isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0 }
 
 /** The sentence the server sends for a paid invoice; shown when a stale screen tries anyway. */
 internal const val PAID_INVOICE_REFUSAL = "This invoice is already paid, so it cannot take another payment."

@@ -19,7 +19,13 @@ import {
   checkoutRoundOf,
 } from '../lib/invoiceCheckoutDedupe';
 import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
-import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
+import { amountDueCentsOf } from '../lib/amountDueRule';
+import {
+  cardCheckoutRefusal,
+  cardCheckoutRefusalSentence,
+  INVOICE_CANNOT_TAKE_PAYMENT_CODE,
+} from '../lib/cardPaymentApply';
+import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import {
   INVOICE_CANCELLED_CODE,
@@ -150,13 +156,14 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // screen just offered would be the disagreement this issue closes, moved one
   // step along.
   //
-  // THE PAYMENT ROWS ARE READ, and only for that shape. This handler charges a
-  // CARD: deriving a balance from a status label alone, when the invoice's own
-  // rows could say the bill was settled before `amountDue` existed, would risk
-  // charging a household twice for one bill — and there are no refunds. One
-  // document, one extra read, and only when the document states nothing. An
-  // invoice that states its balance takes the same path it always did, for the
-  // same cost.
+  // THE PAYMENT ROWS ARE READ. This handler charges a CARD: deriving a balance
+  // from a status label alone, when the invoice's own rows could say the bill
+  // was settled before `amountDue` existed, would risk charging a household
+  // twice for one bill, and there are no refunds. Until #2410 they were read
+  // only for an invoice that states no balance. They are read for every
+  // invoice now, because the check below (`cardCheckoutRefusal`) needs them to
+  // say what the webhook would do with the payment. A stated balance is still
+  // charged as stated: the rule returns it untouched, rows or no rows.
   // #2090: the business wrote off what was left. Nothing is owed, so no
   // checkout is opened, and the household is told so in its own words.
   if (isWrittenOff(inv as Record<string, unknown>)) {
@@ -174,17 +181,14 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
       code: INVOICE_CANCELLED_CODE,
     });
   }
-  let legacyPaidCents: number | null = null;
-  if (statesNoBalance(inv)) {
-    const rows = await invoiceSnap.ref.collection('payments').get();
-    legacyPaidCents = paidCentsFromPayments(rows.docs.map((d) => d.data() as PaymentAmount));
-  }
+  const paymentRows = (await invoiceSnap.ref.collection('payments').get()).docs.map((d) => d.data() as PaymentAmount);
+  const rowsPaidCents = paidCentsFromPayments(paymentRows);
   // A PAID INVOICE TAKES NO PAYMENT (operator ruling 2026-09-27, docket Q5).
   // Asked BEFORE the balance and before the session reuse below, because the
   // mark alone is enough: an invoice labelled paid whose stated balance still
   // reads positive is the partial-payment corruption the admin repairs, not a
   // bill the household can pay into. `lib/invoicePaidGate.ts` is the rule.
-  if (invoiceIsPaid(inv, legacyPaidCents)) {
+  if (invoiceIsPaid(inv, rowsPaidCents)) {
     logEvent({
       severity: 'info',
       function: 'payInvoice',
@@ -194,8 +198,37 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     });
     throw new HttpsError('failed-precondition', PAID_INVOICE_REFUSAL, { code: PAID_INVOICE_REFUSAL_CODE });
   }
-  const amountCents = amountDueCentsOf(inv, legacyPaidCents);
+  const amountCents = amountDueCentsOf(inv, rowsPaidCents);
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
+  // #2410: NO CHECKOUT FOR A PAYMENT THE INVOICE COULD NOT TAKE. Since #2385
+  // the webhook keeps such a payment off the invoice for the owner to decide
+  // on, and tells the household nothing. Opening the checkout anyway charged
+  // the card, left the invoice reading owed, and let the household pay it
+  // again. So the webhook's own rule is asked here, before the session reuse,
+  // the settings read and Stripe: an invoice that states a balance while
+  // nothing is owed on its total (it has no total, or its payment rows already
+  // cover it), a credit that states a balance, and a quote the household has
+  // not accepted (#2264). `lib/cardPaymentApply.ts#cardCheckoutRefusal` has
+  // the rule; `getMyInvoices` ships the same answer so the screens offer no
+  // Pay on these.
+  const refusal = cardCheckoutRefusal({
+    invoiceId: args.invoiceId,
+    doc: inv as InvoiceDoc,
+    existingPayments: paymentRows,
+    kinfolkId,
+  });
+  if (refusal !== null) {
+    logEvent({
+      severity: 'warn',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.refused.unpayable',
+      uid,
+      extra: { invoiceId: args.invoiceId, kinfolkId, reason: refusal, amountCents },
+    });
+    throw new HttpsError('failed-precondition', cardCheckoutRefusalSentence(refusal), {
+      code: INVOICE_CANNOT_TAKE_PAYMENT_CODE,
+    });
+  }
 
   // WHICH SETTLEMENT ROUND THIS SESSION BELONGS TO (issue #826).
   //

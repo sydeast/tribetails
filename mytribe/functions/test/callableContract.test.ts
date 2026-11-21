@@ -1423,6 +1423,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     'lineItems[].unitCents',
     'paidCents',
     'partiallyPaid',
+    // #2410: the sentence for an open bill that offers no way to pay, null otherwise.
+    'payBlockedReason',
     // How THIS bill can be paid (issue #409), resolved off the options it was
     // issued with. Five fields and no sixth: a fee field appearing here would
     // be a household seeing what a processor charges their Auntie, which the

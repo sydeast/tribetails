@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { InvoiceDetail, checkoutReturnUrls, PAYMENT_CHECK_EVERY_MS, PAYMENT_CHECK_FOR_MS } from './InvoiceDetail';
+import { InvoiceDetail, PAYMENT_CHECK_EVERY_MS, PAYMENT_CHECK_FOR_MS } from './InvoiceDetail';
+import { checkoutReturnUrls } from '../lib/checkoutReturn';
 import type { GetMyInvoicesResult } from '../contracts/invoiceContracts.generated';
 
 /**
@@ -122,6 +123,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditTarget: null,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  // #2410: null on an invoice that can be paid.
+  payBlockedReason: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -682,6 +685,8 @@ describe('InvoiceDetail payment option sources (issue #409)', () => {
     creditTarget: null,
     creditRedeemedAtMs: null,
     writtenOffCents: null,
+    // #2410: null on an invoice that can be paid.
+    payBlockedReason: null,
     payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
   };
 
@@ -1012,6 +1017,188 @@ describe('InvoiceDetail — coming back from a card checkout (#2366)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
     expect(await screen.findByText('Checking payment…')).toBeInTheDocument();
     expect(screen.queryByTestId('payment-not-seen')).toBeNull();
+  });
+});
+/**
+ * #2402: back from a finished checkout the page reads the bill every few
+ * seconds. One read that did not get through used to swap the whole invoice for
+ * the trouble-loading screen, at the moment the household had just paid. The
+ * invoice now stays, with the check cue, and the next tick reads again.
+ */
+describe('InvoiceDetail: a re-read that fails while a payment is checked (#2402)', () => {
+  const PAID_INVOICE: GetMyInvoicesResult['paid'][number] = {
+    ...OPEN_INVOICE,
+    status: 'paid',
+    isPaid: true,
+    amountDue: 0,
+    paidCents: 5000,
+    payMethods: [],
+  };
+  const openRead = { open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 };
+  const paidRead = { open: [], paid: [PAID_INVOICE], credits: [], accountBalanceCents: 0 };
+  const TROUBLE = "We're having trouble loading your tribe.";
+  function renderAt(path: string) {
+    window.history.pushState({}, '', path);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+    return queryClient;
+  }
+  /** The invoice itself is on screen: its heading, its status and its amount. */
+  function expectInvoiceOnScreen() {
+    expect(screen.getByRole('heading', { name: /Invoice for The Test Family/ })).toBeInTheDocument();
+    expect(screen.getByText('PENDING')).toBeInTheDocument();
+    expect(screen.getByText('Amount Due')).toBeInTheDocument();
+  }
+  beforeEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    window.history.pushState({}, '', '/');
+  });
+
+  it('keeps the invoice and "Checking payment" on screen, and shows PAID once a later read works', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const invoicesApi = await import('../api/invoicesApi');
+    const read = vi.mocked(invoicesApi.getMyInvoices);
+    read.mockReset();
+    read
+      .mockResolvedValueOnce(openRead)
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue(paidRead);
+    renderAt('/invoices/inv-open-1?checkout=done');
+    expect(await screen.findByText('Checking payment…')).toBeInTheDocument();
+
+    // The second read fails.
+    await vi.advanceTimersByTimeAsync(PAYMENT_CHECK_EVERY_MS + 100);
+    await waitFor(() => expect(read.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(read.mock.results[1]?.type).toBe('return'));
+    expect(screen.queryByText(TROUBLE)).toBeNull();
+    expect(screen.queryByText('Loading invoice…')).toBeNull();
+    expectInvoiceOnScreen();
+    expect(screen.getByTestId('payment-check')).toHaveTextContent('Checking payment…');
+    // Pay stays held back, and nothing says paid.
+    expect(screen.queryByRole('button', { name: 'Pay with Credit Card' })).toBeNull();
+    expect(screen.queryByText('PAID')).toBeNull();
+
+    // The third fails too, and the page is still the invoice.
+    await vi.advanceTimersByTimeAsync(PAYMENT_CHECK_EVERY_MS);
+    await waitFor(() => expect(read.mock.calls.length).toBeGreaterThanOrEqual(3));
+    expect(screen.queryByText(TROUBLE)).toBeNull();
+    expectInvoiceOnScreen();
+    expect(screen.getByTestId('payment-check')).toBeInTheDocument();
+
+    // The fourth works: the quiet retry is the next tick, with nothing tapped.
+    await vi.advanceTimersByTimeAsync(PAYMENT_CHECK_EVERY_MS);
+    await waitFor(() => expect(screen.getByText('PAID')).toBeInTheDocument());
+    expect(screen.queryByTestId('payment-check')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Pay with Credit Card' })).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('when no read gets through in time, says the payment could not be checked and keeps Pay held back', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const invoicesApi = await import('../api/invoicesApi');
+    const read = vi.mocked(invoicesApi.getMyInvoices);
+    read.mockReset();
+    // The copy on screen was read BEFORE the return: it says nothing about the payment.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(['myInvoices', 'kin-fam-1'], openRead, { updatedAt: Date.now() - 60_000 });
+    read.mockRejectedValue(new Error('network down'));
+    window.history.pushState({}, '', '/invoices/inv-open-1?checkout=done');
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Checking payment…')).toBeInTheDocument();
+    expectInvoiceOnScreen();
+
+    await vi.advanceTimersByTimeAsync(PAYMENT_CHECK_FOR_MS + 100);
+    expect(await screen.findByTestId('payment-not-checked')).toHaveTextContent('We could not check this payment. Check again in a minute.');
+    // Not the line that claims a read: nothing was read.
+    expect(screen.queryByTestId('payment-not-seen')).toBeNull();
+    expect(screen.queryByText(TROUBLE)).toBeNull();
+    expectInvoiceOnScreen();
+    // No read since the return says the bill is still owed, so Pay is not offered.
+    expect(screen.queryByRole('button', { name: 'Pay with Credit Card' })).toBeNull();
+    expect(screen.queryByText('PAID')).toBeNull();
+    vi.useRealTimers();
+
+    // Check again reads once more, and this time the payment is there.
+    read.mockReset();
+    read.mockResolvedValue(paidRead);
+    await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(screen.getByText('PAID')).toBeInTheDocument());
+    expect(screen.queryByTestId('payment-not-checked')).toBeNull();
+  });
+
+  it('a read that gets through after the check gave up, still owed, brings Pay back with the not-shown-up line', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const invoicesApi = await import('../api/invoicesApi');
+    const read = vi.mocked(invoicesApi.getMyInvoices);
+    read.mockReset();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(['myInvoices', 'kin-fam-1'], openRead, { updatedAt: Date.now() - 60_000 });
+    read.mockRejectedValue(new Error('network down'));
+    window.history.pushState({}, '', '/invoices/inv-open-1?checkout=done');
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+    await vi.advanceTimersByTimeAsync(PAYMENT_CHECK_FOR_MS + 100);
+    expect(await screen.findByTestId('payment-not-checked')).toBeInTheDocument();
+    vi.useRealTimers();
+
+    read.mockReset();
+    read.mockResolvedValue(openRead);
+    await queryClient.refetchQueries({ queryKey: ['myInvoices', 'kin-fam-1'] });
+    expect(await screen.findByTestId('payment-not-seen')).toHaveTextContent('This payment has not shown up yet.');
+    expect(screen.queryByTestId('payment-not-checked')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+  });
+
+  it('a first read that fails with nothing to show still gets the trouble-loading screen', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    const read = vi.mocked(invoicesApi.getMyInvoices);
+    read.mockReset();
+    read.mockRejectedValue(new Error('network down'));
+    renderAt('/invoices/inv-open-1?checkout=done');
+    expect(await screen.findByText(TROUBLE)).toBeInTheDocument();
+    expect(screen.queryByTestId('payment-check')).toBeNull();
+  });
+
+  it('outside a payment check, a failed re-read is reported as before', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    const read = vi.mocked(invoicesApi.getMyInvoices);
+    read.mockReset();
+    read.mockResolvedValueOnce(openRead).mockRejectedValue(new Error('network down'));
+    const queryClient = renderAt('/invoices/inv-open-1');
+    expect(await screen.findByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+    await queryClient.refetchQueries({ queryKey: ['myInvoices', 'kin-fam-1'] });
+    expect(await screen.findByText(TROUBLE)).toBeInTheDocument();
+  });
+
+  it('billing access taken away during the check leaves the invoice, it is not kept on screen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const invoicesApi = await import('../api/invoicesApi');
+    const { FirebaseError } = await import('firebase/app');
+    const read = vi.mocked(invoicesApi.getMyInvoices);
+    read.mockReset();
+    read
+      .mockResolvedValueOnce(openRead)
+      .mockRejectedValue(new FirebaseError('functions/permission-denied', 'Billing access is required to see invoices and account balance.'));
+    renderAt('/invoices/inv-open-1?checkout=done');
+    expect(await screen.findByText('Checking payment…')).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(PAYMENT_CHECK_EVERY_MS + 100);
+    await waitFor(() => expect(screen.queryByTestId('payment-check')).toBeNull());
+    expect(screen.queryByText('Amount Due')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull();
+    vi.useRealTimers();
   });
 });
 describe('checkoutReturnUrls (#2366)', () => {

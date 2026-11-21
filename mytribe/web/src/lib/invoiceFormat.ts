@@ -25,9 +25,31 @@ type InvoiceStatus = InvoiceDto['status'];
  * the balance says. The server refuses too (`payInvoice`, and `getMyInvoices`
  * ships no pay methods for a paid invoice); this keeps the button from being
  * offered at all.
+ *
+ * #2410: AND NEVER ONE THE SERVER SAYS CANNOT TAKE A PAYMENT. `getMyInvoices`
+ * asks `payInvoice`'s own rule for each invoice it would otherwise offer Pay
+ * on and ships the answer as `payBlockedReason`. This screen does not work
+ * the rule out again, so the two cannot disagree. A server older than the
+ * field sends no key, which reads as not blocked.
  */
-export function offersPayment(inv: Pick<InvoiceDto, 'status' | 'amountDue' | 'isPaid'>): boolean {
-  return inv.status === 'open' && inv.amountDue > 0 && !inv.isPaid;
+export function offersPayment(inv: PayRuleInvoice): boolean {
+  return inv.status === 'open' && inv.amountDue > 0 && !inv.isPaid && !inv.payBlockedReason;
+}
+
+/** What the pay rule reads. `payBlockedReason` is optional: an older server sends no key. */
+type PayRuleInvoice = Pick<InvoiceDto, 'status' | 'amountDue' | 'isPaid'> & {
+  payBlockedReason?: string | null;
+};
+
+/**
+ * #2410: the server's sentence for an open bill with a balance that offers no
+ * way to pay, or null. Printed where the pay options would be. Null on every
+ * invoice that is not a bill waiting to be paid: a quote, a credit and a paid
+ * invoice already say what they are.
+ */
+export function payBlockedReason(inv: PayRuleInvoice): string | null {
+  if (inv.status !== 'open' || inv.amountDue <= 0 || inv.isPaid) return null;
+  return inv.payBlockedReason ? inv.payBlockedReason : null;
 }
 const USD_DIGITS = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,

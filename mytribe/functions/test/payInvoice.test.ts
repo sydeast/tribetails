@@ -99,7 +99,7 @@ describe('payInvoice billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', ()
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'families/3/members/u1': KINTALES_ONLY_MEMBER,
       },
     });
@@ -120,7 +120,7 @@ describe('payInvoice billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', ()
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'families/3/members/u1': { ...BILLING_FULL_SECONDARY, status: 'SUSPENDED' },
       },
     });
@@ -136,7 +136,7 @@ describe('payInvoice billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', ()
     const ctx = buildDbMock({
       docs: {
         'clients/sk1': { kinfolkIds: ['3'] },
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'families/3/members/sk1': BILLING_FULL_SECONDARY,
       },
     });
@@ -154,7 +154,7 @@ describe('payInvoice billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', ()
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'families/3/members/u1': PRIMARY_MEMBER,
       },
     });
@@ -169,7 +169,7 @@ describe('payInvoice billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', ()
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -183,7 +183,7 @@ describe('payInvoice billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', ()
     const ctx = buildDbMock({
       docs: {
         'clients/op-uid': { kinfolkIds: ['3'] },
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -282,8 +282,9 @@ describe('payInvoiceHandler', () => {
    * AND IT MUST NOT CHARGE ONE TWICE. There are no refunds, so the one thing
    * this path may never do is take a card payment for a bill already settled.
    * The rows are the only record that a migrated bill was paid off before
-   * `amountDue` existed, so this handler reads them for that shape and for no
-   * other, and refuses when they cover the total.
+   * `amountDue` existed, so this handler reads them and refuses when they
+   * cover the total. (Since #2410 it reads them for every invoice, not for
+   * this shape alone; `checkoutRefusal.test.ts` has the rest.)
    */
   it('#902: refuses a migrated invoice its own payment rows already cover', async () => {
     const ctx = buildDbMock({
@@ -326,7 +327,7 @@ describe('payInvoiceHandler', () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, client: 'Buddy (Nora)' },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5, client: 'Buddy (Nora)' },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -365,7 +366,7 @@ describe('payInvoiceHandler', () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, client: 'Buddy (Nora)' },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5, client: 'Buddy (Nora)' },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -406,7 +407,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
     const ctx = buildDbMock({
       docs: {
         ...invoiceDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -421,7 +422,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
     const ctx = buildDbMock({
       docs: {
         ...invoiceDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'business_settings/business_settings': {
           paymentOptions: { klarna: { enabled: true }, affirm: { enabled: true } },
         },
@@ -445,7 +446,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
         ...invoiceDocs,
         'invoices/inv-1': {
           kinfolkId: '3',
-          amountDue: 12.5,
+          amountDue: 12.5, total: 12.5,
           payMethodSettingsSnapshot: {
             capturedAt: '2026-08-01T00:00:00.000Z',
             paymentOptions: { klarna: { enabled: true } },
@@ -474,7 +475,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
       const ctx = buildDbMock({
         docs: {
           ...invoiceDocs,
-          'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+          'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
           'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
         },
       });
@@ -507,7 +508,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
     const ctx = buildDbMock({
       docs: {
         ...invoiceDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
       },
     });
@@ -526,7 +527,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
 
   it('never sends the payment_method_types param stripe@23 removed (issue #1192)', async () => {
     const ctx = buildDbMock({
-      docs: { ...invoiceDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 } },
+      docs: { ...invoiceDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
@@ -548,7 +549,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
     const ctx = buildDbMock({
       docs: {
         ...invoiceDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'business_settings/business_settings': {
           paymentOptions: { klarna: { enabled: true }, affirm: { enabled: true } },
         },
@@ -580,7 +581,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
     const ctx = buildDbMock({
       docs: {
         ...invoiceDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
       },
     });
@@ -604,7 +605,7 @@ describe('payInvoice allowed_payment_method_types (issue #409)', () => {
     const ctx = buildDbMock({
       docs: {
         ...invoiceDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
         'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
       },
     });
@@ -730,7 +731,7 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
   };
   const invoice = (over: Record<string, unknown> = {}) => ({
     kinfolkId: '3',
-    amountDue: 12.5,
+    amountDue: 12.5, total: 12.5,
     ...over,
   });
 
@@ -860,7 +861,7 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
   }
   it('stamps the round on BOTH metadata copies, because the webhook may read either', async () => {
     const ctx = buildDbMock({
-      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, stripeCheckoutRound: 2 } },
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5, stripeCheckoutRound: 2 } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
@@ -872,7 +873,7 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
   });
   it('stamps round 0 on an invoice that has never taken a Stripe payment', async () => {
     const ctx = buildDbMock({
-      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 } },
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
@@ -887,7 +888,7 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
     const ctx = buildDbMock({
       docs: {
         ...baseDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_open_1' },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5, pendingCheckoutSessionId: 'cs_open_1' },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -912,7 +913,7 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
     const ctx = buildDbMock({
       docs: {
         ...baseDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_open_1' },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5, pendingCheckoutSessionId: 'cs_open_1' },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -929,7 +930,7 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
     const ctx = buildDbMock({
       docs: {
         ...baseDocs,
-        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_gone' },
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5, pendingCheckoutSessionId: 'cs_gone' },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -940,7 +941,7 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
   });
   it('does not call Stripe at all when the invoice has no pending session', async () => {
     const ctx = buildDbMock({
-      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 } },
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
@@ -1060,7 +1061,7 @@ describe('payInvoice refuses a PAID invoice (operator ruling 2026-09-27, docket 
 describe('payInvoice return addresses (#2366)', () => {
   const OPEN_DOCS = {
     'clients/u1': { kinfolkIds: ['3'] },
-    'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+    'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, total: 12.5 },
     'families/3/members/u1': PRIMARY_MEMBER,
   };
   it('hands Stripe the invoice page the household paid, with the return marker on success only', async () => {
@@ -1086,9 +1087,31 @@ describe('payInvoice return addresses (#2366)', () => {
     } as any);
     expect(res.sessionId).toBe('cs_test_1');
   });
+  it('#2401: hands Stripe the address the MyTribe app claims, unchanged', async () => {
+    const ctx = buildDbMock({ docs: OPEN_DOCS });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({
+      data: {
+        invoiceId: 'inv-1',
+        successUrl: 'https://kinfolk.tribetails.com/app/invoices/inv-1?checkout=done',
+        cancelUrl: 'https://kinfolk.tribetails.com/app/invoices/inv-1',
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    expect(res.sessionId).toBe('cs_test_1');
+    const params = mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0];
+    expect(params.success_url).toBe('https://kinfolk.tribetails.com/app/invoices/inv-1?checkout=done');
+    expect(params.cancel_url).toBe('https://kinfolk.tribetails.com/app/invoices/inv-1');
+  });
   it.each([
     ['a foreign success address', { successUrl: 'https://evil.example/ok' }],
     ['a foreign cancel address', { cancelUrl: 'https://evil.example/no' }],
+    // #2401: the app's own link is where the portal's return page sends the
+    // household next. It is never an address Stripe is given.
+    ["the app's own link as the success address", { successUrl: 'mytribe://invoices/inv-1?checkout=done' }],
+    ["the app's own link as the cancel address", { cancelUrl: 'mytribe://invoices/inv-1' }],
+    ['the app return path on a foreign site', { successUrl: 'https://evil.example/app/invoices/inv-1?checkout=done' }],
     ['a lookalike host', { successUrl: 'https://kinfolk.tribetails.com.evil.example/invoices/inv-1' }],
     ['a user part hiding the host', { successUrl: 'https://kinfolk.tribetails.com@evil.example/invoices/inv-1' }],
     ['plain http', { cancelUrl: 'http://kinfolk.tribetails.com/invoices/inv-1' }],

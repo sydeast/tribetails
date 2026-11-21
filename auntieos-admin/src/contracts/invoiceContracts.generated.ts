@@ -70,6 +70,7 @@ export interface InvoiceDto {
   writtenOffCents: number | null;
   lineItems?: InvoiceLineItemDto[];
   payMethods: InvoiceDtoPayMethod[];
+  payBlockedReason: string | null;
 }
 
 // ---------- acceptQuote ----------

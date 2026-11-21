@@ -141,6 +141,8 @@
 .pay-check { flex-basis: 100%; }
 .pay-check-note { flex-basis: 100%; font-size: 13px; margin: 0; }
 .pay-check-note .btn { margin-left: 8px; }
+/* #2410: why an open bill offers no way to pay, where the pay options would be. */
+.pay-blocked { flex-basis: 100%; font-size: 13px; margin: 0; }
 
 /* payment history list */
 .pay { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 16px; border: 1px solid transparent; transition: .2s var(--ease); }
