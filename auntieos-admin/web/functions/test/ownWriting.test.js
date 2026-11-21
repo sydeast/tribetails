@@ -319,10 +319,10 @@ describe('household specifics: an example is a style sample only', () => {
       'See you Sunday, have fun!',
       'Have a great week away, everyone is fine.',
       'Hope you had fun while you were in Tumbleford!',
-      'Enjoy Brackenmoor, everyone here is in good hands.',
       'Hope everything is going great in Quillbury!',
       'Welcome back from Ostermere!',
-      'Have the best time visiting Fennick Falls.',
+      'Off to Brackenmoor already? Have fun!',
+      'Hope the flight back from Ostermere was smooth.',
       'Hope you are having fun in [Name], all is well.',
       'Enjoy your time off, everyone is settled.',
       'Have a great time at the lake house.',
@@ -430,6 +430,11 @@ describe('household specifics: an example is a style sample only', () => {
     'In the end we played until dinner and then had a long nap.',
     'A little bit of sunshine today and lots of belly rubs.',
     'Hope you enjoy the photos, everyone had a great day.',
+    'We watched the birds while they napped in the sun.',
+    'Loved visiting Pebblesworth today, such a sweet visit.',
+    'We enjoyed Pebblesworth so much this afternoon.',
+    'We played fetch in the back yard until everyone was tired.',
+    'A little bit at a time, everyone ate their supper.',
   ];
   it('keeps plain sign-offs and generic visit wording, two Kin placeholders included', () => {
     for (const t of MUST_SURVIVE) assert.strictEqual(own.householdSpecific(t), null, t);
@@ -463,6 +468,21 @@ describe('household specifics: an example is a style sample only', () => {
     assert.match(value.text, /so grateful for every one/);
     assert.doesNotMatch(value.text, /door is always open|flea season|forty dollars/);
     assert.match(logs.join('\n'), /specifics/);
+  });
+  it('a place after "enjoy" or "visiting" drops once the replacing makes it a name; a Kin there stays', () => {
+    const roster = own.addNames(new Map(), 'kin', ['Marzipan']);
+    const vocab = new Set(['enjoy', 'we', 'hope', 'loved', 'the']);
+    const readAgain = (t) => {
+      const out = own.scrubExample(t, roster, [], vocab, new Map());
+      return out === null ? 'unsafe' : own.householdSpecific(out);
+    };
+    for (const t of ['Hope you enjoy Brackenmoor, everyone here is in good hands.', 'Enjoy Brackenmoor, all is well.',
+      'Have the best time visiting Fennick Falls.']) {
+      assert.notStrictEqual(readAgain(t), null, t);
+    }
+    for (const t of ['Loved visiting Marzipan today, such a sweet visit.', 'We enjoyed Marzipan so much this afternoon.']) {
+      assert.strictEqual(readAgain(t), null, t);
+    }
   });
   it('an example that only shows a specific after the replacing is dropped too', () => {
     // "Tarn" is on the roster as a Kin, so the street word reads after a placeholder.

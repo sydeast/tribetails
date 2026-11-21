@@ -366,7 +366,7 @@ const SPECIFIC_WORDS = {
     'hide-a-key', 'deck', 'blinds', 'let (?:myself|yourself|ourselves|me|us|them) (?:in|out)', 'way in',
     'in through', 'through the (?:back|front|side|garage|yard)',
     'under the (?:mat|rug|pot|planter|rock|flowerpot)', 'lights? (?:on|off)', 'alley',
-    '(?:back|side|front) (?:way|yard|entrance)',
+    'side (?:way|yard|entrance)', 'back way', '(?:back|front) entrance',
   ],
   medicine: [
     'med', 'meds', 'pill', 'pills', 'pilled', 'pilling', 'tablet', 'tablets', 'mg', 'mcg', 'ml', 'cc',
@@ -390,8 +390,8 @@ const SPECIFIC_WORDS = {
     "(?:would not|wouldn't|won't|will not|didn't|did not) come out", 'warm(?:s|ed)? up to', 'get(?:s)? along', 'got along',
     "(?:does not|doesn't|did not|didn't|won't|will not|can't|cannot) (?:like|stand|tolerate|handle|trust)",
     'other (?:dogs?|cats?|animals?|pets?|people|kin)', 'got out', 'gets out', 'slipped out',
-    'bit (?:me|my|him|her|them|us|at|someone|the)', '(?:tore|tear|tears|tearing|torn) (?:up|apart|into)', 'snuck', 'not good with', 'closet', 'crate', 'crated',
-    "(?:want|wants|wanted|would not|wouldn't) to come out", 'peed', 'pooped', 'potty',
+    'bit (?:me|my|him|her|them|us|someone|the)', '(?:tore|tear|tears|tearing|torn) (?:up|apart|into)', 'snuck', 'not good with', 'closet', 'crate', 'crated',
+    "(?:want|wants|wanted|would not|wouldn't) to come out", 'peed', 'pooped',
     'ran away', 'runs? away', 'running away',
     'under the (?:bed|couch|sofa|porch|house|deck|stairs|dresser|table|desk|chair|bathtub)', 'behind the (?:couch|sofa|bed|dryer|washer|fridge)',
   ],
@@ -405,7 +405,7 @@ const SPECIFIC_WORDS = {
     "see you (?:when|once) you(?:'re| are| get)", 'see you (?:on )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
     'landed', 'fly', 'flying', 'come home', 'comes home', 'coming home', 'get home', 'gets home', 'getting home',
     'come back', 'comes back', 'coming back', 'home soon', 'heading out', 'been gone',
-    "while (?:you|you're|y'all|they|they're)", 'enjoy your (?:time|stay|visit|break)', 'your stay', 'time off',
+    "while (?:you|you're|y'all)", 'enjoy your (?:time|stay|visit|break)', 'your stay', 'time off',
     'lake house', 'beach house', 'cabin', 'drive (?:up|down|back|home)',
     '(?:before|after|once|until|till|when) you (?:leave|left|go|head|fly|drive)',
     'on holiday', 'your holidays?', 'holidaying', 'house sit(?:ting)?', 'empty house',
@@ -473,20 +473,27 @@ const DETAIL_PLACEHOLDER = /\[(?:phone|address|number)\]/u;
 const STREET_PAIR = /(?<![\p{L}\p{N}])([\p{Lu}][\p{L}\p{M}'’-]*)\s+(?=([\p{L}]+))/gu;
 const OWN_PLACEHOLDERS = new RegExp(PLACEHOLDER_TOKEN.source, 'gu');
 // The household somewhere else, by a place's name: "while you were in Denver",
-// "Enjoy Lisbon", "back from [Name]". The place is any capitalised word that
-// is not a possessive ("in Biscuit's bed"), a placeholder for a Tribe name, a
-// brand word or the calendar. Places cannot be listed, so the word before
-// them is what counts.
-const PLACE_BEFORE = [
-  'in', 'enjoy', 'enjoying', 'enjoyed', 'visiting', 'back from', 'home from', 'off to', 'fly to', 'flying to',
-  'flew to', 'headed to', 'heading to', 'trip to', 'drive to', 'driving to', 'welcome to', 'fun in',
-].map((w) => `[${w.charAt(0).toUpperCase()}${w.charAt(0)}]${phraseSource(w.slice(1))}`);
-const PLACE_AFTER = new RegExp(
-  `(?<![\\p{L}\\p{N}])(?:${PLACE_BEFORE.join('|')})\\s+(\\[Name\\]|\\p{Lu}[\\p{L}\\p{M}]*)(?![\\p{L}\\p{M}'’-])`,
+// "back from [Name]", "Enjoy [Name]". Places cannot be listed, so the word
+// before them is what counts. After "in", "back from", "off to" and other
+// travel words the place is any capitalised word that is not a possessive
+// ("in Biscuit's bed"), a brand word or the calendar. After "enjoy" and
+// "visiting", a Kin is as likely as a place ("Loved visiting Biscuit"), so
+// only an unknown name counts there: a Tribe name has become a Tribe
+// placeholder by the time the example is read again, a city has become [Name].
+const initialEither = (w) => `[${w.charAt(0).toUpperCase()}${w.charAt(0)}]${phraseSource(w.slice(1))}`;
+const TRAVEL_BEFORE = [
+  'in', 'back from', 'home from', 'off to', 'fly to', 'flying to', 'flew to', 'headed to', 'heading to',
+  'trip to', 'drive to', 'driving to',
+].map(initialEither);
+const NAME_BEFORE = ['enjoy', 'enjoys', 'enjoying', 'enjoyed', 'visit', 'visiting', 'welcome to'].map(initialEither);
+const TRAVEL_PLACE = new RegExp(
+  `(?<![\\p{L}\\p{N}])(?:${TRAVEL_BEFORE.join('|')})\\s+(\\[Name\\]|\\p{Lu}[\\p{L}\\p{M}]*)(?![\\p{L}\\p{M}'’-])`,
   'gu',
 );
+const NAMED_PLACE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${NAME_BEFORE.join('|')})\\s+\\[Name\\]`, 'u');
 function namesAPlace(source) {
-  for (const [, word] of source.matchAll(PLACE_AFTER)) {
+  if (NAMED_PLACE.test(source)) return true;
+  for (const [, word] of source.matchAll(TRAVEL_PLACE)) {
     if (word === '[Name]') return true;
     const key = fold(word);
     if (!ALWAYS_WORDS.has(key) && !NOT_STREET_NAMES.has(key)) return true;
