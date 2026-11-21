@@ -111,6 +111,8 @@ object JvmFirestoreFixtures {
 
     /** #2386: each session's newest breadcrumb (absent means none). Null falls through to the real read. */
     var lastBreadcrumbs: Map<String, Breadcrumb>? = null
+    /** #2227: each visit's kinfolk-facing notes, keyed "kinfolkId/batchId/visitId". Null falls through to the real read. */
+    var kinfolkFacingNotes: Map<String, List<BookingNote>>? = null
 
     /** True when ANY fixture is set, i.e. we are inside a screenshot test, not the live app. */
     val active: Boolean
@@ -139,6 +141,7 @@ object JvmFirestoreFixtures {
         lastWrite = null
         restTransport = null
         lastBreadcrumbs = null
+        kinfolkFacingNotes = null
         JvmFirestoreRest.clearTimestampPaths()
         // #1593: the settings baseline is the last read; a new test has read nothing.
         resetBusinessSettingsBaseline()
@@ -795,7 +798,66 @@ internal fun breadcrumbFromPlain(doc: JsonObject): Breadcrumb {
 internal actual suspend fun platformAddBreadcrumb(sessionId: String, crumb: Breadcrumb): WriteResult<String> = stubWriteResult("GPS is mobile-only")
 internal actual suspend fun platformGetBreadcrumbs(sessionId: String): WriteResult<List<Breadcrumb>> = WriteResult.Ok(emptyList())
 internal actual suspend fun platformSaveSessionGpsSummary(sessionId: String, summary: GpsSummary): WriteResult<Unit> = stubWriteResult("GPS is mobile-only")
-internal actual fun platformBookingNotesStream(kinfolkId: String, bookingId: String, internal: Boolean, visitId: String): Flow<FirestoreResult<List<BookingNote>>> = stubFlow("Booking notes live in a kinfolk subcollection (mobile/web)")
+/**
+ * #2227: a visit's kinfolk-facing notes, polled over REST: the shared thread at
+ * `families/{k}/bookings/{batchId}/kinCares/{visitId}/notes` (where
+ * `addBookingNote` writes the household's rows and the office's) plus the notes
+ * the office wrote on Accept or Decline, which live on the visit document. The
+ * same list admin web's Bookings sheet draws. [bookingId] is the batch id here,
+ * as the expect declaration says for a non-blank [visitId].
+ *
+ * It used to be a stub that answered an error, so the console's list never
+ * loaded. Internal notes are not read here: the visit's one internal list comes
+ * from `listVisitInternalNotes` (#1580). A failed visit-document read only
+ * leaves the two answer notes out; a failed thread read is an error, which the
+ * sheet shows with Try again. The HTTP client's request timeout bounds a read
+ * that never answers.
+ */
+internal actual fun platformBookingNotesStream(kinfolkId: String, bookingId: String, internal: Boolean, visitId: String): Flow<FirestoreResult<List<BookingNote>>> {
+    if (internal) return stubFlow("Internal notes are read with listVisitInternalNotes")
+    if (kinfolkId.isBlank() || bookingId.isBlank() || visitId.isBlank()) {
+        return stubFlow("This visit is not part of a booking request")
+    }
+    JvmFirestoreFixtures.kinfolkFacingNotes?.let { fx -> return fixtureFlow(fx["$kinfolkId/$bookingId/$visitId"].orEmpty()) }
+    if (JvmFirestoreFixtures.active && JvmFirestoreFixtures.restTransport == null) return stubFlow("Notes are read from Firestore")
+    val visits = "families/$kinfolkId/bookings/$bookingId/kinCares"
+    return JvmFirestoreRest.pollingStream {
+        val thread = JvmFirestoreRest.rawCollectionSuspend("$visits/$visitId/notes")
+        val visit = runCatchingCancellable { JvmFirestoreRest.getDocPlain(visits, visitId) }.getOrNull()
+        kinfolkFacingNotesFromPlain(thread, visit)
+    }
+}
+/**
+ * PURE. #2227: the thread rows and the visit document, flattened by the REST
+ * codec, as one oldest-first list. A row's `createdAt` arrives as ISO text (the
+ * codec's reading of a Timestamp); one with no readable time sorts to the top.
+ */
+internal fun kinfolkFacingNotesFromPlain(thread: List<JsonObject>, visit: JsonObject?): List<BookingNote> {
+    fun text(doc: JsonObject, key: String): String = (doc[key] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+    fun millis(doc: JsonObject, key: String): Long? {
+        val raw = doc[key] as? JsonPrimitive ?: return null
+        if (!raw.isString) return raw.content.toDoubleOrNull()?.takeIf { it.isFinite() }?.toLong()
+        return runCatchingCancellable { java.time.OffsetDateTime.parse(raw.content).toInstant().toEpochMilli() }.getOrNull()
+    }
+    val rows = thread.map { d ->
+        BookingNote(
+            _id = text(d, "_id"),
+            authorUid = text(d, "authorUid"),
+            authorRole = text(d, "authorRole"),
+            body = text(d, "body"),
+            createdAtMs = millis(d, "createdAt"),
+        )
+    }
+    val answers = if (visit == null) emptyList() else listOfNotNull(
+        text(visit, "requestAcceptNote").trim().takeIf { it.isNotEmpty() }?.let {
+            BookingNote(_id = "request-accepted", authorUid = text(visit, "requestAcceptedBy"), authorRole = "admin", body = it, createdAtMs = millis(visit, "requestAcceptedAt"))
+        },
+        text(visit, "requestDeclineNote").trim().takeIf { it.isNotEmpty() }?.let {
+            BookingNote(_id = "request-declined", authorUid = text(visit, "requestDeclinedBy"), authorRole = "admin", body = it, createdAtMs = millis(visit, "requestDeclinedAt"))
+        },
+    )
+    return (answers + rows).sortedBy { it.createdAtMs ?: 0L }
+}
 /**
  * #2030: a note the operator writes on the desktop console goes through the same
  * callables web and Android use, so it lands where the household reads it
