@@ -108,6 +108,48 @@ describe('invoiceStateOf (server-side twin of the admin lib/invoiceFormat.ts enu
   });
 });
 
+/**
+ * #2471: the older `invoiceStatus` spelling, read only when `status` is absent,
+ * exactly as `invoiceCancelled` reads it. A cancelled invoice that carried only
+ * this field used to classify by its money and read open.
+ */
+describe('invoiceStateOf and the legacy invoiceStatus field (#2471)', () => {
+  it('reads a legacy-only cancelled invoice as cancelled, whatever its money says', () => {
+    expect(invoiceStateOf({ invoiceStatus: 'cancelled', amountDue: 40, total: 40 })).toBe('cancelled');
+    expect(invoiceStateOf({ invoiceStatus: ' Cancelled ', amountDue: 0, total: 40 }, 4000)).toBe('cancelled');
+  });
+
+  it('freezes it: no edit scope, and every edit refused', () => {
+    const state = invoiceStateOf({ invoiceStatus: 'cancelled', amountDue: 40, total: 40 });
+    expect(invoiceEditScope(state, 'partial', 'undecided')).toBe('none');
+    expect(invoiceEditRefusal(state, 'partial', true, 'undecided')!.message).toContain('cancelled');
+    expect(invoiceEditRefusal(state, 'none', false, 'undecided')).not.toBeNull();
+  });
+
+  it('reads the other legacy labels the same way the portal does', () => {
+    expect(invoiceStateOf({ invoiceStatus: 'draft', amountDue: 40, total: 40 })).toBe('draft');
+    expect(invoiceStateOf({ invoiceStatus: 'quote', amountDue: 40, total: 40 })).toBe('quote');
+    expect(invoiceStateOf({ invoiceStatus: 'paid', amountDue: 0, total: 40 })).toBe('paid');
+    // 'open' is not a positive label here either: the money still places it.
+    expect(invoiceStateOf({ invoiceStatus: 'open', amountDue: 40, total: 40 })).toBe('open');
+    expect(invoiceStateOf({ invoiceStatus: 'open', amountDue: 0, total: 40 })).toBe('paid');
+  });
+
+  it('lets a stored status win over the legacy field, as invoiceCancelled does', () => {
+    expect(invoiceStateOf({ status: 'open', invoiceStatus: 'cancelled', amountDue: 40, total: 40 })).toBe('open');
+    expect(invoiceStateOf({ status: 'cancelled', invoiceStatus: 'open', amountDue: 40, total: 40 })).toBe(
+      'cancelled',
+    );
+    // An empty stored status is still a stored status (`??`, not `||`), the same
+    // reading as every other server reader of the pair.
+    expect(invoiceStateOf({ status: '', invoiceStatus: 'cancelled', amountDue: 40, total: 40 })).toBe('open');
+  });
+
+  it('ignores a legacy value that is not a string', () => {
+    expect(invoiceStateOf({ invoiceStatus: 7, amountDue: 40, total: 40 })).toBe('open');
+  });
+});
+
 describe('paymentStandingOf (the third state, added 2026-07-25)', () => {
   it('reads nothing collected as none', () => {
     expect(paymentStandingOf(4000, 0)).toBe('none');
