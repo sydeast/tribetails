@@ -143,6 +143,8 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
       },
     ],
     paidCents: 6000,
+    // #2470: not brought over from the old system.
+    broughtOverPaidCents: 0,
     totalCents: 24000,
     amountDueCents: 18000,
     // #2090: nothing written off on this invoice.
