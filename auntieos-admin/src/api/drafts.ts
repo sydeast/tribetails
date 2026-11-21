@@ -113,6 +113,14 @@ export interface GeneratedDraftRow {
   sentChannel?: string | undefined;
   sentTo?: string | undefined;
   approvedAt?: string | undefined;
+  /**
+   * #2452: the server's claim on an Email or Text draft while it sends
+   * (`sendClaimedAt`), and its mark when the send got no answer
+   * (`sendUnconfirmedAt`). A claim with no `sentAt` beside it is a send nobody
+   * can vouch for. See `lib/draftSent.ts#messageDraftStanding`.
+   */
+  sendClaimedAt?: string | undefined;
+  sendUnconfirmedAt?: string | undefined;
 }
 
 /**

@@ -114,8 +114,17 @@ interface BucketDef {
 }
 
 const BUCKETS: readonly BucketDef[] = [
-  { key: 'failed', label: 'Needs another look', test: (s) => s === 'failed', tone: 'error', glyph: 'triangleAlert' },
-  { key: 'draft', label: 'Drafts', test: (s) => s === 'draft', tone: 'neutral', glyph: 'fileText' },
+  // #2452: an Email or Text whose send got no answer is filed here, with its
+  // own pill. It is not Sent, and it is not a draft that can be sent.
+  {
+    key: 'failed',
+    label: 'Needs another look',
+    test: (s) => s === 'failed' || s === 'unconfirmed',
+    tone: 'error',
+    glyph: 'triangleAlert',
+  },
+  // A send still running is a draft for the two minutes it takes to be answered.
+  { key: 'draft', label: 'Drafts', test: (s) => s === 'draft' || s === 'sending', tone: 'neutral', glyph: 'fileText' },
   { key: 'sent', label: 'Sent', test: (s) => s === 'sent', tone: 'success', glyph: 'mailCheck' },
   { key: 'unknown', label: 'Unknown status', test: (s) => s === 'unknown', tone: 'warning', glyph: 'fileText' },
 ];
