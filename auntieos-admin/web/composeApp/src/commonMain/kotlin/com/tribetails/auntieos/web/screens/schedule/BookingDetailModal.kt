@@ -59,6 +59,7 @@ import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ServicePill
 import com.tribetails.auntieos.web.ui.components.ToastKind
+import com.tribetails.auntieos.web.ui.components.answersWithin
 import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.screens.BookingServicePill
 import com.tribetails.auntieos.web.screens.LocalServiceCatalog
@@ -117,7 +118,9 @@ fun BookingDetailModal(
     val canReadNotes = session.kinfolkId.isNotBlank() && notesBatchId.isNotEmpty() && notesVisitId.isNotEmpty()
     var notesReload by remember(session._id) { mutableStateOf(0) }
     val kinfolkNotes by remember(session.kinfolkId, notesBatchId, notesVisitId, notesReload) {
+        // A first read with no answer in 20 s lands on the Try again state.
         if (canReadNotes) client.bookingNotesStream(session.kinfolkId, notesBatchId, internal = false, visitId = notesVisitId)
+            .answersWithin(KINFOLK_NOTES_FAILED)
         else flowOf(FirestoreResult.Data(emptyList()))
     }.collectAsState(initial = FirestoreResult.Loading)
 

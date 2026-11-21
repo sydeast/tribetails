@@ -516,7 +516,7 @@ fun KinCareDetailScreen(
                             EmptyHint("No KinTales sent yet during this KinCare.")
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                st.tales.forEach { r -> KinTaleSnippet(r) }
+                                st.tales.forEach { r -> KinTaleSnippet(r, businessZone(businessTimeZone)) }
                             }
                         }
                     }
@@ -929,7 +929,7 @@ private fun AddressBlock(address: String) {
 }
 
 @Composable
-private fun KinTaleSnippet(report: KinCareReport) {
+private fun KinTaleSnippet(report: KinCareReport, zone: ZoneId) {
     val accent = when (report.status.uppercase()) {
         "SENT"   -> AuntieTheme.colors.success
         "FAILED" -> AuntieTheme.colors.error
@@ -951,7 +951,8 @@ private fun KinTaleSnippet(report: KinCareReport) {
                 )
                 val ts = report.sentAt.orEmpty().ifBlank { report.updatedAt.ifBlank { report.createdAt } }
                 if (ts.isNotBlank()) {
-                    Text(ts, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                    // #1828: on the business clock, month as a word, 24-hour; never the stored ISO text.
+                    Text(shortIso(ts, zone = zone), style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
                 }
             }
             if (report.bodyCopy.isNotBlank()) {

@@ -161,6 +161,9 @@ class KinCareDetailScreenTest {
         scrollTo("Biscuit had a grand walk")
         rule.onNodeWithText("Biscuit had a grand walk").assertIsDisplayed()
         rule.onAllNodesWithText("Half-written draft").assertCountEquals(0)
+        // #1828: the sent time reads as a date with the month as a word, never the stored ISO text.
+        rule.onAllNodesWithText("2026-08-19T15:00:00Z").assertCountEquals(0)
+        rule.onNodeWithText("Aug 19", substring = true).assertIsDisplayed()
         coVerify(exactly = 0) { kinCareRepo.getReportsForSession(any()) }
     }
     @Test
