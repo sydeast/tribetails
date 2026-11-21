@@ -178,6 +178,19 @@ describe('one example made safe', () => {
     const out = own.scrubExample('Will, we will be by at noon.', roster(), [], vocab, new Map());
     assert.strictEqual(out, '[Kinfolk], we [Kinfolk] be by at noon.');
   });
+  it('a name inside brackets is still a name; only a placeholder of our own is left alone', () => {
+    const out = own.scrubExample('[Marzipan: one pill] and [Fenwick called], [email] and [Kin 2].', roster(), [], vocab, new Map());
+    assert.strictEqual(out, '[[Kin]: one pill] and [[Name] called], [email] and [Kin 2].');
+  });
+  it('an everyday-word name in lowercase is replaced but not handed to the draft check', () => {
+    const found = new Map();
+    const withHappy = own.addNames(roster(), 'kin', ['Happy']);
+    const vocabHappy = new Set([...vocab, 'happy', 'we', 'say']);
+    assert.strictEqual(own.scrubExample('We had a happy walk.', withHappy, [], vocabHappy, found), 'We had a [Kin] walk.');
+    assert.ok(!found.has('happy'));
+    own.scrubExample('Say hi to Happy for me.', withHappy, [], vocabHappy, found);
+    assert.ok(found.has('happy'));
+  });
   it('a household person named for a month is replaced, and the month alone keeps its capital', () => {
     const withApril = own.addNames(roster(), 'kinfolk', ['April Dunmore']);
     assert.ok(withApril.has('april'));

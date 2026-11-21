@@ -210,6 +210,16 @@ function lowercaseWords(texts) {
 // ---- the scrub ----------------------------------------------------------------
 
 /**
+ * True when the word at `offset` is the word of a placeholder this file
+ * writes ("[Kin 2]", "[email]"), and nothing else: "[Marzipan: one pill]" is a
+ * name in brackets, not a placeholder.
+ */
+const PLACEHOLDER_AT = new RegExp(`^${PLACEHOLDER_TOKEN.source}`, 'u');
+function insidePlaceholder(whole, offset) {
+  return offset > 0 && whole.charAt(offset - 1) === '[' && PLACEHOLDER_AT.test(whole.slice(offset - 1));
+}
+
+/**
  * One example with every name and detail replaced, or null when it cannot be
  * made safe. `roster` is the Tribe's names, `rowNames` the names on the row
  * itself, `vocabulary` the everyday words. `found` collects the roster names
@@ -236,15 +246,23 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
     // the names come in the text. Each name is a group of its own.
     const sourceOf = (form) => form.split(' ').map((w) => escapeRegExp(w).replace(APOSTROPHES, "['’‘ʼ]")).join('\\s+');
     const pattern = new RegExp(
-      `(?<![\\p{L}\\p{N}\\[])(?:${entries.map((e) => `(${sourceOf(e.form)})`).join('|')})((?:['’‘ʼ]s)?|e?s)(?![\\p{L}\\p{N}])`,
+      `(?<![\\p{L}\\p{N}])(?:${entries.map((e) => `(${sourceOf(e.form)})`).join('|')})((?:['’‘ʼ]s)?|e?s)(?![\\p{L}\\p{N}])`,
       'giu',
     );
     out = out.replace(pattern, (match, ...groups) => {
+      const whole = groups[groups.length - 1];
+      const offset = groups[groups.length - 2];
+      if (insidePlaceholder(whole, offset)) return match;
       const i = groups.findIndex((g, n) => n < entries.length && g !== undefined);
       const entry = entries[i];
+      const name = groups[i];
       // A Tribe name is replaced in any case, even where it is also an
       // everyday word: "will" for someone called Will becomes a placeholder too.
-      found.set(fold(entry.form), entry);
+      // The draft check hears of it only when it was written as a name (with
+      // its capital) or is no everyday word, so "a happy day" in one example
+      // does not stop "Happy Thanksgiving" in another household's draft.
+      const asName = name.charAt(0) !== name.charAt(0).toLowerCase() || !vocabulary.has(fold(entry.form));
+      if (asName) found.set(fold(entry.form), entry);
       return placeholderFor(entry) + (groups[entries.length] || '');
     });
   }
@@ -255,15 +273,16 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
     if (word.charAt(0) === word.charAt(0).toLowerCase()) return word;
     const key = fold(word).replace(/'s$/u, '');
     if (ALWAYS_WORDS.has(key)) return word;
-    // A placeholder is already in brackets.
-    if (whole.charAt(offset - 1) === '[') return word;
+    // A placeholder's own word stays as it is.
+    if (insidePlaceholder(whole, offset)) return word;
     if (atSentenceStart(whole.slice(0, offset)) && vocabulary.has(key)) return word;
     return '[Name]';
   });
   out = out.replace(/\[Name\](?:\s+\[Name\])+/gu, '[Name]');
   // Read it again: a Tribe name in any case, or a contact detail, and it is dropped.
   for (const entry of entries) {
-    if (new RegExp(`(?<![\\p{L}\\p{N}\\[])${escapeRegExp(entry.form)}(?![\\p{L}\\p{N}])`, 'iu').test(out)) return null;
+    const left = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(entry.form)}(?![\\p{L}\\p{N}])`, 'giu');
+    for (const m of out.matchAll(left)) if (!insidePlaceholder(out, m.index)) return null;
   }
   if (hasIdentifier(out.replace(/\[(?:email|phone|link|address|number)\]/gu, ''))) return null;
   return out;
