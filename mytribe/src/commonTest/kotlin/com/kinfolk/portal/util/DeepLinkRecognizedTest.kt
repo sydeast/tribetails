@@ -2,7 +2,7 @@ package com.kinfolk.portal.util
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-/** #1293: which launch links name something the app can open. Mirrors MainActivity.captureDeepLink. */
+/** #1293: which launch links name something the app can open. Mirrors captureLaunchLink (DeepLink.android.kt). */
 class DeepLinkRecognizedTest {
     @Test
     fun aClaimOrShareLinkWithAnIdIsRecognized() {
@@ -34,6 +34,12 @@ class DeepLinkRecognizedTest {
     fun anyOtherPathIsNotRecognized() {
         assertFalse(deepLinkIsRecognized(listOf("this-page-does-not-exist"), inviteQuery = null, isEmailAction = false))
         assertFalse(deepLinkIsRecognized(emptyList(), inviteQuery = null, isEmailAction = false))
+    }
+    // #2427: the address Stripe returns a card setup to opens Account Settings, not the not-found screen.
+    @Test
+    fun aCardSetupReturnIsRecognized() {
+        assertTrue(deepLinkIsRecognized(listOf("app", "account"), inviteQuery = null, isEmailAction = false, isCardSetupReturn = true))
+        assertFalse(deepLinkIsRecognized(listOf("app", "account"), inviteQuery = null, isEmailAction = false))
     }
     // #2401: the address Stripe returns a card payment to opens the invoice, not the not-found screen.
     @Test

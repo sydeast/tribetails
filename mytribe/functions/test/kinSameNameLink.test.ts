@@ -470,3 +470,59 @@ describe('a household only ever touches its own Kin (#1912)', () => {
     expect(docs['kin/flatTheirs']).toEqual(THEIR_FLAT);
   });
 });
+
+// #2350: a Kin's stored id moves when its link is written. The link event only
+// logs which visits now name a card the script would move; the visits are
+// written by the operator's `backfill:visit-kin-ids`, never by the event.
+describe('a link written after a visit was booked: logged for the script, never written (#2350)', () => {
+  async function scriptRun(kinfolkId: string) {
+    const { planHouseholdVisitKinIds, applyHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
+    return applyHouseholdVisitKinIds(await planHouseholdVisitKinIds(kinfolkId));
+  }
+
+  it('a record minted for a new card: the event leaves the visit, logs it, and the script moves it', async () => {
+    const { docs } = world({
+      [NEW_PATH]: { ...NEW_FAMILY },
+      'kin_care_sessions/v1': { kinfolkId: HOUSEHOLD, kinIds: ['new'], kinNames: ['Max'], status: 'SCHEDULED' },
+    });
+    const { logEvent } = await import('../src/lib/logger');
+    const { linkWasWritten } = await import('../src/triggers/onFamilyKinWrite');
+    const { recordVisitKinIdsAfterLink } = await import('../src/lib/visitKinIds');
+    const after = { ...docs[NEW_PATH] };
+    const res = await runMirror(docs, 'new');
+    expect(res.action).toBe('created');
+    expect(linkWasWritten(after as any, res)).toBe(true);
+
+    await recordVisitKinIdsAfterLink(HOUSEHOLD, 'onFamilyKinWrite');
+
+    expect(docs['kin_care_sessions/v1']).toEqual({ kinfolkId: HOUSEHOLD, kinIds: ['new'], kinNames: ['Max'], status: 'SCHEDULED' });
+    expect(logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'kin.visitIds.planned',
+        extra: expect.objectContaining({ kinfolkId: HOUSEHOLD, toWrite: 1, docs: ['kin_care_sessions/v1'] }),
+      }),
+    );
+
+    expect(await scriptRun(HOUSEHOLD)).toEqual({ written: 1, skippedOnRecheck: 0 });
+    expect(docs['kin_care_sessions/v1']).toEqual({ kinfolkId: HOUSEHOLD, kinIds: [res.flatDocId], kinNames: ['Max'], status: 'SCHEDULED' });
+  });
+
+  it('a crossed pair put right: the event writes no visit; the script moves the moved Kin\'s visit and leaves the other', async () => {
+    const { docs } = world(
+      crossedDocs({
+        'kin_care_sessions/v-new': { kinfolkId: HOUSEHOLD, kinIds: ['new'], kinNames: ['Max'] },
+        'kin_care_sessions/v-old': { kinfolkId: HOUSEHOLD, kinIds: ['flatOld'], kinNames: ['Max'] },
+      }),
+    );
+    const before = { ...docs[OLD_PATH] };
+    docs[OLD_PATH] = { ...docs[OLD_PATH], sitterNotes: 'Shy' };
+    await runMirror(docs, 'old', before);
+    const newFlat = docs[NEW_PATH]['legacyKinId'] as string;
+    expect(newFlat).not.toBe('flatOld');
+    expect(docs['kin_care_sessions/v-new']?.['kinIds']).toEqual(['new']);
+
+    expect(await scriptRun(HOUSEHOLD)).toEqual({ written: 1, skippedOnRecheck: 0 });
+    expect(docs['kin_care_sessions/v-new']?.['kinIds']).toEqual([newFlat]);
+    expect(docs['kin_care_sessions/v-old']?.['kinIds']).toEqual(['flatOld']);
+  });
+});

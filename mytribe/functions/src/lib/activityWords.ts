@@ -201,6 +201,7 @@ const CHANNEL_SKIP_WORDS: Record<string, string> = {
   business_email_unset: 'no business email is set in Settings',
   template_text_empty: 'this notification has no text message wording',
   template_missing: 'this notification has no text message wording',
+  template_broken: 'its text message wording cannot be filled in, so fix it in Templates',
 };
 /** `Could not send "Invoice sent" to Dre East by text message: no mobile number on file`. */
 export function notificationChannelSkippedWords(name: string, to: string, channel: string, skipReason: string): string {
