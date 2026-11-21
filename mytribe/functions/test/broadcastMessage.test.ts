@@ -1141,6 +1141,37 @@ describe('broadcastMessage is held while notices to households are off (#1834)',
       return buildDbMock({ writeThrough: true, docs, queryDocs: { kinfolk: rows } });
     }
 
+    it('ERROR: a settings read that fails does not stop it; the next readable tick finishes it', async () => {
+      const ctx = bigDb(120);
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'S', body: 'B' }),
+      );
+      expect(res.pending).toBe(true);
+      const sentBefore = mocks.sendTemplatedEmail.mock.calls.length;
+      (writeAuditEntry as any).mockClear();
+      const realDoc = ctx.db.doc.bind(ctx.db);
+      const spy = vi.spyOn(ctx.db, 'doc').mockImplementation(((path: string) =>
+        path.startsWith('business_settings/')
+          ? { get: () => Promise.reject(new Error('unavailable')) }
+          : realDoc(path)) as any);
+      clock += 1_000;
+      await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 30_000 });
+      expect(mocks.sendTemplatedEmail.mock.calls.length).toBe(sentBefore);
+      const row = (await ctx.db.collection('broadcasts').doc(res.broadcastId).get()).data();
+      expect(row.cancelRequestedAtMs).toBeNull();
+      expect(auditCalls().filter((l: any) => l.event === 'NOTIFICATION_NOT_SENT')).toEqual([]);
+
+      spy.mockRestore();
+      for (let i = 0; i < 20; i += 1) {
+        const r = await ctx.db.collection('broadcasts').doc(res.broadcastId).get();
+        if (r.data()?.fanoutState === 'complete') break;
+        clock += 1_000;
+        await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 30_000 });
+      }
+      expect(new Set(mocks.sendTemplatedEmail.mock.calls.map((c: any[]) => c[0].to)).size).toBe(120);
+    });
+
     it('the sweep stops the rest, never sends it later, and writes one line', async () => {
       const ctx = bigDb(120);
       mocks.dbFn.mockReturnValue(ctx.db);

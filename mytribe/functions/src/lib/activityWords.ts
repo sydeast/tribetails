@@ -97,10 +97,11 @@ export function broadcastHeldWords(
  * #1834: a broadcast that was still sending when notices to households were
  * turned off. The rest of it is stopped, never sent later.
  */
-export function broadcastStoppedHeldWords(): string {
+export function broadcastStoppedHeldWords(reason: 'off' | 'turnedOff' = 'off'): string {
   // No counts: the stored count moves only when a chunk of the roster closes,
   // so mid-chunk it would say nobody was contacted while some were.
-  return 'Stopped a broadcast part-way: notices to households were turned off. What already went cannot be recalled, and the rest will not be sent';
+  const why = reason === 'turnedOff' ? 'broadcasts were turned off in Settings' : 'notices to households were turned off';
+  return `Stopped a broadcast part-way: ${why}. What already went cannot be recalled, and the rest will not be sent`;
 }
 /** The send switch in Settings is off: `Held back "Auntie on the way" for Dre East: notices to households are turned off`. */
 export function notificationHeldWords(name: string, to: string): string {

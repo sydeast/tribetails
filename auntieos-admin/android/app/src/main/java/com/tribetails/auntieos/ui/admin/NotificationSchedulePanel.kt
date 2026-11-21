@@ -89,10 +89,11 @@ internal fun usableNotificationHour(stored: Int?): Int? = stored?.takeIf { it in
  * "no send time is set, so none will go out yet" with the switch on, while
  * visit notices were reaching the household. On my way, arrived, departed, the
  * KinTale, booking and invoice notices all go out as they happen; only invoice
- * reminders and overdue notices wait for the hour. And four things do not pass
- * the switch: a broadcast, a single email or text message, an invite and a
- * password reset. Everything else is held, a KinTale or an invoice the operator
- * sends by hand included.
+ * reminders and overdue notices wait for the hour. Since #1834 (ruling
+ * 2026-11-20) a message the owner writes to one household (an email, a text,
+ * a push, an inbox reply), an invite and a password reset do not pass the
+ * switch. Everything else is held, broadcasts, marketing blasts and a KinTale
+ * or an invoice the operator sends by hand included.
  *
  * A NOTE AND NOT A BLOCKED SAVE. Both states are legal and reasonable to pass
  * through while opening the product, so Save stays enabled. Same sentences as

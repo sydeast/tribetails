@@ -717,6 +717,18 @@ export async function resumeBroadcastFanout(opts: {
   if (typeof row['cancelRequestedAtMs'] !== 'number') {
     const { broadcastHoldReason } = await import('../notifications/sendSwitchRules.js');
     const hold = await broadcastHoldReason(BROADCAST_NOTIFICATION_KEY);
+    // Settings that cannot be read are no answer. A stop is for good, so this
+    // tick sends nothing and stops nothing, and the next tick asks again.
+    if (hold === 'unreadable') {
+      logEvent({ severity: 'warn', function: 'outboundFanoutSweep', event: 'broadcast.hold.unreadable', extra: { broadcastId } });
+      return {
+        ran: false,
+        complete: false,
+        processed: storedCount(row, 'fanoutProcessed'),
+        total: storedCount(row, 'fanoutTotal'),
+        cancelled: false,
+      };
+    }
     if (hold !== null) {
       await stopHeldBroadcast(ref, hold);
       return {
@@ -777,7 +789,7 @@ export async function resumeBroadcastFanout(opts: {
  */
 async function stopHeldBroadcast(
   ref: FirebaseFirestore.DocumentReference,
-  hold: 'off' | 'unreadable' | 'turnedOff',
+  hold: 'off' | 'turnedOff',
 ): Promise<void> {
   const stamped = await db().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -795,11 +807,11 @@ async function stopHeldBroadcast(
   await writeAuditEntry({
     status: 'NOT_SENT',
     event: AUDIT_EVENTS.NOTIFICATION_NOT_SENT,
-    severity: hold === 'unreadable' ? 'warn' : 'info',
+    severity: 'info',
     actorRole: 'SYSTEM',
     ...(typeof stamped.actorUid === 'string' && stamped.actorUid !== '' ? { actorUid: stamped.actorUid } : {}),
     targetCollection: BROADCASTS_COLLECTION,
-    description: broadcastStoppedHeldWords(),
+    description: broadcastStoppedHeldWords(hold),
     payload: { key: BROADCAST_NOTIFICATION_KEY, outcome: 'held', broadcastId: ref.id, sent: stamped.sent, neverSent: stamped.neverSent, reason: hold },
   }).catch((err) => {
     logEvent({ severity: 'warn', function: 'outboundFanoutSweep', event: 'audit.write.failed', errorMessage: (err as Error)?.message });

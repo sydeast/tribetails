@@ -125,10 +125,12 @@ function isDirty(draft: Draft, data: BusinessSettings): boolean {
  * Only `invoiceRemindersCron` and `invoiceOverdueCron` wait for the hour
  * (`mytribe/functions/src/lib/notificationSchedule.ts`). The note says that.
  *
- * And four things do not pass the switch: a broadcast, a single email or text
- * message, an invite and a password reset (`test/householdSendGateGuard.test.ts`).
- * So the off note does not say "nothing reaches a household". Everything else
- * is held, a KinTale or an invoice the operator sends by hand included.
+ * #1834 (ruling 2026-11-20): a message the owner writes to one household (an
+ * email, a text, a push, an inbox reply), an invite and a password reset do
+ * not pass the switch (`test/householdSendGateGuard.test.ts`). So the off note
+ * does not say "nothing reaches a household". Everything else is held,
+ * broadcasts, marketing blasts and a KinTale or an invoice the operator sends
+ * by hand included.
  *
  * It is a NOTE AND NOT A BLOCKED SAVE. Both are legal states, reasonable to
  * pass through while the operator opens the product. Refusing to save them

@@ -820,6 +820,30 @@ describe('#2340 a marketing blast with notices to households off', () => {
     expect(await drainScheduledNotifications(NOW + 3 * HOUR)).toEqual({ promoted: 0, held: 0 });
   });
 
+  it('#1834 ERROR: settings that cannot be read at the send time neither send nor drop the copies', async () => {
+    const ctx = blastDb(2, {
+      [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: true },
+    });
+    await blast();
+    const queued = () => Object.keys(ctx.docs).filter((k) => k.startsWith('scheduledNotifications/') && ctx.docs[k]);
+    expect(queued()).toHaveLength(2);
+
+    const realDoc = ctx.db.doc.bind(ctx.db);
+    const spy = vi.spyOn(ctx.db, 'doc').mockImplementation(((path: string) =>
+      path.startsWith('business_settings/')
+        ? { get: () => Promise.reject(new Error('unavailable')) }
+        : realDoc(path)) as any);
+    expect(await drainScheduledNotifications(NOW + 2 * HOUR)).toEqual({ promoted: 0, held: 0 });
+    // Still queued, nothing sent, nothing counted as held, no line.
+    expect(queued()).toHaveLength(2);
+    expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toEqual([]);
+    expect(notSent(ctx.writes)).toEqual([]);
+
+    // The next tick reads the setting and the blast goes.
+    spy.mockRestore();
+    expect(await drainScheduledNotifications(NOW + 2 * HOUR)).toEqual({ promoted: 2, held: 0 });
+  });
+
   it('#1834: switched on at its send time, the blast is promoted as before', async () => {
     const ctx = blastDb(2, {
       [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: true },

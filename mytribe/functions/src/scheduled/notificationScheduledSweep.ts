@@ -40,6 +40,7 @@ export async function drainScheduledNotifications(now: number): Promise<{ promot
 
   let promoted = 0;
   let held = 0;
+  let skipped = 0;
   /**
    * #1834 (ruling 2026-11-20): A MARKETING BLAST IS HELD AT ITS SEND TIME
    * when notices to households were turned off after it was scheduled, or
@@ -68,7 +69,6 @@ export async function drainScheduledNotifications(now: number): Promise<{ promot
         try {
           hold = await holdFor(key);
         } catch (err) {
-          // Fail closed, as the send switch does.
           hold = 'unreadable';
           logEvent({
             severity: 'warn',
@@ -76,6 +76,13 @@ export async function drainScheduledNotifications(now: number): Promise<{ promot
             event: 'scheduled.hold.read.failed',
             extra: { scheduledId: doc.id, error: (err as Error)?.message },
           });
+        }
+        // Settings that cannot be read are no answer: the copy is neither sent
+        // nor taken off the queue, and the next tick asks again. A held copy
+        // is gone for good, so one failed read must not decide that.
+        if (hold === 'unreadable') {
+          skipped += 1;
+          continue;
         }
         if (hold !== null) {
           const reason = hold;
@@ -145,7 +152,7 @@ export async function drainScheduledNotifications(now: number): Promise<{ promot
     severity: 'info',
     function: 'notificationScheduledSweep',
     event: 'scheduled.sweep.complete',
-    extra: { scanned: snap.size, promoted, held },
+    extra: { scanned: snap.size, promoted, held, skipped },
   });
   return { promoted, held };
 }
