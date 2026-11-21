@@ -540,7 +540,20 @@ internal fun invoiceHeadline(invoice: Invoice): Pair<String, String> {
  * screen cannot offer different things.
  */
 internal fun offersPayment(invoice: Invoice): Boolean =
-    isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0
+    isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0 && invoice.payBlockedReason.isNullOrBlank()
+
+/**
+ * #2410: the server's sentence for an open bill with a balance that offers no
+ * way to pay, or null. [offersPayment] is false for it, so no screen draws a
+ * Pay button or a pay option; the invoice screen prints this where they would
+ * be, and the controller answers a stale tap with it. Null on anything that
+ * is not a bill waiting to be paid: a quote, a credit and a paid invoice
+ * already say what they are.
+ */
+internal fun payBlockedReason(invoice: Invoice): String? =
+    invoice.payBlockedReason
+        ?.takeIf { it.isNotBlank() }
+        ?.takeIf { isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0 }
 
 /** The sentence the server sends for a paid invoice; shown when a stale screen tries anyway. */
 internal const val PAID_INVOICE_REFUSAL = "This invoice is already paid, so it cannot take another payment."
