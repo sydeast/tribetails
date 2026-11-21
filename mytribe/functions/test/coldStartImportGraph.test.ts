@@ -351,8 +351,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * the two admin payment readers and `portal/getMyInvoices.ts` share it. It is
  * pure, and the one module it imports (`lib/businessHours.ts`) was already
  * here; `lib/pastVisit.ts` is still loaded with `await import()`.
+ *
+ * 470 since #2246 (on top of #2334's 469): `lib/invoiceIssueDay.ts`, the rule
+ * that dates a bill the day it goes out and counts its due date from that day,
+ * shared by the draft send and the household's accept of a quote. Every module
+ * it imports (`invoiceDay`, `invoiceCreateFields`, `invoiceSessionLinks`,
+ * `invoiceTerms`) was already here.
  */
-const MAX_OWN_EAGER_MODULES = 469;
+const MAX_OWN_EAGER_MODULES = 470;
 
 interface Edge {
   spec: string;

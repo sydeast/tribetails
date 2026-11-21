@@ -314,6 +314,14 @@ describe('#2088 turning a quote into an invoice keeps its visits', () => {
     await expect(acceptQuoteHandler(kinfolk({ invoiceId: quoteId }))).rejects.toMatchObject({ code: 'not-found' });
     expect((writeAuditEntry as any).mock.calls.some((c: any[]) => c[0].event === 'BILLING_QUOTE_CONVERTED')).toBe(true);
 
+    // #2246: the quote's hand-typed due date (2020) has long passed, and the
+    // bill goes out dated today, so the send refuses until the office moves it.
+    await expect(reviewAndSendDraftInvoiceHandler(admin({ invoiceId: quoteId }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_due_before_send' },
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    await updateInvoiceHandler(admin({ invoiceId: quoteId, patch: { dueDate: '2999-12-31' } }));
     // Money becomes owed only through the ordinary draft send, which tells the
     // household about an INVOICE.
     await reviewAndSendDraftInvoiceHandler(admin({ invoiceId: quoteId }));

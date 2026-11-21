@@ -273,7 +273,8 @@ class InvoiceApplyCreditControllerTest {
     fun `Review and send says only what it does`() {
         assertEquals(
             "This sends the draft to the household and marks the invoice open. A draft missing its " +
-                "total, household, or invoice number is rejected rather than sent.",
+                "total, household, or invoice number is rejected rather than sent. It goes out dated today, and " +
+                "its due date is counted again from its terms.",
             REVIEW_AND_SEND_CONFIRM_COPY,
         )
         assertFalse(Regex("credit|paid|payment", RegexOption.IGNORE_CASE).containsMatchIn(REVIEW_AND_SEND_CONFIRM_COPY))

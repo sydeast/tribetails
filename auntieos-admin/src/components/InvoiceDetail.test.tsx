@@ -589,6 +589,20 @@ describe('InvoiceDetail', () => {
     ).toBeInTheDocument();
   });
 
+  it('#2246: the send confirm says the bill goes out dated today, and a passed due date is refused in words', async () => {
+    reviewAndSendDraftInvoice.mockRejectedValue(
+      new Error(
+        'The due date picked for this invoice is before today, and the invoice goes out dated today. Change the due date in Edit, then send it.',
+      ),
+    );
+    render(
+      <InvoiceDetail invoice={entry({ _id: 'inv6', status: 'draft', total: 40, amountDue: 40 })} onClose={vi.fn()} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    expect(screen.getByText(/It goes out dated today, and its due date is counted again from its terms\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^review and send$/i }));
+    expect(await screen.findByText(/Could not send:.*Change the due date in Edit, then send it\./)).toBeInTheDocument();
+  });
   it('#1609: the reminder confirm names the person and the channel before the press', async () => {
     render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));

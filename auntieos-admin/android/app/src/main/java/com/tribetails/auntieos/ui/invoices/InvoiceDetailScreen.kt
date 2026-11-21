@@ -2087,7 +2087,8 @@ internal fun recordPaymentSplitCopy(split: PaymentSplit?, feeCents: Long?): Stri
  */
 internal const val REVIEW_AND_SEND_CONFIRM_COPY: String =
     "This sends the draft to the household and marks the invoice open. A draft missing its " +
-        "total, household, or invoice number is rejected rather than sent."
+        "total, household, or invoice number is rejected rather than sent. It goes out dated today, and " +
+        "its due date is counted again from its terms."
 
 /**
  * The Unapplied Balance line, in words.

@@ -15,9 +15,12 @@
  * and a day plus a timezone is how "due the 14th" becomes "overdue since the
  * 13th" for a household one zone west.
  *
- * A DATE ALREADY IN THE PAST IS RESOLVED, REPORTED, AND NEVER MOVED TO TODAY.
- * `resolveDueDate` returns the day plus `isPast`, and the surfaces say so out
- * loud (an invoice dated last week is due from last week, whenever it is sent).
+ * THE RESOLVER NEVER MOVES A DATE TO TODAY. `resolveDueDate` returns the day
+ * plus `isPast`, and the surfaces say so out loud. What moves is its INPUT, and
+ * only at the moment an invoice becomes a bill (#2246, `lib/invoiceIssueDay.ts`):
+ * the send, or the household's accept of a quote, dates the invoice that day
+ * and runs this resolver again from it, so a draft sent days after it was made
+ * is not overdue on arrival.
  *
  * A BILL IS NEVER DUE BEFORE ITS OWN DATE (#1966 review, the #1593 and #1977
  * rule). Visit-relative terms can work out to a day before the invoice date:

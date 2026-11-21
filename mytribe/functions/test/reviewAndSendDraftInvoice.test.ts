@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
@@ -28,7 +28,7 @@ vi.mock('../src/notifications/dispatcher', () => ({
 }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
-  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
+  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__', delete: () => '__DELETE__' } };
 });
 
 import { reviewAndSendDraftInvoiceHandler } from '../src/admin/reviewAndSendDraftInvoice';
@@ -294,5 +294,111 @@ describe('#1511 reviewAndSendDraftInvoice says when the household got it in the 
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
     expect(res).toEqual({ ok: true, invoiceId: 'inv1' });
+  });
+});
+/**
+ * #2246: a draft made Monday and sent Thursday goes out dated Thursday and due
+ * by its terms counted from Thursday, not already overdue.
+ */
+describe('#2246 the send dates the bill the day it goes out', () => {
+  // 9 PM Thursday Nov 19 in Chicago, already Friday in UTC.
+  const THURSDAY_EVENING = new Date('2026-11-20T03:00:00.000Z');
+  const monday = {
+    kinfolkId: 'fam1',
+    invoiceNumber: 'INV-9',
+    status: 'draft',
+    total: 40,
+    amountDue: 40,
+    date: '2026-11-16',
+    dueDate: '2026-11-16',
+    termsCode: 'due_on_receipt',
+    terms: 'Due on receipt',
+  };
+  const settings = { 'business_settings/business_settings': { timeZone: 'America/Chicago' } };
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(THURSDAY_EVENING);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  it('due on receipt: dated and due Thursday on the business clock, in the same write as the flip', async () => {
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { ...monday }, ...settings } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    const write = ctx.writes.find((w) => w.path === 'invoices/inv1')!;
+    expect(write.data).toMatchObject({
+      status: 'open',
+      date: '2026-11-19',
+      dueDate: '2026-11-19',
+      termsCode: 'due_on_receipt',
+      terms: 'Due on receipt',
+    });
+  });
+  it('visit terms are counted from the visits it bills, and floored at the send day', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv1': {
+          ...monday,
+          termsCode: 'net_3_after_last_visit',
+          sessionIds: ['s1'],
+          lineItems: [{ description: 'Walk', qty: 1, unitCents: 4000, sessionId: 's2' }],
+        },
+        'kin_care_sessions/s1': { kinfolkId: 'fam1', invoiceId: 'inv1', status: 'COMPLETED', startTime: '2026-11-10T15:00:00Z' },
+        'kin_care_sessions/s2': { kinfolkId: 'fam1', invoiceId: 'inv1', status: 'COMPLETED', startTime: '2026-11-18T15:00:00Z' },
+        ...settings,
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    const write = ctx.writes.find((w) => w.path === 'invoices/inv1')!;
+    // The last visit is Nov 18, so 3 days on is Nov 21.
+    expect(write.data).toMatchObject({ date: '2026-11-19', dueDate: '2026-11-21', termsCode: 'net_3_after_last_visit' });
+  });
+  it('a due date picked by hand that has passed refuses the send: nothing written, nobody told', async () => {
+    const ctx = buildDbMock({
+      docs: { 'invoices/inv1': { ...monday, termsCode: 'custom', dueDate: '2026-11-18' }, ...settings },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: expect.stringContaining('Change the due date in Edit, then send it.'),
+      details: { code: 'invoice_due_before_send' },
+    });
+    expect(ctx.writes.find((w) => w.path === 'invoices/inv1')).toBeUndefined();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+  it('a due date picked by hand still ahead is kept; only the date moves', async () => {
+    const ctx = buildDbMock({
+      docs: { 'invoices/inv1': { ...monday, termsCode: 'custom', dueDate: '2026-11-30' }, ...settings },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    const write = ctx.writes.find((w) => w.path === 'invoices/inv1')!;
+    expect(write.data['date']).toBe('2026-11-19');
+    expect('dueDate' in write.data).toBe(false);
+  });
+  it('a failed notice puts the draft back with its own date, due date and terms', async () => {
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { ...monday, termsCode: 'net_7', terms: 'Due 7 days after the invoice date', dueDate: '2026-11-23' }, ...settings }, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
+    await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }))).rejects.toThrow('boom');
+    const back = (await ctx.db.doc('invoices/inv1').get()).data()!;
+    expect(back).toMatchObject({
+      status: 'draft',
+      date: '2026-11-16',
+      dueDate: '2026-11-23',
+      termsCode: 'net_7',
+      terms: 'Due 7 days after the invoice date',
+    });
+  });
+  it('a quote saved unsent goes out as a quote with its own date untouched', async () => {
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { ...monday, quoteDraft: true }, ...settings } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    const write = ctx.writes.find((w) => w.path === 'invoices/inv1')!;
+    expect(write.data['status']).toBe('quote');
+    expect('date' in write.data).toBe(false);
+    expect('dueDate' in write.data).toBe(false);
   });
 });
