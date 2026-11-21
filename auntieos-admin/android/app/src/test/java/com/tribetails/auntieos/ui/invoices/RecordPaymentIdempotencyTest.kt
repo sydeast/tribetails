@@ -320,6 +320,7 @@ class RecordPaymentIdempotencyTest {
                 appliedInvoiceId = "inv1",
                 appliedInvoiceNumber = "TT-1",
                 method = "check",
+                methodLabel = "Check",
                 reference = "CHK-1",
                 date = "2026-05-01",
                 notes = "",
