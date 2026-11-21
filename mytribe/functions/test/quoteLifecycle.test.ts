@@ -67,6 +67,7 @@ import {
   quoteActionRefusal,
   appliedPaymentCentsOf,
   CANCEL_PAID_REFUSAL,
+  convertedQuoteTermsSource,
 } from '../src/admin/quoteActions';
 import { archiveInvoiceHandler } from '../src/admin/archiveInvoice';
 import { linkInvoiceSessionsHandler } from '../src/admin/linkInvoiceSessions';
@@ -323,8 +324,9 @@ describe('#2088 turning a quote into an invoice keeps its visits', () => {
     expect(portal.open.map((i) => [i.id, i.status])).toEqual([[quoteId, 'open']]);
   });
 
-  it('#1966: the invoice it becomes is due by the business Payment terms, counted from its visits', async () => {
-    const ctx = world({
+  /** #2258: the business setting these cases convert under, unlike every quote's own terms. */
+  const settingWorld = () =>
+    world({
       'business_settings/business_settings': {
         timeZone: 'America/Chicago',
         householdNotificationsLive: true,
@@ -333,20 +335,87 @@ describe('#2088 turning a quote into an invoice keeps its visits', () => {
       // 7 PM on Jun 3 in Chicago, 00:00 on Jun 4 in UTC.
       'kin_care_sessions/s2': visit({ startTime: '2026-06-04T00:00:00.000Z' }),
     });
+
+  async function quoteWithTerms(prefix: string, extra: Record<string, unknown>): Promise<string> {
     keyN += 1;
     const { invoiceId } = await createQuoteHandler(
       admin({
         ...composerQuote(['s1', 's2']),
-        termsCode: 'due_on_receipt',
         dueDate: '',
-        idempotencyKey: `quot_17000000022${String(keyN).padStart(2, '0')}_z`,
+        ...extra,
+        idempotencyKey: `quot_${prefix}${String(keyN).padStart(2, '0')}_z`,
       }),
     );
+    return invoiceId;
+  }
+
+  it('#2258: the invoice it becomes keeps the quote own terms, not the business setting', async () => {
+    const ctx = settingWorld();
+    const invoiceId = await quoteWithTerms('17000000022', { termsCode: 'due_on_receipt' });
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('due_on_receipt');
+    expect(inv['terms']).toBe('Due on receipt');
+    expect(inv['dueDate']).toBe('2026-06-10');
+  });
+
+  it('#2258: an invoice-date count chosen on the quote (30 days after the invoice date) is kept', async () => {
+    const ctx = settingWorld();
+    const invoiceId = await quoteWithTerms('17000000025', { termsCode: 'net_30' });
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('net_30');
+    expect(inv['terms']).toBe('Due 30 days after the invoice date');
+    expect(inv['dueDate']).toBe('2026-07-10');
+  });
+
+  it('#2258: the quote own visit terms are counted again from the visits it holds, on business days', async () => {
+    const ctx = settingWorld();
+    const invoiceId = await quoteWithTerms('17000000026', { termsCode: 'net_7_after_last_visit' });
+    // Its due date as stored on the quote is not trusted: the convert counts again.
+    await ctx.db.doc(`invoices/${invoiceId}`).set({ dueDate: '2026-12-31' }, { merge: true });
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('net_7_after_last_visit');
+    // The last visit is Jun 3 in Chicago (Jun 4 in UTC), so 7 days on is Jun 10.
+    expect(inv['dueDate']).toBe('2026-06-10');
+  });
+
+  it('#2258: the invoice-date floor still applies to the quote own terms', async () => {
+    const ctx = settingWorld();
+    const invoiceId = await quoteWithTerms('17000000027', { termsCode: 'net_14_after_last_visit' });
+    // Chosen on the quote: due 1 day after the last visit (Jun 4), before its Jun 10 date.
+    await ctx.db.doc(`invoices/${invoiceId}`).set({ termsCode: 'net_1_after_last_visit' }, { merge: true });
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('due_on_receipt');
+    expect(inv['terms']).toBe('Due on receipt');
+    expect(inv['dueDate']).toBe('2026-06-10');
+  });
+
+  it('#1966, #2258: a quote with no terms of its own takes the business Payment terms, counted from its visits', async () => {
+    const ctx = settingWorld();
+    const invoiceId = await quoteWithTerms('17000000028', { termsCode: 'due_on_receipt' });
+    // A quote from before structured terms: no code, no words, no date.
+    await ctx.db.doc(`invoices/${invoiceId}`).set({ termsCode: '', terms: '', dueDate: '' }, { merge: true });
     await convertQuoteToInvoiceHandler(admin({ invoiceId }));
     const inv = await docOf(ctx, `invoices/${invoiceId}`);
     expect(inv['termsCode']).toBe('net_14_after_last_visit');
     expect(inv['terms']).toBe('Due 14 days after the last visit');
     expect(inv['dueDate']).toBe('2026-06-17');
+  });
+
+  it('#2258: a due date typed with no terms code survives the change', async () => {
+    const ctx = settingWorld();
+    const invoiceId = await quoteWithTerms('17000000029', { termsCode: 'due_on_receipt' });
+    await ctx.db
+      .doc(`invoices/${invoiceId}`)
+      .set({ termsCode: '', terms: 'Pay at the first visit', dueDate: '2026-06-20' }, { merge: true });
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('');
+    expect(inv['terms']).toBe('Pay at the first visit');
+    expect(inv['dueDate']).toBe('2026-06-20');
   });
 
   it('#1966: a due date the office picked by hand survives the change', async () => {
@@ -756,5 +825,32 @@ describe('#2195 archiving a quote works like archiving a draft', () => {
     await unarchiveInvoiceHandler(admin({ invoiceId: quoteId }));
     expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(quoteId);
     expect(await portalIds()).toEqual([]);
+  });
+});
+describe('#2258 convertedQuoteTermsSource (the rule each Turn into invoice confirm repeats)', () => {
+  it('keeps custom terms and a due date typed with no code', () => {
+    expect(convertedQuoteTermsSource({ termsCode: 'custom', dueDate: '2026-07-04' }, 'due_on_receipt')).toEqual({
+      kind: 'keep',
+    });
+    expect(convertedQuoteTermsSource({ termsCode: '', dueDate: '2026-07-04' }, 'due_on_receipt')).toEqual({
+      kind: 'keep',
+    });
+  });
+  it('carries the quote own code, the invoice-date counts included', () => {
+    for (const code of ['due_on_receipt', 'net_30', 'net_7_after_last_visit', 'net_3_before_first_visit'] as const) {
+      expect(convertedQuoteTermsSource({ termsCode: ` ${code} `, dueDate: '2026-07-04' }, 'net_14_after_last_visit')).toEqual(
+        { kind: 'quote', code },
+      );
+    }
+  });
+  it('takes the business setting when the quote has no terms, or a code that is not one of ours', () => {
+    expect(convertedQuoteTermsSource({}, 'net_14_after_last_visit')).toEqual({
+      kind: 'setting',
+      code: 'net_14_after_last_visit',
+    });
+    expect(convertedQuoteTermsSource({ termsCode: 'Net 9', dueDate: '' }, 'due_on_last_visit')).toEqual({
+      kind: 'setting',
+      code: 'due_on_last_visit',
+    });
   });
 });

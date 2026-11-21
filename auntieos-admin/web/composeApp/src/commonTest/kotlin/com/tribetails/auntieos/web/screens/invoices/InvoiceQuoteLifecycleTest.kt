@@ -112,4 +112,32 @@ class InvoiceQuoteLifecycleTest {
         assertFalse(restoreQuoteConfirmText(declined).contains("takes back the visits"))
         for (q in listOf(pending, unsent, declined)) assertFalse(archivedQuoteText(q).contains("still see it"))
     }
+    @Test
+    fun theTurnIntoInvoiceConfirmNamesThePaymentTermsTheInvoiceWillCarry() {
+        // #2258
+        assertEquals(
+            "It keeps the quote's payment terms: Due 30 days after the invoice date.",
+            convertQuoteTermsLine(inv("quote").copy(termsCode = "net_30", dueDate = "2026-07-10")),
+        )
+        assertEquals(
+            "It keeps the quote's payment terms: Due 7 days after the last visit.",
+            convertQuoteTermsLine(inv("draft", quoteDraft = true).copy(termsCode = " net_7_after_last_visit ")),
+        )
+        assertEquals(
+            "It keeps the due date picked on the quote.",
+            convertQuoteTermsLine(inv("quote").copy(termsCode = "custom", dueDate = "2026-07-04")),
+        )
+        assertEquals(
+            "It keeps the due date picked on the quote.",
+            convertQuoteTermsLine(inv("quote").copy(termsCode = "", dueDate = "2026-07-04")),
+        )
+        assertEquals(
+            "The quote has no payment terms, so it takes your Payment terms setting.",
+            convertQuoteTermsLine(inv("quote")),
+        )
+        assertEquals(
+            "The quote has no payment terms, so it takes your Payment terms setting.",
+            convertQuoteTermsLine(inv("quote").copy(termsCode = "Net 9")),
+        )
+    }
 }
