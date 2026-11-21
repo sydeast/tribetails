@@ -396,7 +396,7 @@ const galleryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'gallery',
   staticData: { title: navTitle('gallery') },
-  component: lazyRouteComponent(() => import('./screens/Gallery'), 'Gallery'),
+  component: lazyRouteComponent(() => import('./routes/GalleryView'), 'GalleryView'),
 });
 
 const templatesRoute = createRoute({

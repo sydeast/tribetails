@@ -118,7 +118,12 @@ import './Gallery.css';
  * SAME roster also backs the Upload dialog's household picker (`kinfolkOptions`
  * below): one stream, two consumers, no second fetch.
  */
-export function Gallery() {
+export function Gallery({ isAuntie = false }: { isAuntie?: boolean } = {}) {
+  // #2438: `isAuntie` is the access the admin layout resolved before the screen
+  // drew (`routes/GalleryView.tsx`). Deleting a file is the owner's:
+  // `deleteMediaFile` is not in `AUNTIE_ALLOWED_CALLABLES`, and the rules
+  // refuse every client delete. So her tiles carry no delete control and the
+  // confirm is never mounted. Upload, the viewer and Kin tags stay hers.
   const mediaState = useCollection<MediaFile>(GALLERY_QUERY);
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const kinState = useCollection<Kin>(KIN_QUERY);
@@ -273,7 +278,7 @@ export function Gallery() {
             kinfolkLabel={kinfolkLabel}
             kinById={kinById}
             onOpen={setViewerMedia}
-            onDelete={setPendingDelete}
+            onDelete={isAuntie ? null : setPendingDelete}
           />
         )}
       </AsyncRegion>
@@ -318,7 +323,7 @@ export function Gallery() {
         />
       )}
 
-      {pendingDelete && (
+      {pendingDelete && !isAuntie && (
         <Dialog
           // Copy below is the mock's, verbatim (auntieos-media-gallery-*.html:
           // "Delete Media" / "Are you sure you want to delete this {fileType
@@ -427,8 +432,8 @@ interface GalleryGridProps {
   /** Kin by id, for resolving a tile's `taggedKinIds` to names (#447). Empty until the roster stream resolves. */
   kinById: Map<string, Kin>;
   onOpen: (media: MediaFile) => void;
-  /** Asks for the confirm dialog (#692). No tile ever deletes anything itself. */
-  onDelete: (media: MediaFile) => void;
+  /** Asks for the confirm dialog (#692). No tile ever deletes anything itself. Null for an Auntie (#2438): no control is drawn. */
+  onDelete: ((media: MediaFile) => void) | null;
 }
 
 /**
@@ -648,8 +653,8 @@ interface GalleryTileProps {
   taggedNames: string[];
   /** Opens the fullscreen viewer for this tile's media (#388). */
   onOpen: (media: MediaFile) => void;
-  /** Asks for the delete confirm dialog (#692). The tile never deletes anything itself. */
-  onDelete: (media: MediaFile) => void;
+  /** Asks for the delete confirm dialog (#692). The tile never deletes anything itself. Null for an Auntie (#2438): no control is drawn. */
+  onDelete: ((media: MediaFile) => void) | null;
 }
 
 /**
@@ -820,15 +825,17 @@ function GalleryTile({ media, householdName, taggedNames, onOpen, onDelete }: Ga
           control the operator cannot reliably press. Always painted rather than
           hover-only: a touch device has no hover, and an action nobody can
           summon is the same as an action that is not there. */}
-      <div className="gallery__tile-actions">
-        <IconButton
-          icon={<CloseGlyph />}
-          label={`Delete ${accessibleLabel}`}
-          destructive
-          size={26}
-          onClick={() => onDelete(media)}
-        />
-      </div>
+      {onDelete !== null && (
+        <div className="gallery__tile-actions">
+          <IconButton
+            icon={<CloseGlyph />}
+            label={`Delete ${accessibleLabel}`}
+            destructive
+            size={26}
+            onClick={() => onDelete(media)}
+          />
+        </div>
+      )}
     </li>
   );
 }
