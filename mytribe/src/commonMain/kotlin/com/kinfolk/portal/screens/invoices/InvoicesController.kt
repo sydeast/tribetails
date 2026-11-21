@@ -125,8 +125,46 @@ class InvoicesController internal constructor(
 ) {
     var data by mutableStateOf<InvoicesResult?>(null)
         private set
+    /**
+     * The invoices could not be READ, and only that. The list draws "Couldn't
+     * load invoices" from it, and the invoice route reads it as "the read
+     * failed" (#2356).
+     *
+     * #2442: a refused or failed Pay and a failed PDF used to land here too,
+     * so one refusal replaced every open invoice on the list with "Couldn't
+     * load invoices". Those are [payErrorFor] and [pdfErrorFor] now, kept per
+     * invoice and drawn on that invoice.
+     */
     var error by mutableStateOf<String?>(null)
         private set
+    /**
+     * #2442: the sentence for the last Pay that was refused or failed, and the
+     * invoice it belongs to, so it is drawn on that invoice's row and screen
+     * and never on another. Cleared by the next Pay tap and by the next read
+     * of the list.
+     */
+    private var payError by mutableStateOf<String?>(null)
+    private var payErrorInvoiceId by mutableStateOf<String?>(null)
+    /** #2442: the same for the last PDF that could not be prepared. */
+    private var pdfError by mutableStateOf<String?>(null)
+    private var pdfErrorInvoiceId by mutableStateOf<String?>(null)
+    /** Why the last Pay on [invoiceId] did not open a checkout, or null. */
+    fun payErrorFor(invoiceId: String): String? = if (payErrorInvoiceId == invoiceId) payError else null
+    /** Why the last PDF for [invoiceId] did not open, or null. */
+    fun pdfErrorFor(invoiceId: String): String? = if (pdfErrorInvoiceId == invoiceId) pdfError else null
+    private fun failPay(invoiceId: String, sentence: String) {
+        payError = sentence
+        payErrorInvoiceId = invoiceId
+    }
+    private fun clearPayError() {
+        payError = null
+        payErrorInvoiceId = null
+    }
+    private fun clearActionErrors() {
+        clearPayError()
+        pdfError = null
+        pdfErrorInvoiceId = null
+    }
     var paying by mutableStateOf<String?>(null)
         private set
     var redeeming by mutableStateOf<String?>(null)
@@ -211,6 +249,9 @@ class InvoicesController internal constructor(
     // getAccountCreditHistory carry no minInstances, so a first open paid two
     // cold starts in a row.
     suspend fun reload() {
+        // #2442: a fresh read of the list is a fresh look at every bill, so a
+        // sentence about a tap made on the copy before it is dropped.
+        clearActionErrors()
         read(quietFailure = false)
     }
 
@@ -277,6 +318,8 @@ class InvoicesController internal constructor(
     fun startDownloadPdf(invoice: Invoice) {
         if (downloadingPdf != null) return
         downloadingPdf = invoice.id
+        pdfError = null
+        pdfErrorInvoiceId = null
         scope.launch {
             try {
                 val url = portalApi.getMyInvoicePdf(invoiceId = invoice.id, kinfolkId = kinfolkId)
@@ -284,7 +327,9 @@ class InvoicesController internal constructor(
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                error = t.message ?: "Could not open the invoice PDF"
+                // #2442: on this invoice, not over the whole list.
+                pdfError = t.message ?: "Could not open the invoice PDF"
+                pdfErrorInvoiceId = invoice.id
             } finally {
                 downloadingPdf = null
             }
@@ -338,13 +383,12 @@ class InvoicesController internal constructor(
 
     fun startPay(invoice: Invoice) {
         if (paying != null) return
+        clearPayError()
         // A PAID INVOICE TAKES NO PAYMENT (docket Q5). The screens already hide
         // the button; this is for a stale screen or a caller that skips them.
         // The server refuses too (`payInvoice`), with the same sentence.
         if (!offersPayment(invoice)) {
-            if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) error = PAID_INVOICE_REFUSAL
-            // #2410: the server's own sentence for a bill that cannot take a payment.
-            payBlockedReason(invoice)?.let { error = it }
+            refuseUnpayable(invoice)
             return
         }
         // #2366, #2402: Pay is held back while a payment just made is being
@@ -388,7 +432,9 @@ class InvoicesController internal constructor(
                 if (isPaymentBeingRecorded(t)) {
                     startPaymentCheck(invoice.id, byFocus = false, beingRecorded = true)
                 } else {
-                    error = t.message ?: "Could not start payment"
+                    // #2442: the sentence goes on this invoice, and the list
+                    // that loaded fine stays drawn.
+                    failPay(invoice.id, t.message ?: "Could not start payment")
                 }
             } finally {
                 paying = null
@@ -539,6 +585,15 @@ class InvoicesController internal constructor(
         }
     }
     /**
+     * Why a bill this screen should not have offered Pay on takes none. A paid
+     * bill says so (docket Q5); #2410: a bill the server says cannot take a
+     * payment says the server's own sentence. #2442: on that invoice.
+     */
+    private fun refuseUnpayable(invoice: Invoice) {
+        if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) failPay(invoice.id, PAID_INVOICE_REFUSAL)
+        payBlockedReason(invoice)?.let { failPay(invoice.id, it) }
+    }
+    /**
      * PR30: dispatches on [PayMethod.kind]. Checkout (Stripe, and the
      * Klarna/Affirm rails riding it) reuses [startPay] unchanged; Link
      * (Venmo/PayPal/Cash App) is a plain external navigation, same as
@@ -549,9 +604,8 @@ class InvoicesController internal constructor(
         // Same gate as [startPay], and it matters more here: a Link method is
         // a Venmo/PayPal/Cash App URL that never reaches the server.
         if (!offersPayment(invoice)) {
-            if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) error = PAID_INVOICE_REFUSAL
-            // #2410: the server's own sentence for a bill that cannot take a payment.
-            payBlockedReason(invoice)?.let { error = it }
+            clearPayError()
+            refuseUnpayable(invoice)
             return
         }
         when (method.kind) {

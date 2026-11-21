@@ -117,6 +117,7 @@ fun InvoicesScreen(
                     checkingId = controller.checkingPayment,
                     notCheckedId = controller.paymentNotChecked,
                     beingRecordedId = controller.paymentBeingRecorded,
+                    payErrorFor = controller::payErrorFor,
                     onPay = { controller.startPay(it) },
                     onCheckAgain = { controller.checkPaymentAgain(it.id) },
                     onOpenInvoice = onOpenInvoice,
@@ -218,6 +219,7 @@ private fun OpenInvoicesCard(
     checkingId: String?,
     notCheckedId: String?,
     beingRecordedId: String?,
+    payErrorFor: (String) -> String?,
     onPay: (Invoice) -> Unit,
     onCheckAgain: (Invoice) -> Unit,
     onOpenInvoice: (String) -> Unit,
@@ -227,7 +229,10 @@ private fun OpenInvoicesCard(
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             SectLabel("Open Invoices")
             when {
-                error != null -> CardEmpty(title = "Couldn't load invoices", message = error)
+                // #2442: only a list with nothing to show is a list that
+                // failed to load. A Pay that was refused prints its sentence
+                // on its own row below and never takes the list away.
+                data == null && error != null -> CardEmpty(title = "Couldn't load invoices", message = error)
                 data == null -> Box(
                     modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.m),
                     contentAlignment = Alignment.Center,
@@ -244,6 +249,7 @@ private fun OpenInvoicesCard(
                         checking = checkingId == inv.id,
                         notChecked = notCheckedId == inv.id,
                         beingRecorded = beingRecordedId == inv.id,
+                        payError = payErrorFor(inv.id),
                         onPay = { onPay(inv) },
                         onCheckAgain = { onCheckAgain(inv) },
                         onClick = { onOpenInvoice(inv.id) },
@@ -288,6 +294,7 @@ private fun OpenInvoiceRow(
     checking: Boolean,
     notChecked: Boolean,
     beingRecorded: Boolean,
+    payError: String?,
     onPay: () -> Unit,
     onCheckAgain: () -> Unit,
     onClick: () -> Unit,
@@ -350,6 +357,17 @@ private fun OpenInvoiceRow(
                 onClick = if (action.checksAgain) onCheckAgain else onPay,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = action.enabled,
+            )
+        }
+        // #2442: why this row's Pay did not open a checkout, in the server's
+        // words, under the row it was tapped on. Drawn whatever the row now
+        // offers: a refusal for a bill that turned out to be paid comes from
+        // a row that no longer has a Pay button.
+        if (payError != null) {
+            Text(
+                payError,
+                style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+                modifier = Modifier.fillMaxWidth().testTag("invoice-row-pay-error"),
             )
         }
     }
