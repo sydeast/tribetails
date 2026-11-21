@@ -22,6 +22,7 @@ import {
   offersPayment,
   partPaidSummary,
   paidDollarsOf,
+  payBlockedReason,
   NOTHING_TO_PAY,
   quoteActorLabel,
 } from '../lib/invoiceFormat';
@@ -364,6 +365,9 @@ export function InvoiceDetail() {
   // A PAID INVOICE TAKES NO PAYMENT (docket Q5): `offersPayment` also refuses
   // on `isPaid`, so the list and this screen share one rule.
   const payable = offersPayment(inv);
+  // #2410: an open bill the server says cannot take a payment. No pay option
+  // is drawn for it, and its sentence goes where they would be.
+  const payBlocked = payBlockedReason(inv);
   // A quote still waiting for an answer. `quoteDecision` is what separates it
   // from one already answered: a DECLINED quote keeps `status: 'quote'` on the
   // server (see functions/src/portal/quoteDecision.ts), and an ACCEPTED one is
@@ -593,6 +597,11 @@ export function InvoiceDetail() {
                       onCheckout={() => pay.mutate()}
                       checkoutPhase={pay.phase}
                     />
+                  )}
+                  {payBlocked && (
+                    <p className="pay-blocked" data-testid="pay-blocked">
+                      {payBlocked}
+                    </p>
                   )}
                   <button className="btn ghost" onClick={() => downloadPdf.mutate()} disabled={downloadPdf.isPending}>
                     {'⬇'}{' '}

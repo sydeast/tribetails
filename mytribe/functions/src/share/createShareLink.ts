@@ -10,6 +10,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { SHARE_DEFAULT_TTL_DAYS } from '../lib/schema';
+import { taleShowsMedia } from '../lib/kinTaleThumbs';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
 
@@ -54,6 +55,9 @@ export async function createShareLinkHandler(req: CallableRequest<unknown>): Pro
       const m = await db().doc(`media_files/${id}`).get();
       if (!m.exists) continue;
       const md = m.data() as { storageUrl?: string };
+      // A share link carries the tale's own photos and no other kind of file
+      // (lib/kinTaleThumbs.ts).
+      if (!taleShowsMedia(md as Record<string, unknown>)) continue;
       if (md.storageUrl) photos.push(md.storageUrl);
     }
   }

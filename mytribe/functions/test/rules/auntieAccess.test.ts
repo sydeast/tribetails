@@ -907,14 +907,60 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
     await assertFails(col.where('communicationType', '==', 'visit_report').get());
     await assertFails(col.where('status', '==', 'generated').get());
   });
-  // ── What an Auntie edits ──────────────────────────────────────────────────
-  it('an Auntie edits the words and the title of a KinTale draft', async () => {
+  // ── An Auntie writes no draft here; her edits travel with the send ────────
+  /** The words and the title of a draft, in both spellings. */
+  const WORD_FIELDS = ['generatedCopy', 'generated_copy', 'generatedTitle', 'generated_title', 'subject'] as const;
+  const SENT = 'generated_drafts/sent-1';
+  const sent = { ...tale, status: 'published', publishedReportId: 'r1', publishedAt: '2026-11-04T00:00:00.000Z' };
+  it('an Auntie is refused changing the words or the title of a KinTale draft, one field at a time', async () => {
+    const env = await getEnv();
+    await seed(TALE, { ...tale, generated_title: 'A visit', subject: 'A visit' });
+    await seed('generated_drafts/tale-2', { ...tale, communicationType: 'visit_report', generatedCopy: 'Words', generatedTitle: 'A visit' });
+    const db = asAuntie(env).firestore();
+    for (const path of [TALE, 'generated_drafts/tale-2']) {
+      for (const field of WORD_FIELDS) {
+        await assertFails(db.doc(path).update({ [field]: 'Her words' }));
+      }
+    }
+  });
+  it('an Auntie is refused changing the words and the title of a KinTale draft together', async () => {
     const env = await getEnv();
     await seed(TALE, { ...tale, generated_title: 'A visit' });
     const db = asAuntie(env).firestore();
-    await assertSucceeds(db.doc(TALE).update({ generatedCopy: 'Her words' }));
-    await assertSucceeds(db.doc(TALE).update({ generated_copy: 'Her words', generated_title: 'Her title' }));
-    await assertSucceeds(db.doc(TALE).update({ generatedTitle: 'Her title', subject: 'Her title' }));
+    await assertFails(db.doc(TALE).update({ generated_copy: 'Her words', generated_title: 'Her title' }));
+    await assertFails(db.doc(TALE).update({ generatedTitle: 'Her title', subject: 'Her title' }));
+    await assertFails(db.doc(TALE).update(Object.fromEntries(WORD_FIELDS.map((f) => [f, 'Her words']))));
+    await assertFails(db.doc(TALE).set({ generated_copy: 'Her words' }, { merge: true }));
+  });
+  it('an Auntie is refused changing the words or the title of a draft already sent', async () => {
+    const env = await getEnv();
+    await seed(SENT, sent);
+    const db = asAuntie(env).firestore();
+    for (const field of WORD_FIELDS) {
+      await assertFails(db.doc(SENT).update({ [field]: 'Her words' }));
+    }
+  });
+  it('an account carrying both roles is refused changing the words or the title of a KinTale draft', async () => {
+    const env = await getEnv();
+    await seed(TALE, tale);
+    await seed(SENT, sent);
+    const db = asDoubleClaimed(env).firestore();
+    for (const path of [TALE, SENT]) {
+      for (const field of WORD_FIELDS) {
+        await assertFails(db.doc(path).update({ [field]: 'Her words' }));
+      }
+    }
+  });
+  it('the owner changes the words and the title of a draft, unsent or sent, one field at a time', async () => {
+    const env = await getEnv();
+    await seedAll();
+    await seed(SENT, sent);
+    const db = asOwner(env).firestore();
+    for (const path of [TALE, PUSH, EMAIL, OLDER, SENT]) {
+      for (const field of WORD_FIELDS) {
+        await assertSucceeds(db.doc(path).update({ [field]: 'Final words' }));
+      }
+    }
   });
   it('an Auntie is refused approving a KinTale draft or changing its status at all', async () => {
     const env = await getEnv();

@@ -123,6 +123,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditTarget: null,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  // #2410: null on an invoice that can be paid.
+  payBlockedReason: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -683,6 +685,8 @@ describe('InvoiceDetail payment option sources (issue #409)', () => {
     creditTarget: null,
     creditRedeemedAtMs: null,
     writtenOffCents: null,
+    // #2410: null on an invoice that can be paid.
+    payBlockedReason: null,
     payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
   };
 

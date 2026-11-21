@@ -242,3 +242,77 @@ describe('saveMediaTags effects', () => {
     );
   });
 });
+/**
+ * An Auntie tags the photos she works with: a visit's, a Kin's and a
+ * household's. Any other file is the owner's, and this callable answers her as
+ * it would for an id with no file behind it.
+ */
+describe('saveMediaTags: an Auntie tags only the files she works with', () => {
+  function staffReq(data: unknown, auth: { uid: string; token: Record<string, unknown> }) {
+    return { data, auth, rawRequest: {}, acceptsStreaming: false } as unknown as CallableRequest<unknown>;
+  }
+  const auntie = { uid: 'auntie-1', token: { staffRole: 'auntie' } };
+  const GONE = "Media file 'm1' no longer exists. Refresh the gallery and try again.";
+  it('HAPPY: she tags a visit, a Kin and a household photo, in the stored spellings she reads', async () => {
+    for (const entityType of ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk']) {
+      const ctx = ctxFor({ media: { kinfolkId: 'fam1', entityType, entityId: 'e1', taggedKinIds: [] } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await saveMediaTagsHandler(staffReq({ mediaFileId: 'm1', taggedKinIds: ['k1', 'k2'] }, auntie));
+      expect(res.taggedKinIds).toEqual(['k1', 'k2']);
+      expect(tagWrite(ctx)!.data.taggedKinIds).toEqual(['k1', 'k2']);
+    }
+  });
+  it('HAPPY: she reaches it through the gate every admin client calls', async () => {
+    const ctx = ctxFor({ media: { kinfolkId: 'fam1', entityType: 'VISIT_LOG', entityId: 's1' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const guarded = wrapAdminCallable('saveMediaTags', saveMediaTagsHandler);
+    const res = await guarded(staffReq({ mediaFileId: 'm1', taggedKinIds: ['k1'] }, auntie));
+    expect(res).toMatchObject({ ok: true, taggedKinIds: ['k1'] });
+  });
+  it('NEGATIVE: a file that is the owner\'s is not found, and nothing is written', async () => {
+    const ownerFiles: Record<string, unknown>[] = [
+      { entityType: 'TRIBAL_INTEL', entityId: 'pending' },
+      { entityType: 'BUSINESS', entityId: 'business_settings' },
+      { entityType: 'USER', entityId: 'owner-1' },
+      { entityType: 'INVOICE', entityId: 'inv-1' },
+      { entityType: 'Kinfolk', entityId: 'fam1', kinfolkId: 'fam1' },
+      { entityType: 7, entityId: 'fam1' },
+      { kinfolkId: 'fam1' },
+    ];
+    for (const media of ownerFiles) {
+      const ctx = ctxFor({ media });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      for (const taggedKinIds of [['k1'], []]) {
+        await expect(
+          saveMediaTagsHandler(staffReq({ mediaFileId: 'm1', taggedKinIds }, auntie)),
+        ).rejects.toMatchObject({ code: 'not-found', message: GONE });
+      }
+      expect(ctx.writes).toHaveLength(0);
+    }
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+  });
+  it('NEGATIVE: an account carrying both claims is held to the same files', async () => {
+    const ctx = ctxFor({ media: { entityType: 'TRIBAL_INTEL', entityId: 'pending' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const both = { uid: 'confused-1', token: { admin: true, staffRole: 'auntie' } };
+    await expect(
+      saveMediaTagsHandler(staffReq({ mediaFileId: 'm1', taggedKinIds: ['k1'] }, both)),
+    ).rejects.toMatchObject({ code: 'not-found' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('SAD: a missing file reads the same to her as one that is not hers', async () => {
+    const ctx = ctxFor({ media: null });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      saveMediaTagsHandler(staffReq({ mediaFileId: 'm1', taggedKinIds: ['k1'] }, auntie)),
+    ).rejects.toMatchObject({ code: 'not-found', message: GONE });
+  });
+  it('HAPPY: the owner tags any file, a file with no type included, as before', async () => {
+    for (const media of [{ entityType: 'TRIBAL_INTEL', entityId: 'pending' }, { entityType: 'BUSINESS' }, { kinfolkId: 'fam1' }]) {
+      const ctx = ctxFor({ media });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await saveMediaTagsHandler(req({ mediaFileId: 'm1', taggedKinIds: ['k1'] }));
+      expect(res.taggedKinIds).toEqual(['k1']);
+    }
+  });
+});

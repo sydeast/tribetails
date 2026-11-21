@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { householdStaffFlag } from '../lib/staffGate';
+import { taleShowsMedia } from '../lib/kinTaleThumbs';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 const Args = z.object({
@@ -18,7 +19,8 @@ interface GetMediaResult { taleId: string; media: MediaItem[]; }
 
 /**
  * Returns Cloudinary CDN URLs for a KinTale's mediaFileIds.
- * Source: kin_care_reports/{taleId}.mediaFileIds → media_files/{id}.storageUrl
+ * Source: kin_care_reports/{taleId}.mediaFileIds → media_files/{id}.storageUrl,
+ * for the files a tale shows (`taleShowsMedia`, lib/kinTaleThumbs.ts).
  * Cloudinary CDN, no signing required.
  */
 export async function getMyKinTaleMediaHandler(
@@ -46,6 +48,8 @@ export async function getMyKinTaleMediaHandler(
       const snap = await db().doc(`media_files/${id}`).get();
       if (!snap.exists) return null;
       const d = snap.data() as Record<string, unknown>;
+      // A file stored as another kind is not a tale's photo (lib/kinTaleThumbs.ts).
+      if (!taleShowsMedia(d)) return null;
       const url = typeof d['storageUrl'] === 'string' ? (d['storageUrl'] as string) : '';
       if (!url) return null;
       return {

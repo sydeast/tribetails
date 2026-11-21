@@ -133,6 +133,13 @@ export interface MediaFile {
  * the wasm's own client-side `GalleryFilter`), so this query needs NO composite
  * Firestore index (single-field orderBy is always covered by the automatic
  * single-field index).
+ *
+ * That is the owner's query. An Auntie reads the files of her own work, not
+ * every file, and rules refuse her a list that does not name those types, so
+ * `useCollection` adds `entityType in [...]` for her session
+ * (`lib/caretakerScope.ts`). Do not add it here: the owner's Gallery lists
+ * every type, files with no `entityType` included. Her shape is served by the
+ * composite index `media_files (entityType ASC, uploadedAt DESC)`.
  */
 export const GALLERY_QUERY: CollectionSpec = {
   path: 'media_files',
@@ -164,16 +171,30 @@ export const GALLERY_QUERY: CollectionSpec = {
  * the file behind it can legitimately have been deleted from the gallery since.
  * Losing one thumbnail must not blank the composer.
  *
- * A rejected READ still propagates: that is a permissions or connectivity fact
- * the screen has to surface, not a missing row.
+ * A file THIS ACCOUNT MAY NOT READ is skipped the same way. An Auntie reads the
+ * files of her own work and no others (`lib/caretakerScope.ts`), and rules
+ * answer `permission-denied` for an id outside them, an id with no file behind
+ * it included. To her those are the same fact as a deleted file, and one of
+ * them must not take the other thumbnails down with it (`lib/firestore.ts`'s
+ * `useDocById` reads a refusal the same way).
+ *
+ * Any other rejected READ still propagates: that is a connectivity fact the
+ * screen has to surface, not a missing row.
  */
 export async function getMediaFilesByIds(ids: readonly string[]): Promise<MediaFile[]> {
   const wanted = ids.filter((id) => id.trim() !== '');
   if (wanted.length === 0) return [];
-  const snaps = await Promise.all(wanted.map((id) => getDoc(doc(db, 'media_files', id))));
+  const snaps = await Promise.all(
+    wanted.map((id) =>
+      getDoc(doc(db, 'media_files', id)).catch((err: unknown) => {
+        if ((err as { code?: unknown } | null)?.code === 'permission-denied') return null;
+        throw err;
+      }),
+    ),
+  );
   const out: MediaFile[] = [];
   snaps.forEach((snap) => {
-    if (!snap.exists()) return;
+    if (snap === null || !snap.exists()) return;
     const raw = snap.data() as Record<string, unknown>;
     out.push({
       ...(raw as Omit<MediaFile, '_id' | 'isProfilePhoto' | 'durationSeconds'>),

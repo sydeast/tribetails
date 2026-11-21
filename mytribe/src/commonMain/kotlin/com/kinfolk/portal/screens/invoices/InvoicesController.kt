@@ -333,6 +333,8 @@ class InvoicesController internal constructor(
         // The server refuses too (`payInvoice`), with the same sentence.
         if (!offersPayment(invoice)) {
             if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) error = PAID_INVOICE_REFUSAL
+            // #2410: the server's own sentence for a bill that cannot take a payment.
+            payBlockedReason(invoice)?.let { error = it }
             return
         }
         // #2366, #2402: Pay is held back while a payment just made is being
@@ -523,6 +525,8 @@ class InvoicesController internal constructor(
         // a Venmo/PayPal/Cash App URL that never reaches the server.
         if (!offersPayment(invoice)) {
             if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) error = PAID_INVOICE_REFUSAL
+            // #2410: the server's own sentence for a bill that cannot take a payment.
+            payBlockedReason(invoice)?.let { error = it }
             return
         }
         when (method.kind) {

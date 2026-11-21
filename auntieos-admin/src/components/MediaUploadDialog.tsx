@@ -1,5 +1,6 @@
 import { useCallback, useId, useMemo, useState } from 'react';
 import { uploadMediaFile, BUSINESS_ENTITY_ID, type UploadEntityType, type UploadStage } from '../api/mediaUpload';
+import { isCaretakerScope } from '../lib/caretakerScope';
 import { uploadFileError, MAX_UPLOAD_BYTES, formatMegabytes } from '../lib/mediaUploadLimits';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -109,7 +110,8 @@ function stageLabel(stage: UploadStage): string {
  *             is the operator's way to upload media that isn't about any one
  *             household (operator ruling 2026-07-31: Kinfolk do not "own"
  *             media). `writeMediaFileDoc` omits `kinfolkId` entirely for this
- *             target, never stamps it blank.
+ *             target, never stamps it blank. Not offered to an Auntie:
+ *             company media is the owner's.
  *
  * With a `fixedTarget` (#397 S1, `screens/Media.tsx`) none of those three
  * choices is offered: the entity comes from the route and the dialog states it
@@ -158,6 +160,14 @@ export function MediaUploadDialog({
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const busy = stage !== null;
+
+  /**
+   * Company media is the owner's: an Auntie uploads to a household or a Kin,
+   * the files she can see in the Gallery afterwards, and rules refuse her a
+   * company file. So the third target is not offered to her. Read once, from
+   * the session the layout guard settled before any screen drew.
+   */
+  const [companyOffered] = useState(() => !isCaretakerScope());
 
   const entityType = fixedTarget?.entityType ?? pickedType;
   const entityId = fixedTarget
@@ -291,7 +301,7 @@ export function MediaUploadDialog({
             >
               <option value="KINFOLK">Household (Kinfolk)</option>
               <option value="KIN">Kin (pet)</option>
-              <option value="BUSINESS">Company (no household)</option>
+              {companyOffered && <option value="BUSINESS">Company (no household)</option>}
             </select>
           </div>
         )}

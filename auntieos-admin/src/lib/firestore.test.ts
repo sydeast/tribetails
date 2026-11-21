@@ -20,6 +20,8 @@ import { useCollection, useDocById, type CollectionSpec } from './firestore';
 import { setTestScope } from './testScope';
 import { setCaretakerScope } from './caretakerScope';
 import { GENERATED_DRAFTS_QUERY } from '../api/drafts';
+import { GALLERY_QUERY } from '../api/gallery';
+import { mediaTargetQuery } from '../api/media';
 
 type NextFn = (snap: { docs: { id: string; data: () => unknown }[] }) => void;
 type ErrFn = (e: Error) => void;
@@ -206,6 +208,82 @@ describe('useCollection: the drafts list', () => {
  * different questions. Resolving the second with the first is what put the
  * operator on the Invoices LIST for a 46-day-old invoice.
  */
+/**
+ * The Gallery and the Media screen. An Auntie reads the files of her own work,
+ * and rules refuse a media list that does not name those types, so her
+ * listener has to carry them; the owner's reads every file and carries nothing.
+ */
+describe('useCollection: the media lists', () => {
+  const HER_TYPES = ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk'];
+  it('HAPPY: an Auntie\'s Gallery listener names her types, still sorted and capped', () => {
+    captureCallbacks();
+    setCaretakerScope(true);
+    renderHook(() => useCollection(GALLERY_QUERY));
+    expect(where).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledWith('entityType', 'in', HER_TYPES);
+    expect(orderBy).toHaveBeenCalledWith('uploadedAt', 'desc');
+    expect(limit).toHaveBeenCalledWith(500);
+    expect(onSnapshot).toHaveBeenCalledOnce();
+  });
+  it('HAPPY: her Media listener names the household or Kin and her types', () => {
+    captureCallbacks();
+    setCaretakerScope(true);
+    renderHook(() => useCollection(mediaTargetQuery('kin_7')));
+    expect(where).toHaveBeenCalledTimes(2);
+    expect(where).toHaveBeenNthCalledWith(1, 'entityId', '==', 'kin_7');
+    expect(where).toHaveBeenNthCalledWith(2, 'entityType', 'in', HER_TYPES);
+    expect(orderBy).toHaveBeenCalledWith('uploadedAt', 'desc');
+  });
+  it('HAPPY: the owner\'s Gallery listener names no type, and the Media one only its household or Kin', () => {
+    captureCallbacks();
+    renderHook(() => useCollection(GALLERY_QUERY));
+    expect(where).not.toHaveBeenCalled();
+    renderHook(() => useCollection(mediaTargetQuery('kin_7')));
+    expect(where).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledWith('entityId', '==', 'kin_7');
+  });
+  it('a re-render does not open a second listener or stack the types', () => {
+    captureCallbacks();
+    setCaretakerScope(true);
+    const { rerender } = renderHook(() => useCollection(GALLERY_QUERY));
+    rerender();
+    rerender();
+    expect(onSnapshot).toHaveBeenCalledOnce();
+    expect(where).toHaveBeenCalledTimes(1);
+  });
+  it('SAD: her rows come back as the ready list, an empty one included', () => {
+    const cb = captureCallbacks();
+    setCaretakerScope(true);
+    const { result } = renderHook(() => useCollection<{ _id: string }>(GALLERY_QUERY));
+    expect(result.current.status).toBe('loading');
+    act(() => cb.next!({ docs: [] }));
+    expect(result.current).toEqual({ status: 'ready', data: [] });
+    act(() => cb.next!({ docs: [{ id: 'm1', data: () => ({ entityType: 'VISIT_LOG' }) }] }));
+    expect(result.current).toEqual({ status: 'ready', data: [{ _id: 'm1', entityType: 'VISIT_LOG' }] });
+  });
+  it('ERROR: a refused or failed media read is an error with a retry, never an empty Gallery', () => {
+    const cb = captureCallbacks();
+    setCaretakerScope(true);
+    const { result } = renderHook(() => useCollection(GALLERY_QUERY));
+    act(() => cb.err!(new Error('The query requires an index.')));
+    expect(result.current.status).toBe('error');
+    if (result.current.status === 'error') {
+      expect(result.current.message).toBe('The query requires an index.');
+      expect(typeof result.current.retry).toBe('function');
+    }
+  });
+  it('a session that changes from Auntie to owner re-subscribes without the types', () => {
+    const cb = captureCallbacks();
+    setCaretakerScope(true);
+    const { rerender } = renderHook(() => useCollection(GALLERY_QUERY));
+    expect(where).toHaveBeenCalledTimes(1);
+    setCaretakerScope(false);
+    rerender();
+    expect(cb.unsub).toHaveBeenCalledOnce();
+    expect(where).toHaveBeenCalledTimes(1);
+    expect(onSnapshot).toHaveBeenCalledTimes(2);
+  });
+});
 describe('useDocById', () => {
   type DocSnap = { exists: () => boolean; id: string; data: () => Record<string, unknown> };
 
