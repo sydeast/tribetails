@@ -483,6 +483,9 @@ describe('ScheduleWeekGrid: visits that start minutes apart (#1861)', () => {
     // The second lane starts half way across the column (jsdom normalises the calc).
     expect(blockOf('Household Two').style.left).toContain('0.5');
     expect(blockOf('Household One').style.width).not.toBe('');
+    // A narrow lane cuts the name, so hovering reads all of it. A full-width block needs no tip.
+    expect(blockOf('Household Three').title).toBe('23:30 Household Three');
+    expect(blockOf('Household Early').title).toBe('');
   });
 
   it('draws the last block of the day tall enough to read, ending on the bottom edge', () => {

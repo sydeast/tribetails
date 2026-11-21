@@ -316,6 +316,20 @@ describe('gridLanes (#1861)', () => {
     expect(lanes.get('d')).toEqual({ lane: 1, lanes: 2 });
   });
 
+  it('keeps touching visits in one lane at every minute, whatever the pixel rounding', () => {
+    // 00:01 for 73 minutes: 0.9 + 65.7 is 66.60000000000001, past the next top of 66.6.
+    const rounded = gridLanes([drawn('a', 1, 73), drawn('b', 74, 30)]);
+    expect(rounded.get('a')).toEqual({ lane: 0, lanes: 1 });
+    expect(rounded.get('b')).toEqual({ lane: 0, lanes: 1 });
+    for (let start = 0; start < 300; start += 1) {
+      for (let length = MIN_BLOCK_MINUTES; length <= 240; length += 1) {
+        const lanes = gridLanes([drawn('a', start, length), drawn('b', start + length, MIN_BLOCK_MINUTES)]);
+        expect(lanes.get('a')?.lanes).toBe(1);
+        expect(lanes.get('b')?.lanes).toBe(1);
+      }
+    }
+  });
+
   it('orders blocks that start together by id, the same on every render', () => {
     const one = gridLanes([drawn('y', 0), drawn('x', 0)]);
     const two = gridLanes([drawn('x', 0), drawn('y', 0)]);

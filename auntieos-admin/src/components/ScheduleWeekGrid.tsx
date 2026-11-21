@@ -413,6 +413,8 @@ export function ScheduleWeekGrid({
                     ...(dragging && drag.dxPx !== 0 && { transform: `translateX(${drag.dxPx}px)` }),
                   }}
                   data-lane={lane.lanes > 1 ? `${String(lane.lane + 1)}/${String(lane.lanes)}` : undefined}
+                  // A narrow lane cuts the household's name; the pointer still reads all of it.
+                  title={lane.lanes > 1 ? `${hhmmFromMinutes(startMinute)} ${sessionHousehold(str(entry.kinfolkName))}` : undefined}
                   data-session-id={entry._id}
                   data-start-minute={startMinute}
                   // The mock tints every block by its service type. It is the

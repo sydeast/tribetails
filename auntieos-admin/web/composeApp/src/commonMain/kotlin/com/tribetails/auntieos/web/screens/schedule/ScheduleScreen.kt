@@ -1001,7 +1001,7 @@ private fun eventSpan(session: KinCareSession, localZone: TimeZone, window: Week
  * #1861: draws the block in its lane, one [GridLane.lanes]th of the column. A
  * lone block keeps the whole width.
  */
-private fun Modifier.laneSlot(lane: GridLane): Modifier =
+internal fun Modifier.laneSlot(lane: GridLane): Modifier =
     if (lane.lanes <= 1) {
         this
     } else {

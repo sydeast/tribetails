@@ -248,7 +248,11 @@ export interface GridLane {
 export function gridLanes(
   blocks: readonly { id: string; topPx: number; heightPx: number }[],
 ): Map<string, GridLane> {
-  const sorted = [...blocks].sort((a, b) => a.topPx - b.topPx || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // Whole thousandths of a pixel: a minute is 0.9px, so a visit's top plus its
+  // height can land a rounding error past the top of the visit that starts as
+  // it ends, and two blocks that only touch would read as overlapping.
+  const edge = (px: number) => Math.round(px * 1000);
+  const sorted = [...blocks].sort((a, b) => edge(a.topPx) - edge(b.topPx) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const out = new Map<string, GridLane>();
   let group: { id: string; lane: number }[] = [];
   let laneEnds: number[] = [];
@@ -259,9 +263,10 @@ export function gridLanes(
     laneEnds = [];
   };
   for (const b of sorted) {
-    const bottom = b.topPx + b.heightPx;
-    if (b.topPx >= groupBottom) closeGroup();
-    let lane = laneEnds.findIndex((end) => end <= b.topPx);
+    const top = edge(b.topPx);
+    const bottom = edge(b.topPx + b.heightPx);
+    if (top >= groupBottom) closeGroup();
+    let lane = laneEnds.findIndex((end) => end <= top);
     if (lane === -1) {
       lane = laneEnds.length;
       laneEnds.push(bottom);
