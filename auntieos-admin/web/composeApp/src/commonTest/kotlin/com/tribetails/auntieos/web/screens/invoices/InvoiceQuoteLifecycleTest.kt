@@ -22,7 +22,15 @@ class InvoiceQuoteLifecycleTest {
         assertEquals("Quote #1026", invoiceDocTitle(inv("quote").copy(invoiceNumber = "1026")))
         assertEquals("Quote #1026", invoiceDocTitle(inv("draft", quoteDraft = true).copy(invoiceNumber = "1026")))
         assertEquals("Invoice #1026", invoiceDocTitle(inv("open").copy(invoiceNumber = "1026")))
-        assertEquals("Invoice #-", invoiceDocTitle(inv("draft")))
+        // #2417: no number reads as words, the heading admin web shows.
+        assertEquals("Invoice with no number", invoiceDocTitle(inv("draft")))
+        assertEquals("Quote with no number", invoiceDocTitle(inv("quote")))
+    }
+
+    @Test
+    fun theRecordPaymentLineNamesTheInvoiceOrSaysItHasNoNumber() {
+        assertEquals("Applies a payment to invoice #1026.", recordPaymentHint(inv("open").copy(invoiceNumber = "1026")))
+        assertEquals("Applies a payment to an invoice with no number.", recordPaymentHint(inv("open")))
     }
 
     @Test

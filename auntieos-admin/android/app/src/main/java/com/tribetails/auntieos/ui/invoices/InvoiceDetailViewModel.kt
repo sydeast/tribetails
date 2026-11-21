@@ -18,6 +18,7 @@ import com.tribetails.auntieos.data.repository.refusalAmountDueCents
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.dollarsToCents
+import com.tribetails.auntieos.domain.invoiceNumberOrNoNumber
 import com.tribetails.auntieos.domain.invoicePartPaid
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.util.AuntieLog
@@ -644,7 +645,7 @@ class InvoiceDetailViewModel(
                         scope            = viewModelScope,
                         repository       = repository,
                         actionType       = "GENERATE_RECEIPT",
-                        description      = "Generated receipt for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { "with no number" } ?: invoiceId}",
+                        description      = "Generated receipt for invoice ${invoiceNumberOrNoNumber(_uiState.value.invoice?.invoiceNumber)}",
                         targetId         = invoiceId,
                         targetCollection = "invoices",
                     )
@@ -693,7 +694,7 @@ class InvoiceDetailViewModel(
                         scope            = viewModelScope,
                         repository       = repository,
                         actionType       = "DOWNLOAD_INVOICE_PDF",
-                        description      = "Downloaded PDF for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { "with no number" } ?: invoiceId}",
+                        description      = "Downloaded PDF for invoice ${invoiceNumberOrNoNumber(_uiState.value.invoice?.invoiceNumber)}",
                         targetId         = invoiceId,
                         targetCollection = "invoices",
                     )
@@ -780,7 +781,7 @@ class InvoiceDetailViewModel(
                             scope            = viewModelScope,
                             repository       = repository,
                             actionType       = "SEND_INVOICE_REMINDER",
-                            description      = "Sent payment reminder for invoice ${_uiState.value.invoice?.invoiceNumber?.ifBlank { "with no number" } ?: invoiceId}",
+                            description      = "Sent payment reminder for invoice ${invoiceNumberOrNoNumber(_uiState.value.invoice?.invoiceNumber)}",
                             targetId         = invoiceId,
                             targetCollection = "invoices",
                         )

@@ -35,8 +35,24 @@ import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPaymen
 fun ledgerRowBalanceCents(row: GetInvoiceLedgerResultLedgerPayment): Long = row.unappliedCents
 
 /**
- * The "Applied to #n" cell: the invoice number, the id behind it, or the honest
- * absence.
+ * #2417, #2420: how an invoice that has no number is named wherever its number
+ * would stand. Never its stored id. The same words ship on admin web and the
+ * desktop console.
+ */
+const val INVOICE_WITH_NO_NUMBER = "an invoice with no number"
+
+/** The same, where it opens a line. */
+const val INVOICE_WITH_NO_NUMBER_LEAD = "Invoice with no number"
+
+/**
+ * What follows "invoice " in an activity line: the number, or "with no number".
+ * An invoice that has not loaded reads the same way, never as its stored id.
+ */
+fun invoiceNumberOrNoNumber(number: String?): String = number.orEmpty().trim().ifEmpty { "with no number" }
+
+/**
+ * The "Applied to #n" cell: the invoice number, the words for an invoice that
+ * has none, or the honest absence.
  *
  * `""` means the payment touched no balance at all, which is a DIFFERENT FACT
  * from applying nothing to one, hence a caller that says "not applied" rather
@@ -45,8 +61,7 @@ fun ledgerRowBalanceCents(row: GetInvoiceLedgerResultLedgerPayment): Long = row.
 fun ledgerRowAppliedLabel(row: GetInvoiceLedgerResultLedgerPayment): String {
     val number = row.appliedInvoiceNumber.trim()
     if (number.isNotEmpty()) return "#$number"
-    val id = row.appliedInvoiceId.trim()
-    if (id.isNotEmpty()) return id
+    if (row.appliedInvoiceId.trim().isNotEmpty()) return INVOICE_WITH_NO_NUMBER
     return ""
 }
 

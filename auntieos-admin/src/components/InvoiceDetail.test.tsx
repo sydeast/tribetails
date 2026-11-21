@@ -3684,6 +3684,17 @@ describe('InvoiceDetail Download PDF', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(link).toHaveAttribute('download', `invoice-${inv.invoiceNumber}.pdf`);
   });
+  it('#2417: the PDF link of an invoice with no number never carries the stored id in its file name', async () => {
+    const user = userEvent.setup();
+    generateInvoicePdf.mockResolvedValue(PDF_URL);
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const inv = entry({ status: 'open', invoiceNumber: '' });
+    render(<InvoiceDetail invoice={inv} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Download PDF' }));
+    const link = await screen.findByRole('link', { name: 'Open PDF' });
+    expect(link).toHaveAttribute('download', 'invoice.pdf');
+    expect(link.getAttribute('download')).not.toContain(inv._id);
+  });
 });
 describe('Link visits (#1245)', () => {
   const visits = [

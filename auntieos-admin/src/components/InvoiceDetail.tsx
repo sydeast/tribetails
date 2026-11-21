@@ -1996,7 +1996,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   href={pdfLink}
                   target="_blank"
                   rel="noopener noreferrer"
-                  download={`invoice-${invoice.invoiceNumber || invoice._id}.pdf`}
+                  download={invoice.invoiceNumber.trim() === '' ? 'invoice.pdf' : `invoice-${invoice.invoiceNumber.trim()}.pdf`}
                 >
                   Open PDF
                 </a>

@@ -77,6 +77,19 @@ describe('unappliedPaymentFormat: the lines (#1003)', () => {
       'Card payment of $40.00 on invoice 1029. There are no refunds. Anything you do not credit or apply stays recorded on the payment.',
     );
   });
+  it('#2417: a payment whose invoice has no number leaves the invoice out, and never shows its id', () => {
+    const held = { ...payment, invoiceId: 'k3Jx9QpLm2', invoiceNumber: ' ', amountCents: 4000, reason: 'the invoice could not be found' };
+    expect(unappliedPaymentTitle(held)).toBe('$40.00 card payment');
+    expect(unappliedPaymentDetail(held)).toBe('Sep 27, 2026. Not applied because the invoice could not be found.');
+    expect(decideLeadLine(held)).toBe(
+      'Card payment of $40.00. There are no refunds. Anything you do not credit or apply stays recorded on the payment.',
+    );
+  });
+  it('#2417: an open invoice with no number is named in words in the picker, never by its id', () => {
+    const unnumbered = { invoiceId: 'k3Jx9QpLm2', invoiceNumber: '', amountDueCents: 4000 };
+    expect(openInvoiceOptionLabel(unnumbered)).toBe('Invoice with no number, $40.00 due');
+    expect(openInvoiceOptionLabel({ ...unnumbered, invoiceNumber: '  ' })).toBe('Invoice with no number, $40.00 due');
+  });
   it('#2363: a card payment held because its invoice was written off says written off', () => {
     const held = { ...payment, invoiceNumber: '1029', amountCents: 4000, reason: 'the invoice was written off' };
     expect(unappliedPaymentDetail(held)).toBe('Sep 27, 2026. Not applied because the invoice was written off.');
@@ -169,6 +182,14 @@ describe('unappliedPaymentFormat: decisionSavedNote (#1003)', () => {
         result({ creditedCents: 0, appliedCents: 1500, appliedInvoiceState: 'partial', appliedInvoiceAmountDueCents: 1200, keptCents: 1000 }),
       ),
     ).toBe('Decision saved. $15.00 on invoice INV-1050 ($12.00 still due). $10.00 kept on the payment.');
+  });
+
+  it('#2417: money applied to an invoice with no number says so, never its id', () => {
+    const note = decisionSavedNote(
+      result({ creditedCents: 0, appliedInvoiceId: 'k3Jx9QpLm2', appliedInvoiceNumber: '' }),
+    );
+    expect(note).toBe('Decision saved. $15.00 on an invoice with no number (paid in full). $0.00 kept on the payment.');
+    expect(note).not.toContain('k3Jx9QpLm2');
   });
 
   it('keeps only the kept sentence for the all-zero decision', () => {

@@ -84,8 +84,21 @@ class InvoiceLedgerRowTest {
     }
 
     @Test
-    fun `it falls back to the id, because an unnumbered invoice is still an invoice`() {
-        assertEquals("inv_7", ledgerRowAppliedLabel(row(appliedInvoiceId = "inv_7")))
+    fun `2420 an invoice with no number is named in plain words, never by its stored id`() {
+        assertEquals("an invoice with no number", ledgerRowAppliedLabel(row(appliedInvoiceId = "inv_7")))
+        assertEquals(
+            "an invoice with no number",
+            ledgerRowAppliedLabel(row(appliedInvoiceId = "inv_7", appliedInvoiceNumber = "  ")),
+        )
+    }
+
+    @Test
+    fun `an activity line names the number, or says with no number, never an id`() {
+        assertEquals("1026", invoiceNumberOrNoNumber(" 1026 "))
+        assertEquals("with no number", invoiceNumberOrNoNumber(""))
+        assertEquals("with no number", invoiceNumberOrNoNumber("  "))
+        // The invoice has not loaded: still words, where the stored id used to stand.
+        assertEquals("with no number", invoiceNumberOrNoNumber(null))
     }
 
     @Test

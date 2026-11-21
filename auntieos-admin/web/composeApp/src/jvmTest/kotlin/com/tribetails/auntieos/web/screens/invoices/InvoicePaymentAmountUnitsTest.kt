@@ -246,6 +246,14 @@ class InvoicePaymentAmountUnitsTest {
     }
 
     @Test
+    fun aPaymentAppliedToAnInvoiceWithNoNumberSaysSoAndNeverShowsTheStoredId() {
+        // #2420: the "Applied to" line showed the stored id here.
+        val p = one(row("p1", 4200)).copy(appliedInvoiceId = "k3Jx9QpLm2", appliedInvoiceNumber = " ")
+        assertEquals("an invoice with no number", ledgerRowAppliedTo(p))
+        assertEquals("\$42.00", ledgerRowAppliedLabel(p), "the money still applied, so the figure still shows")
+    }
+
+    @Test
     fun aPaymentThatTouchedNoBalanceSaysNotApplied() {
         val p = one(row("p1", 4200, appliedCents = 0, appliedNumber = ""))
         assertEquals("not applied", ledgerRowAppliedLabel(p))

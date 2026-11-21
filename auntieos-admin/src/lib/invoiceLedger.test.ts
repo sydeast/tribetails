@@ -222,8 +222,11 @@ describe('ledgerRowAppliedLabel', () => {
   it('prefers the human invoice number, prefixed the way the operator writes it', () => {
     expect(ledgerRowAppliedLabel(ledgerRow())).toBe('#1029');
   });
-  it('falls back to the id when the invoice carries no number', () => {
-    expect(ledgerRowAppliedLabel(ledgerRow({ appliedInvoiceNumber: '' }))).toBe('inv1029');
+  it('#2420: says so in plain words when the invoice carries no number, never its stored id', () => {
+    const label = ledgerRowAppliedLabel(ledgerRow({ appliedInvoiceNumber: '' }));
+    expect(label).toBe('an invoice with no number');
+    expect(label).not.toContain('inv1029');
+    expect(ledgerRowAppliedLabel(ledgerRow({ appliedInvoiceNumber: '  ' }))).toBe('an invoice with no number');
   });
   it('is EMPTY when the payment touched no balance, so the cell can say so', () => {
     // Never "$0.00 applied": a payment that applied to nothing is a different
