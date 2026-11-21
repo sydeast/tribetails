@@ -18,6 +18,7 @@ import {
   filterRecipients,
   generateBlocker,
   approveBlocker,
+  auntieKinTaleBlocker,
   buildGeneratePayload,
   draftSubtitle,
   type PersonalizeFormState,
@@ -391,7 +392,12 @@ export function CommunicatePersonalize({
   }
   function handleApproveClick(kf: Kinfolk | undefined) {
     if (busy) return;
-    const blocker = approveBlocker(form, kf, draft?.draft_id ?? null, draftText);
+    // #2444: an Auntie has no recipient picker, so her send is checked
+    // against the household the draft itself names.
+    const blocker =
+      isAuntie && def.deliverable === 'kintale'
+        ? auntieKinTaleBlocker(draft?.kinfolk_id ?? null, draftText)
+        : approveBlocker(form, kf, draft?.draft_id ?? null, draftText);
     if (blocker !== null) {
       setApproveError(blocker);
       return;
@@ -457,7 +463,7 @@ export function CommunicatePersonalize({
                 so she is pointed at the list her drafts are in. */}
             {isAuntie && draft === null && stored.status !== 'loading' && (
               <DenPanel title="KinTale drafts">
-                <EmptyHint>No draft is open. Your KinTale drafts are in KinTales, under Drafts.</EmptyHint>
+                <EmptyHint>No draft is open.</EmptyHint>
                 {onOpenKinTales && (
                   <div className="personalize__actions">
                     <GhostButton label="Open KinTales" onClick={onOpenKinTales} />
@@ -846,7 +852,9 @@ export function CommunicatePersonalize({
                 ) : def.deliverable === 'kintale' ? (
                   <>
                     <p className="personalize__confirm-line">
-                      <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'}
+                      {/* The draft's own household when the roster does not
+                          hold it: that is who the server sends it to. */}
+                      <strong>To:</strong> {household}
                     </p>
                     <p className="personalize__confirm-line">
                       <strong>Channel:</strong> KinTale, on their portal

@@ -1028,3 +1028,27 @@ describe('KinTaleDetail: an Auntie gets no Reaction panel and no Delete draft', 
     await waitFor(() => expect(getKinTaleReaction).toHaveBeenCalledWith('tale1'));
   });
 });
+
+/**
+ * The Custom fields panel takes its labels from `listFormSchemas`, which
+ * refuses an Auntie, so it drew her a failed load and a Retry that could not
+ * work. It is left out for her and the read is never started.
+ */
+describe('KinTaleDetail: an Auntie gets no Custom fields panel', () => {
+  it('draws no panel for her on a recap that stored answers, and reads no schema', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Replies' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Custom fields' })).toBeNull();
+    expect(screen.queryByText(/Custom fields failed to load/)).toBeNull();
+    expect(listFormSchemas).not.toHaveBeenCalled();
+    expect(getFormSchema).not.toHaveBeenCalled();
+  });
+
+  it('keeps the panel for the owner', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Custom fields' })).toBeInTheDocument();
+    await waitFor(() => expect(listFormSchemas).toHaveBeenCalled());
+  });
+});

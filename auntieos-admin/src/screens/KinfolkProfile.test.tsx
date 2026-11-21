@@ -982,3 +982,38 @@ describe('KinfolkProfile, an Auntie gets no Invite to portal', () => {
     });
   }
 });
+
+/**
+ * The dossier is the owner's alone and the rules refuse an Auntie the read, so
+ * "Auntie's notes" drew her a failed load. The panel is not mounted for her
+ * and the dossier is never asked for.
+ */
+describe('KinfolkProfile, an Auntie gets no dossier panel', () => {
+  const DOSSIER = {
+    tldr: 'Text when on the way.',
+    rawSummary: '',
+    communicationStyle: 'Short and warm.',
+    householdNotes: 'Treats in the blue tin.',
+    relationshipWithAuntie: '',
+  };
+
+  it('draws her no Auntie’s notes and never reads the dossier', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'caretaker' } });
+    getKinfolkProfile.mockResolvedValue(profile());
+    getDossier.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Auntie’s notes/ })).toBeNull();
+    expect(screen.queryByText(/insufficient permissions/)).toBeNull();
+    expect(getDossier).not.toHaveBeenCalled();
+  });
+
+  it('keeps the panel for the owner', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'admin' } });
+    getKinfolkProfile.mockResolvedValue(profile());
+    getDossier.mockResolvedValue(DOSSIER);
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByText('Text when on the way.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Auntie’s notes/ })).toBeInTheDocument();
+  });
+});

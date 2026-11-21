@@ -126,7 +126,9 @@ export interface KinTaleDetailProps {
    * drawn: Delete on an unsent draft (`deleteKinTaleReportDraft`, destructive,
    * the owner's) and the Reaction panel (`getKinTaleReaction` and
    * `toggleKinTaleLove` are not on her list, so the panel failed to load and
-   * its button could not work). The recap, the photos and Replies are hers.
+   * its button could not work). The Custom fields panel is left out for the
+   * same reason: its labels come from `listFormSchemas`, which refuses her.
+   * The recap, the photos and Replies are hers.
    */
   isAuntie?: boolean;
   onClose: () => void;
@@ -293,7 +295,10 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, isAunt
   // lives) and `getFormSchema` returns the sections and fields the labels come
   // from.
   const formValues = useMemo(() => decodeFormValues(entry.formValues), [entry.formValues]);
-  const hasFormValues = Object.keys(formValues).length > 0;
+  // The schema list (`listFormSchemas`) is the owner's and refuses an Auntie,
+  // so for her the panel drew a failed load with a Retry that could not work.
+  // It is not drawn for her and the read is never started.
+  const hasFormValues = Object.keys(formValues).length > 0 && !isAuntie;
   const [schemas, setSchemas] = useState<Async<FormSchemaDetail[]>>({ status: 'loading' });
 
   const loadSchemas = useCallback(() => {

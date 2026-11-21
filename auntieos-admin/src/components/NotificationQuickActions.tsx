@@ -72,6 +72,10 @@ export interface NotificationQuickActionsProps {
   /**
    * #2200 / #2201: the signed-in account is an Auntie, so no Open or Create
    * quote into an owner-only screen is drawn. Absent means the owner.
+   *
+   * #2313: nor Approve and Deny on a booking request. Both answer through
+   * `manageBookingSeries`, which refuses her, so the pair ended in a refusal.
+   * The row still opens the request on Bookings, where she can read it.
    */
   isAuntie?: boolean;
 }
@@ -100,7 +104,7 @@ export function NotificationQuickActions({
     // sits inside that body, so a click on any of its buttons must not also
     // bubble up and toggle the card.
     <div className="notif-row__actions" onClick={(e) => e.stopPropagation()}>
-      {actions.bookingId !== '' ? (
+      {actions.bookingId !== '' && !isAuntie ? (
         <>
           {/* PrimaryButton's own `busy` prop ports Compose's `loading` and
               already draws a spinner in place of its leading slot, so Approve

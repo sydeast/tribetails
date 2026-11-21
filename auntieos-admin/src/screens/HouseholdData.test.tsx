@@ -760,3 +760,27 @@ describe('HouseholdData: clearing the old vet notes', () => {
     expect(screen.getAllByText(/Older vet notes are still on this record/).length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * The household record is an Auntie's to read and edit. The "From the dossier"
+ * card is not: the dossier is the owner's alone and the rules refuse her the
+ * read, so the card drew her a failed load. Its read is never started for her.
+ */
+describe('HouseholdData for an Auntie', () => {
+  it('draws her the record with no dossier card, and never reads the dossier', async () => {
+    getDossierHouseholdNotes.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    render(<HouseholdData kinfolkId="kf1" kinfolkName="Nora Whitfield" onBack={() => {}} isAuntie />);
+    expect(await screen.findByRole('heading', { level: 1, name: /Nora Whitfield Household/ })).toBeInTheDocument();
+    await waitFor(() => expect(getHouseholdData).toHaveBeenCalledWith('kf1'));
+    expect(screen.queryByRole('heading', { name: 'From the dossier' })).toBeNull();
+    expect(screen.queryByText(/insufficient permissions/)).toBeNull();
+    expect(getDossierHouseholdNotes).not.toHaveBeenCalled();
+  });
+
+  it('keeps the dossier card for the owner', async () => {
+    getDossierHouseholdNotes.mockResolvedValue('Gate sticks in the rain.');
+    render(<HouseholdData kinfolkId="kf1" kinfolkName="Nora Whitfield" onBack={() => {}} />);
+    expect(await screen.findByText('Gate sticks in the rain.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'From the dossier' })).toBeInTheDocument();
+  });
+});
