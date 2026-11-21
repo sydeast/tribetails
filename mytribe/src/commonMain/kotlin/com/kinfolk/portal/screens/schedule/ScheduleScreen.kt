@@ -637,7 +637,7 @@ private fun LiveVisitCard(
                 val live by remember(sessionId) { firestoreClient.breadcrumbsStream(sessionId) }
                     .collectAsState(initial = emptyList())
                 Text(
-                    if (live.isEmpty()) "Waiting for first GPS ping\u2026" else "${live.size} pings · live",
+                    liveRouteLine(live.size),
                     style = type.sansLabel.copy(color = white.copy(alpha = 0.88f)),
                 )
                 if (live.isNotEmpty()) {
@@ -672,3 +672,10 @@ fun SaveNoticeRow(text: String, onDismiss: () -> Unit) {
 const val SAVE_NOTICE_TAG = "schedule-save-notice"
 /** #1281: how long the post-save confirmation stays up. Matches the web portal. */
 const val SAVE_NOTICE_MS = 8_000L
+/**
+ * #1835: the line over the live map, in a household's words. It read "Waiting
+ * for first GPS ping" and then a count of pings. The web portal's Schedule
+ * card says the same.
+ */
+internal fun liveRouteLine(points: Int): String =
+    if (points == 0) "The route shows here as your Auntie moves." else "Live route"

@@ -162,7 +162,7 @@ export function Schedule() {
               </h2>
               <p>
                 {arrived
-                  ? `${liveService ?? 'A visit'} in progress. You’ll get a KinTale the moment ${live.auntieDisplayName ?? 'they'} wraps up.`
+                  ? `${liveService ?? 'A visit'} in progress. You’ll get a KinTale the moment ${auntieName(live.auntieDisplayName) ?? 'your Auntie'} wraps up.`
                   : `${liveService ?? 'Your visit'} starts when ${live.auntieDisplayName ?? 'your Auntie'} arrives.`}
               </p>
               {arrived && liveSession?.arrivedAtIso && (
@@ -171,7 +171,7 @@ export function Schedule() {
               <div className="lwho">
                 <div className="lav">{speciesEmoji(null)}</div>
                 <div style={{ flex: '0 0 auto' }}>
-                  <b>{liveKin ?? 'Your kin'}</b>
+                  <b>{liveKin ?? 'Your Kin'}</b>
                   <small>{(liveService ?? 'Visit').toUpperCase()}</small>
                 </div>
                 <div className="track">
@@ -195,7 +195,7 @@ export function Schedule() {
                 </p>
               ) : breadcrumbs.length === 0 ? (
                 <p className="sub" style={{ color: '#fff', opacity: 0.85 }}>
-                  Waiting for the first GPS ping…
+                  The route shows here as your Auntie moves.
                 </p>
               ) : (
                 <RouteMap route={breadcrumbs} />
