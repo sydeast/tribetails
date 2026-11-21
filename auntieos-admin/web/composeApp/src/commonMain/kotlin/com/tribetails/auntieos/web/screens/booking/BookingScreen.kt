@@ -116,6 +116,9 @@ fun BookingScreen(
      */
     focusRequestKey: String? = null,
     onFocusRequestConsumed: () -> Unit = {},
+    /** #2121: the Kin removal request a "Kinfolk asked to remove a Kin" notice opened this screen for. */
+    focusKinRemovalId: String? = null,
+    onKinRemovalFocusConsumed: () -> Unit = {},
 ) {
     val client = remember { FirestoreClient() }
     BookingScreenContent(
@@ -123,6 +126,8 @@ fun BookingScreen(
         client = client,
         focusRequestKey = focusRequestKey,
         onFocusRequestConsumed = onFocusRequestConsumed,
+        focusKinRemovalId = focusKinRemovalId,
+        onKinRemovalFocusConsumed = onKinRemovalFocusConsumed,
     )
 }
 
@@ -132,6 +137,8 @@ internal fun BookingScreenContent(
     client: FirestoreClient? = null,
     focusRequestKey: String? = null,
     onFocusRequestConsumed: () -> Unit = {},
+    focusKinRemovalId: String? = null,
+    onKinRemovalFocusConsumed: () -> Unit = {},
 ) {
     val vm = remember { BookingViewModel(dataSource) }
     var route by remember { mutableStateOf<BookingRoute>(BookingRoute.List) }
@@ -143,6 +150,8 @@ internal fun BookingScreenContent(
             onNewBooking = { route = BookingRoute.Create },
             focusRequestKey = focusRequestKey,
             onFocusRequestConsumed = onFocusRequestConsumed,
+            focusKinRemovalId = focusKinRemovalId,
+            onKinRemovalFocusConsumed = onKinRemovalFocusConsumed,
         )
         BookingRoute.Create -> BookingCreateScreen(
             vm     = vm,
@@ -174,6 +183,8 @@ private fun BookingListScreen(
     onNewBooking: () -> Unit,
     focusRequestKey: String? = null,
     onFocusRequestConsumed: () -> Unit = {},
+    focusKinRemovalId: String? = null,
+    onKinRemovalFocusConsumed: () -> Unit = {},
 ) {
     val c     = AuntieTheme.colors
     val scope = rememberReportingScope()
@@ -366,6 +377,17 @@ private fun BookingListScreen(
     }
     val bookingLookupStage = bookingLookup?.let { (kinfolkId, batchId) -> bookingLookupStage(kinfolkId, batchId, bookingLookupRead) }
     val highlightedIds: Set<String> = (bookingLookupStage as? BookingLookupStage.Booked)?.sessionIds.orEmpty().toSet()
+    // #2121: the households' requests to remove a Kin with history, through the
+    // callables admin web reads. Not read for a sandbox test admin (the server
+    // refuses both), nor on the fake-data path (no client). The notice's request
+    // is held here once taken, because taking it clears it in the App.
+    val kinRemovals = rememberKinRemovalQueue(enabled = client != null && !testMode.active)
+    var kinRemovalFocus by remember { mutableStateOf<String?>(null) }
+    androidx.compose.runtime.LaunchedEffect(focusKinRemovalId) {
+        val id = focusKinRemovalId ?: return@LaunchedEffect
+        kinRemovalFocus = id
+        onKinRemovalFocusConsumed()
+    }
 
     ScreenScaffold {
         DenScreenHeading(
@@ -635,6 +657,21 @@ private fun BookingListScreen(
         }
         Spacer(Modifier.height(18.dp))
 
+        // ── #2121 Kin removal requests (the other household request waiting on the office) ──
+        when {
+            client == null -> Unit
+            testMode.active -> { KinRemovalSandboxHint(); Spacer(Modifier.height(18.dp)) }
+            else -> {
+                KinRemovalRequestsPanel(
+                    state = kinRemovals,
+                    zone = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone),
+                    focusRequestId = kinRemovalFocus,
+                    onFocusDismissed = { kinRemovalFocus = null },
+                    householdName = { id -> (incomingKinfolkState as? FirestoreResult.Data)?.value?.firstOrNull { it._id == id }?.displayName },
+                )
+                Spacer(Modifier.height(18.dp))
+            }
+        }
         // ── Scheduled ─────────────────────────────────────────────────────────
         DenPanel(
             title    = "Scheduled",
