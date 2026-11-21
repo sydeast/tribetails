@@ -148,6 +148,19 @@ export interface CreateKinCareSessionResult {
   notice?: HouseholdNotice;
 }
 
+/**
+ * #2347: the Kin an Android draft (`enhanced_bookings/{id}`) was saved with,
+ * or null when there is no such draft for this household (the visit is then
+ * made under the new-visit rule). An empty list is a draft for every Kin.
+ */
+async function storedDraftKinIds(enhancedId: string, kinfolkId: string): Promise<string[] | null> {
+  const snap = await db().collection('enhanced_bookings').doc(enhancedId).get();
+  if (!snap.exists) return null;
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  if (typeof data['kinfolkId'] !== 'string' || data['kinfolkId'].trim() !== kinfolkId) return null;
+  const ids = data['kinIds'];
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && id.trim() !== '') : [];
+}
 export async function createKinCareSessionHandler(
   req: CallableRequest<unknown>,
 ): Promise<CreateKinCareSessionResult> {
@@ -238,9 +251,21 @@ export async function createKinCareSessionHandler(
   // choose-Kin flag is on for this caller, when the Kin named are kept. An
   // older installed app that still sends a subset is answered the same way,
   // with a visit for the whole home (see lib/kinRoster.ts).
-  const { kinIds, kinNames } = await kinRosterForNewVisit(args.kinfolkId, args.kinIds, {
-    chooseKin: await chooseKinEnabled(uid),
-  });
+  //
+  // #2347 (operator ruling 2026-11-20, "keep"): approving an Android draft
+  // (`enhancedBookingId`) is approving a booking that already exists, not
+  // making a new one. It keeps the Kin the draft was saved with, as a desktop
+  // draft and a household request already do through approval, even when
+  // choosing Kin has been switched off since. The Kin come from the stored
+  // draft, not from the caller: the ones still in care are kept, and a draft
+  // that named none (or none still in care) covers the whole home.
+  const draftKinIds = enhancedId !== null ? await storedDraftKinIds(enhancedId, args.kinfolkId) : null;
+  const { kinIds, kinNames } =
+    draftKinIds !== null
+      ? await kinRosterForNewVisit(args.kinfolkId, draftKinIds, { chooseKin: true })
+      : await kinRosterForNewVisit(args.kinfolkId, args.kinIds, {
+          chooseKin: await chooseKinEnabled(uid),
+        });
   // Stamped from `kinfolk/{kinfolkId}` rather than taken from the caller: every
   // visit list renders this field directly and this writer never set it, so
   // every ad-hoc visit read as "Unnamed Kinfolk". See `resolveKinfolkDisplayName`.

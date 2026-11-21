@@ -120,6 +120,52 @@ class EnhancedSchedulingViewModelNativeApprovalTest {
         coVerify(exactly = 0) { kinCareRepo.createKinCareSession(any<KinCareSession>()) }
     }
 
+    /**
+     * #2347 (operator ruling 2026-11-20, "keep"): a draft saved for some Kin
+     * keeps them through approval, even with choosing Kin switched off since.
+     * The approval rewrites the draft with its Kin as saved and asks for the
+     * visit with them; the server reads the stored draft's Kin, not the switch
+     * (`createKinCareSession`, `storedDraftKinIds`).
+     */
+    @Test
+    fun `a draft narrowed to some Kin is approved with those Kin, never every Kin`() = runTest(testDispatcher) {
+        val saved = io.mockk.slot<EnhancedBooking>()
+        coEvery { bookingRepo.updateBooking(capture(saved)) } returns Result.success(Unit)
+        val vm = buildViewModel()
+        vm.approveBooking(booking().copy(kinIds = listOf("k2"), kinNames = listOf("Gravy")))
+        assertEquals(listOf("k2"), saved.captured.kinIds)
+        assertEquals(listOf("Gravy"), saved.captured.kinNames)
+        assertEquals(BookingStatus.ACCEPTED, saved.captured.status)
+        coVerify(exactly = 1) {
+            kinCareRepo.createKinCareSession(
+                kinfolkId = "kf1",
+                kinIds = listOf("k2"),
+                serviceType = any(),
+                startTime = any(),
+                endTime = any(),
+                serviceDurationMinutes = any(),
+                notes = any(),
+                enhancedBookingId = "eb1",
+            )
+        }
+    }
+    @Test
+    fun `a draft saved for every Kin is approved for every Kin`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        vm.approveBooking(booking())
+        coVerify(exactly = 1) {
+            kinCareRepo.createKinCareSession(
+                kinfolkId = "kf1",
+                kinIds = emptyList(),
+                serviceType = any(),
+                startTime = any(),
+                endTime = any(),
+                serviceDurationMinutes = any(),
+                notes = any(),
+                enhancedBookingId = "eb1",
+            )
+        }
+    }
     @Test
     fun `a booking that already has its visit is not approved into a second one`() = runTest(testDispatcher) {
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("eb1") } returns

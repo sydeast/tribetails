@@ -462,3 +462,71 @@ describe('createKinCareSession for an Android booking (enhancedBookingId)', () =
     });
   });
 });
+describe('#2347 (ruling 2026-11-20, keep): approving an Android draft keeps the Kin it was saved with', () => {
+  const start = () => new Date(Date.now() + DAY).toISOString();
+  const end = () => new Date(Date.now() + DAY + 30 * 60_000).toISOString();
+  /** Choosing Kin is OFF (no flag doc): the switch was turned off while the draft waited. */
+  function home(draft: Record<string, unknown> | null) {
+    return buildDbMock({
+      docs: draft === null ? {} : { 'enhanced_bookings/eb1': draft },
+      queryDocs: {
+        'families/kf1/kin': [
+          { id: 'card-a', data: { name: 'Biscuit', legacyKinId: 'flat-a' } },
+          { id: 'card-b', data: { name: 'Gravy', legacyKinId: 'flat-b' } },
+          { id: 'card-c', data: { name: 'Old Boy', legacyKinId: 'flat-c', status: 'noLongerWithUs' } },
+        ],
+        kin: [
+          { id: 'flat-a', data: { name: 'Biscuit', kinfolkId: 'kf1' } },
+          { id: 'flat-b', data: { name: 'Gravy', kinfolkId: 'kf1' } },
+          { id: 'flat-c', data: { name: 'Old Boy', kinfolkId: 'kf1' } },
+        ],
+      },
+    });
+  }
+  const approve = (kinIds: string[]) =>
+    req({ kinfolkId: 'kf1', kinIds, serviceType: 'Dog Walk', startTime: start(), endTime: end(), enhancedBookingId: 'eb1' });
+  const written = (ctx: ReturnType<typeof buildDbMock>) => ({
+    session: ctx.writes.find((w) => w.path === 'kin_care_sessions/vis_enh_eb1')?.data,
+    visit: ctx.writes.find((w) => w.path === 'families/kf1/bookings/enh_eb1/kinCares/enh_eb1')?.data,
+    envelope: ctx.writes.find((w) => w.path === 'families/kf1/bookings/enh_eb1')?.data,
+  });
+  it('keeps the one Kin the draft chose, on the visit, its record and its envelope', async () => {
+    const ctx = home({ kinfolkId: 'kf1', kinIds: ['flat-b'], status: 'PENDING' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(approve(['flat-b']));
+    const w = written(ctx);
+    for (const doc of [w.session, w.visit, w.envelope]) {
+      expect(doc).toMatchObject({ kinIds: ['flat-b'], kinNames: ['Gravy'] });
+    }
+  });
+  it('reads the Kin from the stored draft, not from what the app sends', async () => {
+    const ctx = home({ kinfolkId: 'kf1', kinIds: ['card-a'] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(approve(['flat-a', 'flat-b']));
+    expect(written(ctx).session).toMatchObject({ kinIds: ['flat-a'], kinNames: ['Biscuit'] });
+  });
+  it('a draft saved for every Kin covers every Kin in care', async () => {
+    const ctx = home({ kinfolkId: 'kf1', kinIds: [] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(approve([]));
+    expect(written(ctx).session).toMatchObject({ kinIds: ['flat-a', 'flat-b'], kinNames: ['Biscuit', 'Gravy'] });
+  });
+  it('a chosen Kin no longer in care is dropped, and a draft left with none covers the whole home', async () => {
+    const ctx = home({ kinfolkId: 'kf1', kinIds: ['flat-c'] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(approve(['flat-c']));
+    expect(written(ctx).session).toMatchObject({ kinIds: ['flat-a', 'flat-b'] });
+  });
+  it('with no stored draft, the new-visit rule applies: choosing off means the whole home', async () => {
+    const ctx = home(null);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(approve(['flat-b']));
+    expect(written(ctx).session).toMatchObject({ kinIds: ['flat-a', 'flat-b'] });
+  });
+  it('a draft filed under another household is not read', async () => {
+    const ctx = home({ kinfolkId: 'kf2', kinIds: ['flat-b'] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(approve(['flat-b']));
+    expect(written(ctx).session).toMatchObject({ kinIds: ['flat-a', 'flat-b'] });
+  });
+});
