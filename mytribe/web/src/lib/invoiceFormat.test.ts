@@ -19,7 +19,41 @@ import {
   invoiceName,
   invoiceNumberOrWords,
   paidDollarsOf,
+  discountAmountText,
+  discountNoteOf,
+  invoiceDiscountFigures,
+  lineDiscountLine,
 } from './invoiceFormat';
+
+describe('#1974 discount figures', () => {
+  it('a line discount reads as the admin and the PDF word it, and nothing when there is none', () => {
+    expect(lineDiscountLine(5000)).toBe('includes $50.00 off');
+    expect(lineDiscountLine(0)).toBeNull();
+    expect(lineDiscountLine(null)).toBeNull();
+    expect(lineDiscountLine(undefined)).toBeNull();
+  });
+
+  it('figures come only with a subtotal; an older server or a legacy invoice reads null', () => {
+    expect(invoiceDiscountFigures({ subtotalCents: 118400, invoiceDiscountCents: 1000 })).toEqual({
+      subtotalCents: 118400,
+      invoiceDiscountCents: 1000,
+    });
+    expect(invoiceDiscountFigures({ subtotalCents: 3400, invoiceDiscountCents: null })).toEqual({
+      subtotalCents: 3400,
+      invoiceDiscountCents: 0,
+    });
+    expect(invoiceDiscountFigures({ subtotalCents: null, invoiceDiscountCents: null })).toBeNull();
+    expect(invoiceDiscountFigures({})).toBeNull();
+  });
+
+  it('the amount taken off reads in the mock notation; a blank note is no note', () => {
+    expect(discountAmountText(1000)).toBe('(10.00)');
+    expect(discountAmountText(123456)).toBe('(1,234.56)');
+    expect(discountNoteOf('  Referral  ')).toBe('Referral');
+    expect(discountNoteOf('   ')).toBeNull();
+    expect(discountNoteOf(null)).toBeNull();
+  });
+});
 
 describe('documentNoun (#2092)', () => {
   it('a quote is a Quote, answered or not; every other state is an Invoice', () => {

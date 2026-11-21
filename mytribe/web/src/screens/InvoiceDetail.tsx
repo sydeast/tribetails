@@ -13,9 +13,13 @@ import { getBusinessContact, getMyHome } from '../api/portal';
 import type { PayMethod } from '../api/types';
 import {
   creditTargetLabel,
+  discountAmountText,
+  discountNoteOf,
   formatCentsUsd,
   formatUsd,
   documentNoun,
+  invoiceDiscountFigures,
+  lineDiscountLine,
   invoiceName,
   invoiceRowStatusInfo,
   longDateLabel,
@@ -379,6 +383,9 @@ export function InvoiceDetail() {
   // the whole total as collected.
   // #2090: on a written-off invoice only the recorded payments (`paidDollarsOf`).
   const paidAmount = paidDollarsOf(inv);
+  // #1974: subtotal and invoice discount as amounts, or null to keep the old row.
+  const figures = invoiceDiscountFigures(inv);
+  const discountNote = discountNoteOf(inv.discount);
   const writtenOff = inv.status === 'written_off';
   // Same rule as the list row: only an `open` invoice with a balance takes a
   // payment. Spelled positively rather than as the old not-credit/not-
@@ -525,6 +532,10 @@ export function InvoiceDetail() {
                                 {item.qty} x {formatCentsUsd(item.unitCents)}
                               </small>
                             )}
+                            {/* #1974: what was taken off, already out of the amount. */}
+                            {lineDiscountLine(item.discountCents) !== null && (
+                              <small>{lineDiscountLine(item.discountCents)}</small>
+                            )}
                           </td>
                           <td className="date">{longDateLabel(item.dateIso) ?? '—'}</td>
                           <td className="r amt">{item.amountCents !== null ? formatCentsUsd(item.amountCents) : '—'}</td>
@@ -542,11 +553,34 @@ export function InvoiceDetail() {
                     </div>
                   ) : (
                     <>
+                      {/* #1974: an invoice built from lines shows its subtotal and
+                          the invoice discount as amounts, so the lines add up to
+                          the total. An older server sends neither key, and an
+                          invoice with no stored lines has neither figure: both
+                          keep the free-text discount row as before. */}
+                      {figures !== null && (
+                        <>
+                          <div className="row" data-testid="invoice-subtotal">
+                            <span>Subtotal</span>
+                            <b>{formatCentsUsd(figures.subtotalCents)}</b>
+                          </div>
+                          {figures.invoiceDiscountCents > 0 && (
+                            <div className="row disc" data-testid="invoice-discount">
+                              <span>
+                                Discount
+                                {discountNote !== null && <small className="disc-note">{discountNote}</small>}
+                              </span>
+                              <b>{discountAmountText(figures.invoiceDiscountCents)}</b>
+                            </div>
+                          )}
+                          <div className="rule" />
+                        </>
+                      )}
                       <div className="row total">
                         <span>Total</span>
                         <b>{formatUsd(inv.total)}</b>
                       </div>
-                      {inv.discount && (
+                      {figures === null && inv.discount && (
                         <div className="row disc">
                           <span>Discount</span>
                           <b>{inv.discount}</b>

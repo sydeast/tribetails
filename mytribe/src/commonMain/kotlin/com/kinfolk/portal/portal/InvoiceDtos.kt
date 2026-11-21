@@ -154,6 +154,14 @@ data class Invoice(
      * not say; [invoiceName] then prints the bare noun.
      */
     val invoiceNumber: String? = null,
+    /**
+     * #1974: the sum of the invoice's own lines before the invoice discount,
+     * and that discount, in cents. Both null on an invoice with no stored lines
+     * and from a server older than the fields: that invoice keeps the
+     * free-text [discount] row.
+     */
+    val subtotalCents: Long? = null,
+    val invoiceDiscountCents: Long? = null,
 )
 
 /** One covered visit on an invoice. All fields optional server-side. */
@@ -181,6 +189,12 @@ data class InvoiceLineItem(
      */
     val qty: Double?,
     val unitCents: Long?,
+    /**
+     * #1974: what was taken off this line, already out of [amountCents]. 0 on
+     * a stored line with none; null on a row rebuilt from a visit and from a
+     * server older than the field.
+     */
+    val discountCents: Long? = null,
 )
 
 data class InvoicesResult(

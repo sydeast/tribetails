@@ -103,6 +103,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditTarget: null,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  subtotalCents: null,
+  invoiceDiscountCents: null,
   payBlockedReason: null,
   payMethods: [CARD],
 };

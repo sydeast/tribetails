@@ -2288,6 +2288,8 @@ class PortalApi(
                         amountCents = li["amountCents"]?.jsonPrimitive?.longOrNull,
                         qty = li["qty"]?.jsonPrimitive?.doubleOrNull,
                         unitCents = li["unitCents"]?.jsonPrimitive?.longOrNull,
+                        // #1974: absent from an older server, null on a visit row.
+                        discountCents = (li["discountCents"] as? JsonPrimitive)?.longOrNull,
                     )
                 }
                 ?.takeIf { it.isNotEmpty() },
@@ -2299,6 +2301,9 @@ class PortalApi(
             // #2410: absent from an older server and null on a payable bill;
             // both read as null. A blank sentence is no sentence.
             payBlockedReason = (o["payBlockedReason"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
+            // #1974: absent from an older server and null with no stored lines; both read null.
+            subtotalCents = (o["subtotalCents"] as? JsonPrimitive)?.longOrNull,
+            invoiceDiscountCents = (o["invoiceDiscountCents"] as? JsonPrimitive)?.longOrNull,
         )
     }
 
