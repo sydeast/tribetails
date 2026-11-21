@@ -4,9 +4,14 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.InvoicePaymentEntry
 import com.tribetails.auntieos.web.data.JvmFirestoreFixtures
+import com.tribetails.auntieos.web.data.PAYMENT_EARLIER_ON_RECORD
+import com.tribetails.auntieos.web.data.PAYMENT_EARLIER_ON_RECORD_CODE
+import com.tribetails.auntieos.web.data.PAYMENT_LANDED_NO_ANSWER
+import com.tribetails.auntieos.web.data.PAYMENT_LANDED_NO_ANSWER_CODE
 import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
 import com.tribetails.auntieos.web.data.RecordPaymentOutcome
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.decodeInvoiceLedgerPayments
 import com.tribetails.auntieos.web.data.decodeRecordPaymentOutcome
 import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
 import com.tribetails.auntieos.web.data.recordPaymentRefusalText
@@ -79,11 +84,13 @@ class RecordPaymentCallableClientTest {
          "creditedToAccountCents":0,"confirmationEmailSent":true,"householdNoPortalAccount":false,"officeNoticePending":false}
     """.trimIndent()
 
+    // #2297: a failed press is followed by a read of the invoice's payments, so
+    // only the recordPayment calls are what was sent.
     private fun sent(): List<JsonObject> =
-        JvmFirestoreFixtures.callablePayloads.map { (name, json) ->
-            assertEquals("recordPayment", name)
-            Json.parseToJsonElement(json).jsonObject
-        }
+        JvmFirestoreFixtures.callablePayloads
+            .filter { (name, _) -> name == "recordPayment" }
+            .map { (_, json) -> Json.parseToJsonElement(json).jsonObject }
+    private val emptyLedger = """{"ledgerPayments":[],"unlinkedKinfolkPayments":[]}"""
 
     // ── The payload ─────────────────────────────────────────────────────────
 
@@ -198,14 +205,18 @@ class RecordPaymentCallableClientTest {
     }
 
     @Test
-    fun aChangedEntryMintsANewKey() = runBlocking {
+    fun aChangedEntryKeepsTheKeyUntilAnAnswer() = runBlocking {
         JvmFirestoreFixtures.callableErrors = mapOf("recordPayment" to "INTERNAL")
+        // #2297: the check after the failure read the payments and the first
+        // press is not among them, but it may still be committing. A new key
+        // for the changed figure would let both land.
+        JvmFirestoreFixtures.callableResponses = mapOf("getInvoiceLedger" to emptyLedger)
         val keys = PaymentSubmissionKeys()
         val client = FirestoreClient()
         submitInvoicePayment(client, entry(), keys)
         submitInvoicePayment(client, entry(fee = "3.10"), keys)
         val sentKeys = sent().map { it["idempotencyKey"]!!.jsonPrimitive.content }
-        assertNotEquals(sentKeys[0], sentKeys[1])
+        assertEquals(sentKeys[0], sentKeys[1])
     }
 
     @Test
@@ -220,6 +231,129 @@ class RecordPaymentCallableClientTest {
         assertNotEquals(sentKeys[0], sentKeys[1])
     }
 
+    // ── #2297: after a lost reply ───────────────────────────────────────────
+    private fun fixedKeys() = PaymentSubmissionKeys(mint = { "pay_1757000000000_abcdef" })
+    private fun ledgerListing(vararg ids: String) = WriteResult.Ok(
+        decodeInvoiceLedgerPayments(
+            """{"ledgerPayments":[${ids.joinToString(",") { "{\"paymentId\":\"$it\"}" }}],"unlinkedKinfolkPayments":[]}""",
+        ),
+    )
+    private val okOutcome get() = WriteResult.Ok(decodeRecordPaymentOutcome(okBody))
+    @Test
+    fun aFailedPressThatLandedIsAskedAgainWithTheSameKeyAndAnswersOk() = runBlocking {
+        val keys = fixedKeys()
+        val sentKeys = mutableListOf<String>()
+        val answers = ArrayDeque(listOf<WriteResult<RecordPaymentOutcome>>(WriteResult.Err("INTERNAL"), okOutcome))
+        val r = submitInvoicePayment(
+            entry = entry(),
+            keys = keys,
+            record = { key -> sentKeys += key; answers.removeFirst() },
+            readLedger = { ledgerListing("other", "pay_1757000000000_abcdef") },
+        )
+        assertTrue(r is WriteResult.Ok, "$r")
+        assertEquals(listOf("pay_1757000000000_abcdef", "pay_1757000000000_abcdef"), sentKeys)
+        assertNull(keys.current, "the payment is done, so the next press is a new one")
+    }
+    @Test
+    fun aLandedPaymentWhoseAnswerIsLostTwiceComesBackMarkedSoTheDialogCloses() = runBlocking {
+        val keys = fixedKeys()
+        val r = submitInvoicePayment(
+            entry = entry(),
+            keys = keys,
+            record = { WriteResult.Err("INTERNAL") },
+            readLedger = { ledgerListing("pay_1757000000000_abcdef") },
+        )
+        assertTrue(r is WriteResult.Err, "$r")
+        assertEquals(PAYMENT_LANDED_NO_ANSWER_CODE, (r as WriteResult.Err).code)
+        assertEquals(PAYMENT_LANDED_NO_ANSWER, r.message)
+        assertNull(keys.current)
+    }
+    @Test
+    fun aFailedPressThatDidNotLandKeepsTheKeyAndANoteFixIsTheSamePayment() = runBlocking {
+        val keys = PaymentSubmissionKeys()
+        val sentKeys = mutableListOf<String>()
+        val record: suspend (String) -> WriteResult<RecordPaymentOutcome> = { key -> sentKeys += key; WriteResult.Err("INTERNAL") }
+        submitInvoicePayment(entry(), keys, record) { ledgerListing("other") }
+        // The note, method, reference and date change; the money does not.
+        val fixed = entry().let { e ->
+            e.copy(payment = e.payment.copy(notes = "paid at the door", paymentMethod = "Cash", referenceNumber = "ref-10", date = "2026-09-28"))
+        }
+        submitInvoicePayment(fixed, keys, record) { ledgerListing("other") }
+        assertEquals(2, sentKeys.size)
+        assertEquals(sentKeys[0], sentKeys[1])
+    }
+    @Test
+    fun whenThePaymentsCannotBeReadTheKeyIsHeldEvenForAChangedFigure() = runBlocking {
+        val keys = PaymentSubmissionKeys()
+        val sentKeys = mutableListOf<String>()
+        val record: suspend (String) -> WriteResult<RecordPaymentOutcome> = { key -> sentKeys += key; WriteResult.Err("INTERNAL") }
+        submitInvoicePayment(entry(), keys, record) { WriteResult.Err("offline") }
+        submitInvoicePayment(entry(fee = "3.10"), keys, record) { WriteResult.Err("offline") }
+        assertEquals(sentKeys[0], sentKeys[1])
+    }
+    private val replayedOutcome get() = WriteResult.Ok(decodeRecordPaymentOutcome(okBody).copy(replayed = true))
+    @Test
+    fun theReplayedFlagIsDecodedAndAbsentReadsFalse() {
+        assertFalse(decodeRecordPaymentOutcome(okBody).replayed)
+        assertTrue(decodeRecordPaymentOutcome("""{"paymentId":"pay_1","replayed":true}""").replayed)
+    }
+    @Test
+    fun aChangedFigureAnsweredFromTheFirstPressSaysThatEarlierPaymentIsOnRecord() = runBlocking {
+        val keys = PaymentSubmissionKeys()
+        val sentKeys = mutableListOf<String>()
+        val answers = ArrayDeque(listOf<WriteResult<RecordPaymentOutcome>>(WriteResult.Err("INTERNAL"), replayedOutcome))
+        val record: suspend (String) -> WriteResult<RecordPaymentOutcome> = { key -> sentKeys += key; answers.removeFirst() }
+        submitInvoicePayment(entry(), keys, record) { ledgerListing("other") }
+        val r = submitInvoicePayment(entry(fee = "3.10"), keys, record) { ledgerListing("other") }
+        assertEquals(sentKeys[0], sentKeys[1])
+        assertTrue(r is WriteResult.Err, "$r")
+        assertEquals(PAYMENT_EARLIER_ON_RECORD_CODE, (r as WriteResult.Err).code)
+        assertEquals(PAYMENT_EARLIER_ON_RECORD, r.message)
+        assertNull(keys.current, "a payment is on record, so the next press is a new one")
+    }
+    @Test
+    fun aSameFigureRetryAnsweredFromTheFirstPressIsThisPayment() = runBlocking {
+        val keys = PaymentSubmissionKeys()
+        val answers = ArrayDeque(listOf<WriteResult<RecordPaymentOutcome>>(WriteResult.Err("INTERNAL"), replayedOutcome))
+        val record: suspend (String) -> WriteResult<RecordPaymentOutcome> = { answers.removeFirst() }
+        keys.open()
+        submitInvoicePayment(entry(), keys, record) { ledgerListing("other") }
+        val r = submitInvoicePayment(entry(), keys, record) { ledgerListing("other") }
+        assertTrue(r is WriteResult.Ok, "$r")
+    }
+    @Test
+    fun cancelKeepsAFailedPressKeyAndAReplayInTheNextOpeningIsTheEarlierPayment() = runBlocking {
+        val keys = PaymentSubmissionKeys()
+        val sentKeys = mutableListOf<String>()
+        val answers = ArrayDeque(listOf<WriteResult<RecordPaymentOutcome>>(WriteResult.Err("INTERNAL"), replayedOutcome))
+        val record: suspend (String) -> WriteResult<RecordPaymentOutcome> = { key -> sentKeys += key; answers.removeFirst() }
+        keys.open()
+        submitInvoicePayment(entry(), keys, record) { WriteResult.Err("offline") }
+        // Cancel, then Record payment again: the dialog calls open().
+        keys.open()
+        val r = submitInvoicePayment(entry(), keys, record) { ledgerListing() }
+        assertEquals(sentKeys[0], sentKeys[1])
+        assertEquals(PAYMENT_EARLIER_ON_RECORD_CODE, (r as WriteResult.Err).code)
+    }
+    @Test
+    fun afterCancelAHeldKeyTheServerNeverSawRecordsTheNewEntry() = runBlocking {
+        val keys = PaymentSubmissionKeys()
+        val sentKeys = mutableListOf<String>()
+        val answers = ArrayDeque(listOf<WriteResult<RecordPaymentOutcome>>(WriteResult.Err("INTERNAL"), okOutcome))
+        val record: suspend (String) -> WriteResult<RecordPaymentOutcome> = { key -> sentKeys += key; answers.removeFirst() }
+        keys.open()
+        submitInvoicePayment(entry(), keys, record) { WriteResult.Err("offline") }
+        keys.open()
+        val r = submitInvoicePayment(entry(fee = "3.10"), keys, record) { ledgerListing() }
+        assertEquals(sentKeys[0], sentKeys[1])
+        assertTrue(r is WriteResult.Ok, "$r")
+    }
+    @Test
+    fun aKeyNeverCrossesInvoices() {
+        val keys = PaymentSubmissionKeys()
+        val first = keys.keyFor("inv1", "a")
+        assertNotEquals(first, keys.keyFor("inv2", "a"))
+    }
     // ── What the operator is told ──────────────────────────────────────────
 
     private fun outcome(

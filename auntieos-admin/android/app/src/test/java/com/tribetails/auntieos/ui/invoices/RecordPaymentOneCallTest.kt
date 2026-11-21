@@ -270,6 +270,9 @@ class RecordPaymentOneCallTest {
     }
     private fun overBalanceRefusal(dueCents: Int): FirebaseFunctionsException {
         val refused = mockk<FirebaseFunctionsException>(relaxed = true)
+        // #2297: the code a real refusal carries. A refusal is not checked
+        // against the payments; it recorded nothing.
+        every { refused.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
         every { refused.message } returns
             "\$127.50 is more than the \$25.00 still owed on this invoice. Apply \$25.00 and record the rest of the payment as tip."
         every { refused.details } returns mapOf("code" to "invoice_amount_exceeds_balance", "amountDueCents" to dueCents)

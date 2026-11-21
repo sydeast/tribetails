@@ -75,6 +75,8 @@ import com.tribetails.auntieos.web.data.linkPickerOnOtherInvoice
 import com.tribetails.auntieos.web.data.toggleLinkPick
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
 import com.tribetails.auntieos.web.data.InvoicePaymentEntry
+import com.tribetails.auntieos.web.data.PAYMENT_LANDED_NO_ANSWER_CODE
+import com.tribetails.auntieos.web.data.PAYMENT_EARLIER_ON_RECORD_CODE
 import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
 import com.tribetails.auntieos.web.data.receiptGeneratedMessage
 import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
@@ -494,6 +496,7 @@ private fun InvoiceDetailBody(
         onDismiss  = {
             // Not while the call is in flight: its answer has to land somewhere.
             if (!recordingPayment) {
+                // #2297: Cancel keeps a key whose press failed (PaymentSubmissionKeys).
                 showRecordPayment = false
                 recordPaymentError = null
             }
@@ -520,7 +523,18 @@ private fun InvoiceDetailBody(
                     }
                     is WriteResult.Err -> {
                         recordingPayment = false
-                        recordPaymentError = recordPaymentRefusalText(r.message)
+                        // #2297: the payments as they stand now, which the
+                        // check after the failure has just read.
+                        ledgerReload += 1
+                        if (r.code == PAYMENT_LANDED_NO_ANSWER_CODE || r.code == PAYMENT_EARLIER_ON_RECORD_CODE) {
+                            // It landed, and its answer is still missing, or the
+                            // answer is an earlier press's. A payment is on the
+                            // invoice, so the dialog closes.
+                            showRecordPayment = false
+                            showToast(r.message, true)
+                        } else {
+                            recordPaymentError = recordPaymentRefusalText(r.message)
+                        }
                     }
                 }
             }
@@ -932,7 +946,12 @@ private fun InvoiceDetailBody(
             paymentsState   = paymentsState,
             linkedPayments  = linkedPayments,
             clientPayments  = clientPayments,
-            onRecordPayment = { showRecordPayment = true },
+            onRecordPayment = {
+                // #2297: a payment that got its answer already let its key go;
+                // a key from a press that failed stays held (PaymentSubmissionKeys).
+                paymentKeys.open()
+                showRecordPayment = true
+            },
             // The read is one-shot, so a failed one stays failed until asked
             // again. The shimmer shows while it runs.
             onRetryPayments = {

@@ -154,8 +154,8 @@ describe('#2281 third review: a ticked late second call after the sweep, real di
     await sweptPayoff();
     const first = await step2();
     const snapshot = JSON.stringify([live('notifications'), live('notificationDispatch')]);
-    expect(await step2()).toEqual(first);
-    expect(await step2()).toEqual(first);
+    expect(await step2()).toEqual({ ...first, replayed: true });
+    expect(await step2()).toEqual({ ...first, replayed: true });
     expect(JSON.stringify([live('notifications'), live('notificationDispatch')])).toBe(snapshot);
     expect(ordersFor('kinUid')).toHaveLength(1);
     expect(ordersFor('office1')).toHaveLength(1);
@@ -209,7 +209,7 @@ describe('#2281 third review: a ticked late second call after the sweep, real di
     expect(first).toMatchObject({ confirmationEmailSent: false, householdNoPortalAccount: false });
     expect(first).not.toHaveProperty('confirmationAppOnly');
     // A retry changes nothing.
-    expect(await step2()).toEqual(first);
+    expect(await step2()).toEqual({ ...first, replayed: true });
     expectNothingNewSent();
     expect(recordsFor('kinUid2')).toEqual([]);
     expect(ledgerRows()).toEqual([`payments/${PAY}`]);
@@ -264,7 +264,7 @@ describe('#2281 third review: a ticked late second call after the sweep, real di
       householdNoticeUid: 'kinUid',
     });
     // A retry changes nothing and gives the same answer.
-    expect(await step2()).toEqual(first);
+    expect(await step2()).toEqual({ ...first, replayed: true });
     expectNothingNewSent();
     expect(recordsFor('kinUid2')).toEqual([]);
     expect(ordersFor('kinUid2')).toEqual([]);
