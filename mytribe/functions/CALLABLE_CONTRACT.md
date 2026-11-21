@@ -3376,6 +3376,12 @@ these two; none of them writes the send itself.
   Text that is approved or stamped `sentAt`, and a Push whose `pushOutcome` is
   `sent` or `listed`. A held Push and one with no `pushOutcome` are deleted.
   `firestore.rules` refuses a direct delete of the same drafts.
+- #2452: an Email or Text whose send got no answer (a claim marked
+  `sendUnconfirmedAt`, or one older than 120 seconds) is kept as well, and the
+  refusal says the send was not confirmed and never that it was sent
+  (`failed-precondition`, `details.code: 'draft_send_unconfirmed'`). One whose
+  claim is under 120 seconds old is refused with
+  `details.code: 'draft_send_in_flight'`.
 
 ## Communicate Email and Text drafts (#2428, owner)
 

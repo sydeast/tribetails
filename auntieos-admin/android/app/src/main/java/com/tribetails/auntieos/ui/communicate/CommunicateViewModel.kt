@@ -639,7 +639,17 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 val sentName = household?.displayName?.ifBlank { null }
                     ?: draft.kinfolkName?.ifBlank { null } ?: "the household"
                 val sentPush = sentPushResult(draft)?.let { householdPushNotice(it, sentName) }
-                val sentMessage = sentDraftNotice(draft, sentName)
+                // #2440: the day in the notice is the business's day. A failed
+                // settings read leaves America/Chicago, the server's default.
+                val zone = businessZone(
+                    try {
+                        repo.getBusinessSettings().getOrNull()?.timeZone
+                    } catch (t: Throwable) {
+                        t.rethrowIfCancellation()
+                        null
+                    },
+                )
+                val sentMessage = sentDraftNotice(draft, sentName, zone)
                 val openNotice = heldNotice ?: sentPush
                 _uiState.value = _uiState.value.copy(
                     draftLoading         = false,
@@ -752,6 +762,20 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
         val result = sent.getOrElse { e ->
             AuntieLog.e("Draft $draftId was not sent", e)
+            // #2452: the send got no answer and the server keeps the draft
+            // closed. The notice takes the place of Approve and Delete here,
+            // the way it does when the draft is opened again.
+            if (e is DraftSendUnconfirmedException) {
+                _uiState.value = _uiState.value.copy(
+                    isSaving     = false,
+                    savedDraftId = draftId,
+                    sentNotice   = unconfirmedSendNotice(
+                        pushHousehold(state),
+                        if (channel == ExternalChannel.Email) "email" else "sms",
+                    ),
+                )
+                return
+            }
             _uiState.value = _uiState.value.copy(isSaving = false, error = externalSendErrorText(e.message))
             return
         }

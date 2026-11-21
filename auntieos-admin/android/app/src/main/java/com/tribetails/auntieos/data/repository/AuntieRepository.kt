@@ -1032,9 +1032,14 @@ class AuntieRepository(
             if (!subject.isNullOrBlank()) put("subject", subject.trim())
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("sendGeneratedDraft")
-            .call(payload)
-            .awaitCallable().data as? Map<String, Any?>
+        val raw = try {
+            functions.getHttpsCallable("sendGeneratedDraft")
+                .call(payload)
+                .awaitCallable().data as? Map<String, Any?>
+        } catch (e: FirebaseFunctionsException) {
+            // #2452: a send that got no answer is told by the refusal's code.
+            throw com.tribetails.auntieos.ui.communicate.draftSendFailure(conflictCodeFrom(e.details), e)
+        }
         com.tribetails.auntieos.ui.communicate.decodeDraftSendResult(raw)
     }.onFailure { AuntieLog.e("sendGeneratedDraft failed for draft $draftId", it) }
     /**

@@ -6,7 +6,7 @@ import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { wrapCallable } from '../lib/wrapCallable';
 import { isOwner, isOwnerClaim, staffBypass } from '../lib/staffGate';
-import { draftWentOut, isKinTaleDraft } from '../lib/generatedDraftType';
+import { draftWentOut, isKinTaleDraft, messageDraftStanding } from '../lib/generatedDraftType';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -220,6 +220,10 @@ export async function publishGeneratedDraftHandler(
   return { ok: true, reportId: outcome.reportId, alreadyPublished: outcome.alreadyPublished };
 }
 
+/** #2452: why a draft whose send got no answer is not deleted. It claims neither a send nor a failure. */
+export const DRAFT_DELETE_UNCONFIRMED_MESSAGE =
+  'The send of this draft did not get an answer, so it is not known whether the message reached the household. ' +
+  'The draft is kept. Write a new one if it has to go again.';
 export async function deleteGeneratedDraftHandler(
   req: CallableRequest<unknown>,
 ): Promise<DeleteGeneratedDraftResult> {
@@ -251,6 +255,20 @@ export async function deleteGeneratedDraftHandler(
     // KinTale was kept, so deleting any of the others removed the one record
     // of a message somebody received. A held Push, and one whose send never
     // answered, reached nobody and are still deleted here.
+    // #2452: an Email or Text whose send got no answer is kept too, and the
+    // refusal says that. It used to say "already been sent" about a send
+    // nobody can vouch for. One still being sent says so.
+    const standing = messageDraftStanding(draft, Date.now());
+    if (standing === 'unconfirmed') {
+      throw new HttpsError('failed-precondition', DRAFT_DELETE_UNCONFIRMED_MESSAGE, {
+        code: 'draft_send_unconfirmed',
+      });
+    }
+    if (standing === 'in_flight') {
+      throw new HttpsError('failed-precondition', 'This message is being sent right now, so the draft is kept.', {
+        code: 'draft_send_in_flight',
+      });
+    }
     if (draftWentOut(draft)) {
       throw new HttpsError('failed-precondition', 'This draft has already been sent, so it is kept.', {
         code: 'draft_already_sent',

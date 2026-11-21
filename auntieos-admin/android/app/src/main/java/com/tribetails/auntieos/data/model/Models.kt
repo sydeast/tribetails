@@ -1436,6 +1436,11 @@ data class Draft(
     // #2428: when `sendGeneratedDraft` handed an Email or Text draft to the
     // provider. Set means the household has it. Stamped by the server only.
     var sentAt: String = "",
+    // #2452: the server's claim on an Email or Text draft while it sends, and
+    // its mark when the send got no answer. A claim with no `sentAt` beside it
+    // is a send nobody can vouch for. Stamped by the server only.
+    var sendClaimedAt: String = "",
+    var sendUnconfirmedAt: String = "",
 ) {
     /** #1563: already sent to the household as a KinTale; the report is its record now. */
     val isPublished: Boolean get() = publishedReportId.isNotBlank()
@@ -1490,7 +1495,67 @@ data class Draft(
     }
     /** #2428: already went to its household as a KinTale, a Push, an Email or a Text. */
     val wentOut: Boolean get() = isPublished || isSentPush || sentMessageChannel != null
+    /**
+     * #2452: where an Email or Text draft stands, read off the stamps the
+     * server writes, or null for any other type and for one nobody approved.
+     * The server reads them the same way (`draftSendStanding`), and so do the
+     * web admin and the desktop console. Asked before anything says "sent":
+     * [sentMessageChannel] is also set for a send that got no answer.
+     */
+    fun messageStanding(nowMs: Long): MessageDraftStanding? {
+        val type = communicationType.trim().lowercase()
+        if (type != "email" && type != "sms") return null
+        if (sentAt.isNotBlank()) return MessageDraftStanding.Sent
+        if (status.trim().lowercase() != "approved") return null
+        if (sendClaimedAt.isBlank()) return MessageDraftStanding.Approved
+        if (sendUnconfirmedAt.isNotBlank()) return MessageDraftStanding.Unconfirmed
+        val claimedMs = try {
+            java.time.Instant.parse(sendClaimedAt.trim()).toEpochMilli()
+        } catch (_: Exception) {
+            return MessageDraftStanding.Unconfirmed
+        }
+        return if (nowMs - claimedMs < DRAFT_SEND_LEASE_MS) MessageDraftStanding.Sending else MessageDraftStanding.Unconfirmed
+    }
+    /**
+     * #2440: where the KinTales list files a Communicate draft that is past
+     * approving, or null for every other draft (the Drafts bucket has its own
+     * rule, and a sent KinTale is listed as its report).
+     */
+    fun listPlace(nowMs: Long): DraftListPlace? {
+        if (isPublished) return null
+        if (isSentPush) return DraftListPlace.Sent
+        return when (messageStanding(nowMs)) {
+            MessageDraftStanding.Sent, MessageDraftStanding.Approved -> DraftListPlace.Sent
+            MessageDraftStanding.Unconfirmed -> DraftListPlace.Unconfirmed
+            MessageDraftStanding.Sending -> DraftListPlace.Sending
+            null -> null
+        }
+    }
 }
+/** How long the server's claim reads as "being sent right now" (`DRAFT_SEND_LEASE_MS` on the server). */
+const val DRAFT_SEND_LEASE_MS = 120_000L
+/**
+ * #2452: an Email or Text draft that is past approving.
+ *
+ *  - [Sent]: stamped `sentAt`, the provider took it.
+ *  - [Sending]: claimed under two minutes ago, the send is running.
+ *  - [Unconfirmed]: the send got no answer, or its claim was left by a call
+ *    that died. It may have reached the household. It is not sent again from
+ *    this draft.
+ *  - [Approved]: approved with no stamp and no claim. An older version of the
+ *    app approved it and sent it.
+ */
+enum class MessageDraftStanding { Sent, Sending, Unconfirmed, Approved }
+/** #2440: the three places the KinTales list files a Communicate draft that is past approving. */
+enum class DraftListPlace { Sent, Unconfirmed, Sending }
+/**
+ * #2440: the Communicate drafts the KinTales list files outside Drafts, newest
+ * first: the ones that went out (under Sent), and an Email or Text whose send
+ * got no answer or is still running. The list dropped all of them, so a sent
+ * Email, Text or Push could not be found from it. Pure; tested.
+ */
+fun goneGeneratedDrafts(drafts: List<Draft>, nowMs: Long): List<Draft> =
+    drafts.filter { it.listPlace(nowMs) != null }.sortedByDescending { it.createdOn }
 /**
  * #1563: one `generated_drafts` doc, read from BOTH spellings the collection is
  * written in (see [Draft]'s WRITER MISMATCH note). `toObject(Draft::class.java)`
@@ -1528,6 +1593,8 @@ fun draftFromFields(id: String, data: Map<String, Any?>): Draft {
         pushOutcome = str("pushOutcome"),
         pushReason = str("pushReason"),
         sentAt = str("sentAt"),
+        sendClaimedAt = str("sendClaimedAt"),
+        sendUnconfirmedAt = str("sendUnconfirmedAt"),
     )
 }
 

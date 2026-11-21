@@ -4164,6 +4164,13 @@ data class GeneratedDraft(
      * provider. Set means the household has it. Stamped by the server only.
      */
     val sentAt: String = "",
+    /**
+     * #2452: the server's claim on an Email or Text draft while it sends, and
+     * its mark when the send got no answer. A claim with no [sentAt] beside it
+     * is a send nobody can vouch for. Stamped by the server only.
+     */
+    val sendClaimedAt: String = "",
+    val sendUnconfirmedAt: String = "",
 ) {
     /**
      * #2428: a Push the household was sent: on their notifications list, and
@@ -4191,6 +4198,41 @@ data class GeneratedDraft(
     }
     /** #2428: already went to its household as a KinTale, a Push, an Email or a Text. */
     val wentOut: Boolean get() = isPublished || isSentPush || sentMessageChannel != null
+
+    /**
+     * #2452: where an Email or Text draft stands, read off the stamps the
+     * server writes, or null for any other type and for one nobody approved.
+     * The server reads them the same way (`draftSendStanding`), and so do the
+     * web admin and the phone. Asked before anything says "sent":
+     * [sentMessageChannel] is also set for a send that got no answer.
+     */
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    fun messageStanding(nowMs: Long): MessageDraftStanding? {
+        if (sentMessageChannel == null) return null
+        if (sentAt.isNotBlank()) return MessageDraftStanding.Sent
+        if (sendClaimedAt.isBlank()) return MessageDraftStanding.Approved
+        if (sendUnconfirmedAt.isNotBlank()) return MessageDraftStanding.Unconfirmed
+        val claimedMs = runCatching { kotlin.time.Instant.parse(sendClaimedAt.trim()).toEpochMilliseconds() }.getOrNull()
+            ?: return MessageDraftStanding.Unconfirmed
+        return if (nowMs - claimedMs < DRAFT_SEND_LEASE_MS) MessageDraftStanding.Sending else MessageDraftStanding.Unconfirmed
+    }
+
+    /**
+     * #2440: where the KinTales list files a Communicate draft that is past
+     * approving, or null for every other draft (the Drafts bucket has its own
+     * rule, and a sent KinTale is listed as its report).
+     */
+    fun listPlace(nowMs: Long): DraftListPlace? {
+        if (isPublished) return null
+        if (isSentPush) return DraftListPlace.Sent
+        return when (messageStanding(nowMs)) {
+            MessageDraftStanding.Sent, MessageDraftStanding.Approved -> DraftListPlace.Sent
+            MessageDraftStanding.Unconfirmed -> DraftListPlace.Unconfirmed
+            MessageDraftStanding.Sending -> DraftListPlace.Sending
+            null -> null
+        }
+    }
+
     /**
      * #2293: an approved Push draft the server held back. Nothing reached the
      * household, so KinTales lists it under Drafts again and Communicate opens
@@ -4238,6 +4280,65 @@ fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
  */
 fun kinTaleListDrafts(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
     drafts.filter { it.isUnsent || it.isHeldPush || it.isUnansweredPush }.sortedByDescending { it.created() }
+
+/** How long the server's claim reads as "being sent right now" (`DRAFT_SEND_LEASE_MS` on the server). */
+const val DRAFT_SEND_LEASE_MS = 120_000L
+
+/**
+ * #2452: an Email or Text draft that is past approving.
+ *
+ *  - [Sent]: stamped `sentAt`, the provider took it.
+ *  - [Sending]: claimed under two minutes ago, the send is running.
+ *  - [Unconfirmed]: the send got no answer, or its claim was left by a call
+ *    that died. It may have reached the household. It is not sent again from
+ *    this draft.
+ *  - [Approved]: approved with no stamp and no claim. An older version of the
+ *    app approved it and sent it.
+ */
+enum class MessageDraftStanding { Sent, Sending, Unconfirmed, Approved }
+
+/** #2440: the three places the KinTales list files a Communicate draft that is past approving. */
+enum class DraftListPlace { Sent, Unconfirmed, Sending }
+
+/**
+ * #2440: the Communicate drafts the KinTales list files outside Drafts, newest
+ * first: the ones that went out (under Sent), and an Email or Text whose send
+ * got no answer or is still running. The list dropped all of them, so a sent
+ * Email, Text or Push could not be found from it. Pure; tested.
+ */
+fun kinTaleGoneDrafts(drafts: List<GeneratedDraft>, nowMs: Long): List<GeneratedDraft> =
+    drafts.filter { it.listPlace(nowMs) != null }.sortedByDescending { it.created() }
+
+/**
+ * #2440: the generated drafts one bucket lists. [unsent] is the Drafts bucket
+ * as it was; [gone] are filed by [GeneratedDraft.listPlace]: Sent for one that
+ * went out, Needs another look for an Email or Text whose send got no answer
+ * (#2452), and Drafts for one still being sent. [bucket] is the bucket's name.
+ * Pure; tested.
+ */
+fun kinTaleDraftsInBucket(
+    bucket: String,
+    unsent: List<GeneratedDraft>,
+    gone: List<GeneratedDraft>,
+    nowMs: Long,
+): List<GeneratedDraft> {
+    fun placed(place: DraftListPlace) = gone.filter { it.listPlace(nowMs) == place }
+    return when (bucket) {
+        "Failed" -> placed(DraftListPlace.Unconfirmed)
+        "Drafts" -> unsent + placed(DraftListPlace.Sending)
+        "Sent" -> placed(DraftListPlace.Sent)
+        else -> emptyList()
+    }
+}
+
+/** #2440: the words on a draft row's pill, by where the list files it. Pure; tested. */
+fun kinTaleDraftPillLabel(place: DraftListPlace?): String = when (place) {
+    DraftListPlace.Sent -> "Sent"
+    DraftListPlace.Unconfirmed -> "Not confirmed"
+    DraftListPlace.Sending -> "Sending"
+    // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
+    null -> "Draft"
+}
 
 /**
  * KinCareReport - the "KinTale" visit recap that goes home to a kinfolk after a
