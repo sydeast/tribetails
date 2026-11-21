@@ -147,6 +147,12 @@ describe('statusLabel', () => {
     expect(statusLabel('on_my_way')).toBe('on the way');
   });
 
+  it('#2268: labels every stored spelling of a called-off visit cancelled', () => {
+    expect(statusLabel('CANCELED')).toBe('cancelled');
+    expect(statusLabel('cancelled')).toBe('cancelled');
+    expect(statusLabel(' canceled ')).toBe('cancelled');
+  });
+
   it('reads SCHEDULED, unknown, and blank all as scheduled', () => {
     // Deliberate: an unsynced session is still one the auntie must show up for.
     expect(statusLabel('SCHEDULED')).toBe('scheduled');

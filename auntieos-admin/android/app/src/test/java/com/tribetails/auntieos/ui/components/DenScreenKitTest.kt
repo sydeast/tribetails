@@ -63,6 +63,14 @@ class DenScreenKitTest {
         assertEquals("scheduled", statusLabel("anything-else"))
     }
 
+    // #2268: the Home visit card labelled a one-L CANCELED visit "scheduled".
+    @Test
+    fun statusLabel_reads_every_spelling_of_a_cancellation_as_cancelled() {
+        assertEquals("cancelled", statusLabel("CANCELED"))
+        assertEquals("cancelled", statusLabel("cancelled"))
+        assertEquals("cancelled", statusLabel(" canceled "))
+    }
+
     @Test
     fun greetingForHour_buckets_the_day() {
         assertEquals("Good morning", greetingForHour(0))
