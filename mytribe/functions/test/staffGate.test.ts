@@ -113,7 +113,7 @@ describe('#944 staffBypass: the per-callable gate', () => {
   it('an Auntie passes an allowlisted callable', async () => {
     const { staffBypass } = await import('../src/lib/staffGate');
     expect(staffBypass(auntie, 'listMembers')).toBe(true);
-    expect(staffBypass(auntie, 'createKinCareSession')).toBe(true);
+    expect(staffBypass(auntie, 'updateKinCareSession')).toBe(true);
     expect(staffBypass(auntie, 'addBookingNote')).toBe(true);
   });
 

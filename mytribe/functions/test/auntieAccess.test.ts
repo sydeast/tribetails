@@ -225,7 +225,7 @@ describe('#944 wrapAdminCallable enforces the table', () => {
   it('admits an Auntie to the callables her job needs', async () => {
     const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
     for (const name of [
-      'createKinCareSession', 'updateKinCareSession', 'setVisitLifecycle', 'verifyVisitArrival',
+      'updateKinCareSession', 'setVisitLifecycle', 'verifyVisitArrival',
       'listPendingBookingRequests', 'dispatchVisitNotification', 'triageOrphanReport',
       'saveMediaTags', 'listConversations', 'replyToConversation', 'listStaff',
     ]) {
@@ -254,6 +254,28 @@ describe('#944 wrapAdminCallable enforces the table', () => {
     expect(handler).toHaveBeenCalledTimes(1);
     const src = readFileSync(resolve(__dirname, '../src/admin/createMultiDateBookingRequest.ts'), 'utf8');
     expect(src).toContain("wrapAdminCallable('createMultiDateBookingRequest', createMultiDateBookingRequestHandler)");
+  });
+
+  /**
+   * #2187 ruling, 2026-11-20 ("owner-only"): only the owner makes a New visit.
+   * Admin web does not draw it for an Auntie; this is the half that holds
+   * whatever a client draws. Pinned the same three ways as New booking above.
+   */
+  it('#2187: REFUSES an Auntie the New visit create, and still admits the owner', async () => {
+    expect(AUNTIE_ALLOWED_CALLABLES.has('createKinCareSession')).toBe(false);
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    const handler = vi.fn(async () => ({ ok: true }));
+    const wrapped = wrapAdminCallable('createKinCareSession', handler);
+    const visit = { kinfolkId: 'k1', startTime: '2026-12-01T15:00:00.000Z' };
+    await expect(wrapped({ auth: auntieAuth, data: visit } as never)).rejects.toMatchObject({
+      code: 'permission-denied',
+    });
+    // Refused at the gate: the handler, and so the visit write, never ran.
+    expect(handler).not.toHaveBeenCalled();
+    await expect(wrapped({ auth: ownerAuth, data: visit } as never)).resolves.toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    const src = readFileSync(resolve(__dirname, '../src/admin/createKinCareSession.ts'), 'utf8');
+    expect(src).toContain("wrapAdminCallable('createKinCareSession', createKinCareSessionHandler)");
   });
 
   /**

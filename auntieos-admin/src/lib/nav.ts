@@ -121,10 +121,10 @@ export const NAV: readonly NavEntry[] = [
   // from the email "Templates" above. Reachable from KinTales conceptually; a
   // pinned rail entry so it is discoverable next to the other authoring screens.
   { dest: 'kinTaleTemplates', title: 'KinTale templates', group: 'more', slug: 'kintale-templates' },
-  // Business configuration, the owner's. Form Schemas could not load for an
-  // Auntie (`listFormSchemas`), and every Feature Flags switch was refused
-  // (`setFeatureFlags`), so both are off her rail and their addresses send
-  // her Home.
+  // Business configuration, the owner's. Form Schemas is authoring (an
+  // Auntie lists only the KinTale form, to read a KinTale's answers, #2461),
+  // and every Feature Flags switch was refused (`setFeatureFlags`), so both
+  // are off her rail and their addresses send her Home.
   { dest: 'formSchemas', title: 'Form Schemas', group: 'more', slug: 'form-schemas', ownerOnly: true },
   { dest: 'featureFlags', title: 'Feature Flags', group: 'more', slug: 'feature-flags', ownerOnly: true },
   // The business notification gate had a pinned entry here from #396/#435

@@ -242,6 +242,8 @@ describe('publishGeneratedDraft', () => {
 });
 
 describe('publishGeneratedDraft: an Auntie sends KinTale drafts only', () => {
+  /** #2443: a KinTale draft she made, stamped with her uid by the generator. */
+  const HERS = { ...GENERATE_JS_DRAFT, createdBy: 'auntie1' };
   const auntie = (data: unknown) =>
     callableRequest(data, { uid: 'auntie1', token: { staffRole: 'auntie', name: 'Tia' } });
   const HOUSEHOLDS = {
@@ -263,7 +265,7 @@ describe('publishGeneratedDraft: an Auntie sends KinTale drafts only', () => {
   }
 
   it('HAPPY: an Auntie sends a KinTale draft', async () => {
-    const { ctx, docs } = db({ 'generated_drafts/d1': { ...GENERATE_JS_DRAFT }, ...HOUSEHOLDS });
+    const { ctx, docs } = db({ 'generated_drafts/d1': { ...HERS }, ...HOUSEHOLDS });
     const res = await publishGeneratedDraftHandler(auntie({ draftId: 'd1', bodyCopy: 'Mochi napped in the sun.' }));
     expect(res.alreadyPublished).toBe(false);
     expect(reportWrites(ctx)).toHaveLength(1);
@@ -273,7 +275,7 @@ describe('publishGeneratedDraft: an Auntie sends KinTale drafts only', () => {
 
   it('HAPPY: both spellings saying visit_report is still a KinTale draft', async () => {
     const { ctx } = db({
-      'generated_drafts/d1': { ...GENERATE_JS_DRAFT, communicationType: 'visit_report' },
+      'generated_drafts/d1': { ...HERS, communicationType: 'visit_report' },
       ...HOUSEHOLDS,
     });
     await publishGeneratedDraftHandler(auntie({ draftId: 'd1', bodyCopy: 'x' }));
@@ -285,36 +287,39 @@ describe('publishGeneratedDraft: an Auntie sends KinTale drafts only', () => {
     ['an Email draft', 'email'],
     ['a Text draft', 'sms'],
   ])('NEGATIVE: %s is not there for an Auntie', async (_label, type) => {
-    await notThereForHer({ ...GENERATE_JS_DRAFT, communication_type: type });
+    await notThereForHer({ ...HERS, communication_type: type });
   });
 
   it('NEGATIVE: a draft whose type is not exactly visit_report is not there for an Auntie', async () => {
     for (const type of ['Visit_Report', ' visit_report', 'visit_report ', 'visit_report\u00a0', 7, null]) {
       auditMock.mockClear();
-      await notThereForHer({ ...GENERATE_JS_DRAFT, communication_type: type });
+      await notThereForHer({ ...HERS, communication_type: type });
     }
   });
 
   it('NEGATIVE: a draft whose two type fields disagree is not there for an Auntie', async () => {
-    await notThereForHer({ ...GENERATE_JS_DRAFT, communicationType: 'push' });
-    await notThereForHer({ ...GENERATE_JS_DRAFT, communicationType: '' });
+    await notThereForHer({ ...HERS, communicationType: 'push' });
+    await notThereForHer({ ...HERS, communicationType: '' });
   });
 
   it('NEGATIVE: a draft with no type is not there for an Auntie', async () => {
-    const { communication_type: _dropped, ...untyped } = GENERATE_JS_DRAFT;
+    const { communication_type: _dropped, ...untyped } = HERS;
     await notThereForHer(untyped);
   });
 
   it('NEGATIVE: a draft carrying only the older spelling is not there for an Auntie', async () => {
-    await notThereForHer({ ...MIGRATED_DRAFT });
+    await notThereForHer({ ...MIGRATED_DRAFT, createdBy: 'auntie1' });
   });
 
   it('NEGATIVE: a sent draft of another type does not answer her with its KinTale', async () => {
-    await notThereForHer({ ...GENERATE_JS_DRAFT, communication_type: 'email', publishedReportId: 'r9' });
+    await notThereForHer({ ...HERS, communication_type: 'email', publishedReportId: 'r9' });
   });
 
   it('NEGATIVE: an account carrying both roles is held to KinTale drafts too', async () => {
-    const { ctx } = db({ 'generated_drafts/d1': { ...GENERATE_JS_DRAFT, communication_type: 'push' }, ...HOUSEHOLDS });
+    const { ctx } = db({
+      'generated_drafts/d1': { ...HERS, communication_type: 'push', createdBy: 'confused1' },
+      ...HOUSEHOLDS,
+    });
     const both = callableRequest(
       { draftId: 'd1', bodyCopy: 'x' },
       { uid: 'confused1', token: { admin: true, staffRole: 'auntie' } },
@@ -323,8 +328,54 @@ describe('publishGeneratedDraft: an Auntie sends KinTale drafts only', () => {
     expect(ctx.writes).toEqual([]);
   });
 
+  // ── #2443 ruling: she sends only the KinTale drafts she made ─────────────
+  it('NEGATIVE: #2443 a KinTale draft another Auntie made is not there for her', async () => {
+    await notThereForHer({ ...HERS, createdBy: 'auntie2' });
+  });
+
+  it('NEGATIVE: #2443 a KinTale draft the owner made is not there for her', async () => {
+    await notThereForHer({ ...HERS, createdBy: 'admin1' });
+  });
+
+  it('NEGATIVE: #2443 a KinTale draft with no maker on it is the owner\'s, and not there for her', async () => {
+    const { createdBy: _dropped, ...unstamped } = HERS;
+    await notThereForHer(unstamped);
+    await notThereForHer({ ...MIGRATED_DRAFT });
+  });
+
+  it('NEGATIVE: #2443 a maker stamp that only looks like hers is not hers', async () => {
+    for (const stamp of ['', ' auntie1', 'auntie1 ', 'AUNTIE1', 7, null, ['auntie1'], { uid: 'auntie1' }]) {
+      await notThereForHer({ ...HERS, createdBy: stamp });
+    }
+  });
+
+  it('NEGATIVE: #2443 another Auntie\'s sent draft does not answer her with its KinTale', async () => {
+    // The replay answer (the report id) is not hers to have.
+    await notThereForHer({ ...HERS, createdBy: 'auntie2', status: DRAFT_STATUS_PUBLISHED, publishedReportId: 'r9' });
+  });
+
+  it('HAPPY: #2443 a second tap on her own sent draft answers with the same KinTale and writes nothing', async () => {
+    const { ctx } = db({
+      'generated_drafts/d1': { ...HERS, status: DRAFT_STATUS_PUBLISHED, publishedReportId: 'r7' },
+      ...HOUSEHOLDS,
+    });
+    const res = await publishGeneratedDraftHandler(auntie({ draftId: 'd1', bodyCopy: 'x' }));
+    expect(res).toEqual({ ok: true, reportId: 'r7', alreadyPublished: true });
+    expect(ctx.writes).toEqual([]);
+  });
+
+  it('#2443 the owner sends a KinTale draft whoever made it, an Auntie\'s included', async () => {
+    for (const stamp of ['auntie1', 'auntie2', 'admin1', undefined]) {
+      const draft: Record<string, unknown> = { ...HERS, createdBy: stamp };
+      if (stamp === undefined) delete draft['createdBy'];
+      const { ctx } = db({ 'generated_drafts/d1': draft, ...HOUSEHOLDS });
+      await publishGeneratedDraftHandler(admin({ draftId: 'd1', bodyCopy: 'x' }));
+      expect(reportWrites(ctx)).toHaveLength(1);
+    }
+  });
+
   it('the owner still sends a draft of any type, and one with only the older spelling', async () => {
-    const typed = db({ 'generated_drafts/d1': { ...GENERATE_JS_DRAFT, communication_type: 'general' }, ...HOUSEHOLDS });
+    const typed = db({ 'generated_drafts/d1': { ...HERS, communication_type: 'general' }, ...HOUSEHOLDS });
     await publishGeneratedDraftHandler(admin({ draftId: 'd1', bodyCopy: 'x' }));
     expect(reportWrites(typed.ctx)).toHaveLength(1);
 

@@ -21,7 +21,7 @@ vi.mock('./sentry', () => ({ reportError }));
 vi.mock('./testScope', () => ({ setTestScope }));
 
 import { resolveAccess, useAdminAccess } from './access';
-import { isCaretakerScope, setCaretakerScope } from './caretakerScope';
+import { caretakerFiltersFor, isCaretakerScope, setCaretakerScope } from './caretakerScope';
 import { type User } from 'firebase/auth';
 
 const user = { uid: 'op-1' };
@@ -78,6 +78,11 @@ describe('resolveAccess sets what an Auntie\'s lists carry', () => {
     getIdTokenResult.mockResolvedValue({ claims: { staffRole: 'auntie' } });
     expect(await resolveAccess(asUser)).toEqual({ status: 'caretaker' });
     expect(isCaretakerScope()).toBe(true);
+  });
+  it('#2443: her uid names the drafts that are hers', async () => {
+    getIdTokenResult.mockResolvedValue({ claims: { staffRole: 'auntie' } });
+    await resolveAccess(asUser);
+    expect(caretakerFiltersFor('generated_drafts')).toContainEqual(['createdBy', '==', 'op-1']);
   });
   it('an account carrying both roles is the Auntie here too', async () => {
     getIdTokenResult.mockResolvedValue({ claims: { admin: true, staffRole: 'auntie' } });

@@ -989,23 +989,43 @@ describe('KinTaleDetail: Delete draft (#1631)', () => {
 });
 
 /**
- * Two things on the detail ended in a refusal for an Auntie. The Reaction
- * panel reads `getKinTaleReaction` and writes `toggleKinTaleLove`, neither on
- * her callable list, so the panel failed to load. Delete on an unsent draft
- * calls `deleteKinTaleReportDraft`, the owner's. She is drawn neither, and the
- * reaction is never asked for. The recap and Replies stay hers.
+ * #2461 ruling, 2026-11-20: an Auntie sees the full KinTale. The Reaction panel
+ * shows her the loves (`getKinTaleReaction` is on her list) with no Love button
+ * (`toggleKinTaleLove` is not). Delete on an unsent draft calls
+ * `deleteKinTaleReportDraft`, the owner's, so it is not drawn for her. The
+ * recap and Replies stay hers.
  */
-describe('KinTaleDetail: an Auntie gets no Reaction panel and no Delete draft', () => {
+describe('KinTaleDetail: an Auntie reads the loves, and gets no Love button and no Delete draft', () => {
   const draftRow = () => report({ status: 'DRAFT', sentAt: '', sentVia: '' });
 
-  it('draws no Reaction panel for her and never asks the server for it', async () => {
+  it('HAPPY: shows her how many people loved the KinTale', async () => {
+    getKinTaleReaction.mockResolvedValue({ loved: false, loveCount: 3 });
     render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
-    expect(await screen.findByRole('heading', { name: 'Replies' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Reaction' })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Reaction' })).toBeInTheDocument();
+    expect(await screen.findByText('3 people loved this.')).toBeInTheDocument();
+    expect(getKinTaleReaction).toHaveBeenCalledWith('tale1');
+  });
+
+  it('SAD: a KinTale nobody has loved says so for her', async () => {
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    expect(await screen.findByText('No reactions yet.')).toBeInTheDocument();
+  });
+
+  it('NEGATIVE: draws her no Love button, and never presses Love for her', async () => {
+    getKinTaleReaction.mockResolvedValue({ loved: false, loveCount: 1 });
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    expect(await screen.findByText('1 person loved this.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Love this|Loved/ })).toBeNull();
-    expect(getKinTaleReaction).not.toHaveBeenCalled();
     expect(toggleKinTaleLove).not.toHaveBeenCalled();
-    await waitFor(() => expect(getKinTaleComments).toHaveBeenCalled());
+  });
+
+  it('ERROR: a failed read shows the failure with a Try again that reads again', async () => {
+    getKinTaleReaction.mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue({ loved: false, loveCount: 2 });
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    expect(await screen.findByText(/Could not load: unavailable/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /try again|retry/i }));
+    expect(await screen.findByText('2 people loved this.')).toBeInTheDocument();
+    expect(getKinTaleReaction).toHaveBeenCalledTimes(2);
   });
 
   it('draws her no Delete draft on an unsent draft, and keeps Edit', async () => {
@@ -1016,7 +1036,7 @@ describe('KinTaleDetail: an Auntie gets no Reaction panel and no Delete draft', 
     expect(deleteKinTaleReportDraft).not.toHaveBeenCalled();
   });
 
-  it('keeps both for the owner', async () => {
+  it('keeps the Love button and Delete draft for the owner', async () => {
     mockStreams({ reports: { status: 'ready', data: [draftRow()] } });
     render(
       <ToastProvider>
@@ -1025,24 +1045,71 @@ describe('KinTaleDetail: an Auntie gets no Reaction panel and no Delete draft', 
     );
     expect(await screen.findByRole('button', { name: 'Delete draft' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Reaction' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Love this' })).toBeInTheDocument();
     await waitFor(() => expect(getKinTaleReaction).toHaveBeenCalledWith('tale1'));
   });
 });
 
 /**
- * The Custom fields panel takes its labels from `listFormSchemas`, which
- * refuses an Auntie, so it drew her a failed load and a Retry that could not
- * work. It is left out for her and the read is never started.
+ * #2461 ruling: an Auntie sees a KinTale's custom field answers. The labels come
+ * from the KinTale form, which `listFormSchemas` gives her (and nothing else).
  */
-describe('KinTaleDetail: an Auntie gets no Custom fields panel', () => {
-  it('draws no panel for her on a recap that stored answers, and reads no schema', async () => {
+describe('KinTaleDetail: an Auntie reads the custom field answers', () => {
+  const KINTALE_FORM = { id: 's1', name: 'KinTale extras', appliesTo: 'KINTALE', version: 1, updatedAt: null, updatedBy: null };
+  const schema = (): FormSchemaDetail => ({
+    id: 's1',
+    name: 'KinTale extras',
+    description: null,
+    appliesTo: 'KINTALE',
+    version: 1,
+    sections: [
+      {
+        title: 'Departure',
+        description: null,
+        fields: [
+          {
+            key: 'gate',
+            label: 'Gate left latched?',
+            type: 'text',
+            required: false,
+            helperText: null,
+            placeholder: null,
+            options: null,
+            defaultValue: null,
+            group: null,
+          },
+        ],
+      },
+    ],
+  });
+
+  it('HAPPY: shows her each stored answer under its label', async () => {
+    listFormSchemas.mockResolvedValue([KINTALE_FORM]);
+    getFormSchema.mockResolvedValue(schema());
     mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Custom fields' })).toBeInTheDocument();
+    expect(await screen.findByText('Gate left latched?')).toBeInTheDocument();
+    expect(screen.getByText('Yes')).toBeInTheDocument();
+    expect(getFormSchema).toHaveBeenCalledWith('s1');
+  });
+
+  it('SAD: a recap with no answers draws no panel and reads no form', async () => {
     render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Replies' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Custom fields' })).toBeNull();
-    expect(screen.queryByText(/Custom fields failed to load/)).toBeNull();
     expect(listFormSchemas).not.toHaveBeenCalled();
-    expect(getFormSchema).not.toHaveBeenCalled();
+  });
+
+  it('ERROR: a form that fails to load says so for her, with a Try again', async () => {
+    listFormSchemas.mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue([KINTALE_FORM]);
+    getFormSchema.mockResolvedValue(schema());
+    mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    expect(await screen.findByText(/Custom fields failed to load: unavailable/)).toBeInTheDocument();
+    const panel = screen.getByRole('heading', { name: 'Custom fields' }).closest('section') ?? document.body;
+    await userEvent.click(within(panel as HTMLElement).getByRole('button', { name: /try again|retry/i }));
+    expect(await screen.findByText('Gate left latched?')).toBeInTheDocument();
   });
 
   it('keeps the panel for the owner', async () => {
