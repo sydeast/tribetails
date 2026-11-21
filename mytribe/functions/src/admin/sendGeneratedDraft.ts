@@ -4,7 +4,12 @@ import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
-import { draftMessageChannel, draftSendState, type DraftMessageChannel } from '../lib/generatedDraftType';
+import {
+  DRAFT_SEND_LEASE_MS,
+  draftMessageChannel,
+  draftSendStanding,
+  type DraftMessageChannel,
+} from '../lib/generatedDraftType';
 import { SMTP2GO_NO_VERDICT_MESSAGE } from '../lib/providerFailure';
 import {
   Args as ExternalArgs,
@@ -41,7 +46,7 @@ import {
  *      and the provider's message id, and the claim is let go.
  *
  * ── ONCE PER DRAFT ───────────────────────────────────────────────────────────
- * Only a draft nobody has approved is sent (`draftSendState` in
+ * Only a draft nobody has approved is sent (`draftSendStanding` in
  * `lib/generatedDraftType.ts`). A second call for a draft that went out answers
  * `already_sent` and sends nothing, the way `publishGeneratedDraft` answers
  * `alreadyPublished`. A second call while the first is still sending is refused
@@ -85,8 +90,8 @@ import {
  * for it (`coldStartImportGraph.test.ts`).
  */
 
-/** How long a claim reads as "being sent right now". A provider call is seconds. */
-export const DRAFT_SEND_LEASE_MS = 120_000;
+/** How long a claim reads as "being sent right now". Kept in `lib/generatedDraftType.ts` with the rule that reads it. */
+export { DRAFT_SEND_LEASE_MS };
 
 // Exported for the recursive callable-contract freeze (nested/effects shape).
 export const Args = z.object({
@@ -324,16 +329,12 @@ async function claimDraft(
       throw new HttpsError('failed-precondition', 'This draft is not an Email or a Text.');
     }
 
-    const state = draftSendState(draft);
-    if (state === 'sending') {
-      const claimedMs = Date.parse(trimmed(draft['sendClaimedAt']));
-      const live = !Number.isNaN(claimedMs) && Date.now() - claimedMs < DRAFT_SEND_LEASE_MS;
-      if (live && trimmed(draft['sendUnconfirmedAt']) === '') {
-        throw new HttpsError('aborted', 'This message is being sent right now.', { code: DRAFT_SEND_IN_FLIGHT });
-      }
-      // A send that got no answer, or a claim left by a call that died.
-      throw unconfirmed();
+    const state = draftSendStanding(draft, Date.now());
+    if (state === 'in_flight') {
+      throw new HttpsError('aborted', 'This message is being sent right now.', { code: DRAFT_SEND_IN_FLIGHT });
     }
+    // A send that got no answer, or a claim left by a call that died.
+    if (state === 'unconfirmed') throw unconfirmed();
     if (state !== 'unsent') {
       return {
         already: true as const,

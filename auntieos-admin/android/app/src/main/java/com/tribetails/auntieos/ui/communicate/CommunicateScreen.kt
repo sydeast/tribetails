@@ -516,12 +516,13 @@ private fun ComposePanel(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                     PrimaryButton(
-                        label = when {
-                            sent || state.sentNotice != null -> "Sent"
-                            state.savedDraftId != null -> "Approved"
-                            isKinTale || approveChannel != null || isPush -> "Approve and send"
-                            else -> "Approve draft"
-                        },
+                        // #2452: "Sent" only for a send somebody vouches for.
+                        label = approveButtonLabel(
+                            sent = sent,
+                            notice = state.sentNotice,
+                            approved = state.savedDraftId != null,
+                            sends = isKinTale || approveChannel != null || isPush,
+                        ),
                         onClick = { if (isKinTale) confirmSend = true else viewModel.requestApprove() },
                         enabled = state.draftId != null && state.savedDraftId == null && !sent &&
                             !state.isSaving && !state.isGenerating && !state.isDeletingDraft,
@@ -619,7 +620,12 @@ private fun ComposePanel(
                 // where Approve would be.
                 state.sentNotice?.let { notice ->
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(notice.title, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                        // #2452: a send nobody can vouch for is in the warning colour.
+                        Text(
+                            notice.title,
+                            style = AuntieTheme.typography.bodyMedium,
+                            color = if (notice.confirmed) c.textPrimary else c.warning,
+                        )
                         Text(notice.body, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                 }

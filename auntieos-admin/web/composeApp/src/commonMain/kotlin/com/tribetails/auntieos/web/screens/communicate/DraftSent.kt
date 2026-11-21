@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web.screens.communicate
 
 import com.tribetails.auntieos.web.data.GeneratedDraft
+import com.tribetails.auntieos.web.data.MessageDraftStanding
 import com.tribetails.auntieos.web.data.WriteResult
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -29,6 +30,12 @@ import kotlinx.serialization.json.jsonPrimitive
  * ([GeneratedDraft.isSentPush], [GeneratedDraft.sentMessageChannel]). Same
  * rules and the same sentences as the web admin's `lib/draftSent.ts` and the
  * phone's `DraftSent.kt`.
+ *
+ * #2452: a send that got no answer is told apart from one that went
+ * ([GeneratedDraft.messageStanding]) and has its own notice, on open and in the
+ * sitting where it happened. On the console that answer was a toast, so it was
+ * gone in a few seconds and the screen went back to looking like a draft
+ * nobody had approved. It is held on the screen now ([DraftSendOutcome.Unconfirmed]).
  */
 
 /** What `sendGeneratedDraft` answered. */
@@ -57,8 +64,12 @@ internal fun decodeDraftSendResult(raw: String?): DraftSendResult {
     )
 }
 
-/** What the screen shows in place of Approve for an Email or Text that already went out. */
-internal data class SentDraftNotice(val title: String, val body: String)
+/**
+ * What the screen shows in place of Approve for an Email or Text that is past
+ * approving. [confirmed] is false when the notice does not vouch for a send
+ * (#2452): the send got no answer, or is still running.
+ */
+internal data class SentDraftNotice(val title: String, val body: String, val confirmed: Boolean = true)
 
 private val MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -75,19 +86,79 @@ internal fun sentDayOf(iso: String?, zone: TimeZone): String {
  * null for any other draft. A stamped one says who, how and when. An approved
  * one with no stamp says it was approved, never that a delivery was recorded.
  */
-internal fun sentDraftNotice(draft: GeneratedDraft, household: String, zone: TimeZone): SentDraftNotice? {
+internal fun sentDraftNotice(
+    draft: GeneratedDraft,
+    household: String,
+    zone: TimeZone,
+    nowMs: Long = draftClockMs(),
+): SentDraftNotice? {
     val channel = draft.sentMessageChannel ?: return null
     val who = household.trim().ifBlank { "the household" }
     val how = if (channel == "email") "email" else "text"
-    if (draft.sentAt.isNotBlank()) {
-        val day = sentDayOf(draft.sentAt, zone)
-        return SentDraftNotice("Already sent", "Sent to $who by $how${if (day.isNotBlank()) " on $day" else ""}. It is not sent again.")
+    return when (draft.messageStanding(nowMs)) {
+        null -> null
+        MessageDraftStanding.Sent -> {
+            val day = sentDayOf(draft.sentAt, zone)
+            SentDraftNotice("Already sent", "Sent to $who by $how${if (day.isNotBlank()) " on $day" else ""}. It is not sent again.")
+        }
+        // #2452: the send got no answer. It read "Already approved", which
+        // says sent about a send nobody can vouch for.
+        MessageDraftStanding.Unconfirmed ->
+            unconfirmedSendNotice(household, channel, sentDayOf(draft.sendUnconfirmedAt.ifBlank { draft.sendClaimedAt }, zone))
+        MessageDraftStanding.Sending -> SentDraftNotice(
+            "Being sent",
+            "This $how for $who is being sent right now. Open it again in a few minutes to see what happened.",
+            confirmed = false,
+        )
+        // Approved with no stamp and no claim: an older version approved and sent it.
+        MessageDraftStanding.Approved -> {
+            val day = sentDayOf(draft.approvedAt, zone)
+            SentDraftNotice(
+                "Already approved",
+                "This $how for $who was approved${if (day.isNotBlank()) " on $day" else ""}. Approving sends it, so it is not sent again.",
+            )
+        }
     }
-    val day = sentDayOf(draft.approvedAt, zone)
+}
+
+/**
+ * #2452: the notice for an Email or Text whose send got no answer. The same
+ * words whether the draft was opened that way or the server just said so.
+ * [channel] is `email` or `sms`; [day] is blank when there is no stamp to read.
+ */
+internal fun unconfirmedSendNotice(household: String?, channel: String?, day: String = ""): SentDraftNotice {
+    val how = when (channel) {
+        "email" -> "email"
+        "sms" -> "text"
+        else -> "message"
+    }
+    val who = household?.trim()?.ifBlank { null } ?: "the household"
     return SentDraftNotice(
-        "Already approved",
-        "This $how for $who was approved${if (day.isNotBlank()) " on $day" else ""}. Approving sends it, so it is not sent again.",
+        "Send not confirmed",
+        "The send of this $how to $who${if (day.isNotBlank()) " on $day" else ""} did not get an answer, " +
+            "so it is not known whether it reached them. It is not sent again from this draft. " +
+            "Write a new one if it has to go again.",
+        confirmed = false,
     )
+}
+
+/** The clock a draft's claim is read against. Its own function so the screens need no opt-in of their own. */
+@OptIn(ExperimentalTime::class)
+internal fun draftClockMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
+
+/** #2452: the `details.code` of the refusal `sendGeneratedDraft` gives when a send got no answer. */
+internal const val DRAFT_SEND_UNCONFIRMED_CODE = "draft_send_unconfirmed"
+
+/**
+ * Pure: the words on the Approve button. It is off for every answer but the
+ * last two. "Sent" is said only for a send somebody vouches for.
+ */
+internal fun approveButtonLabel(sent: Boolean, notice: SentDraftNotice?, approved: Boolean, sends: Boolean): String = when {
+    sent || notice?.confirmed == true -> "Sent"
+    notice != null -> notice.title
+    approved -> "Approved"
+    sends -> "Approve and send"
+    else -> "Approve draft"
 }
 
 /** Pure: the stored answer of a Push the household was sent, for [householdPushNotice]. Null for any other draft. */
@@ -129,6 +200,12 @@ internal sealed interface DraftSendOutcome {
     data class AlreadySent(val notice: SentDraftNotice) : DraftSendOutcome
     /** Nothing went out. The draft is unapproved, so Approve and send is still there. */
     data class Refused(val message: String) : DraftSendOutcome
+    /**
+     * #2452: the send got no answer, and the server keeps the draft closed.
+     * [notice] is held on the screen where Approve and Delete were. Never a
+     * toast: it has to still be there after a few seconds.
+     */
+    data class Unconfirmed(val notice: SentDraftNotice) : DraftSendOutcome
 }
 
 /**
@@ -144,7 +221,15 @@ internal suspend fun runDraftSend(
     audit: suspend () -> Unit,
 ): DraftSendOutcome =
     when (val r = send()) {
-        is WriteResult.Err -> DraftSendOutcome.Refused(externalSendErrorText(r.message))
+        // #2452: told by the refusal's code, never its words.
+        is WriteResult.Err ->
+            if (r.code == DRAFT_SEND_UNCONFIRMED_CODE) {
+                DraftSendOutcome.Unconfirmed(
+                    unconfirmedSendNotice(household, if (channel == ExternalChannel.Email) "email" else "sms"),
+                )
+            } else {
+                DraftSendOutcome.Refused(externalSendErrorText(r.message))
+            }
         is WriteResult.Ok -> {
             val result = decodeDraftSendResult(r.value)
             if (result.outcome == DRAFT_SENT) {

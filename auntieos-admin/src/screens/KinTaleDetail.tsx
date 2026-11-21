@@ -143,8 +143,11 @@ export function kinTaleStateTone(state: KinTaleState): DenTone {
     case 'sent':
       return 'success';
     case 'failed':
+    // #2452: a send that got no answer. Only a Communicate draft row takes it.
+    case 'unconfirmed':
       return 'error';
     case 'draft':
+    case 'sending':
       return 'neutral';
     case 'unknown':
       return 'warning';

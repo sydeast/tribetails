@@ -41,6 +41,8 @@ vi.mock('../api/householdPush', async (orig) => ({
 // Stubbed rather than exercised: RecipientContextPanel has its own full test
 // file. This file proves only the WIRING, that the panel is mounted for the
 // message types that address a household and carries the resolved id.
+// #2440: the screen reads the business's zone for a sent draft's date; the hook reads settings over the network.
+vi.mock('../lib/useBusinessZone', () => ({ useBusinessZone: () => 'America/Chicago' }));
 vi.mock('../components/RecipientContextPanel', () => ({
   RecipientContextPanel: ({ kinfolkId }: { kinfolkId: string }) => (
     <div data-testid="context-stub" data-kinfolk-id={kinfolkId} />

@@ -145,6 +145,8 @@ describe('kinTaleState (AO-12-style: enumerated, never a fabricated default)', (
     ['DRAFT', 'draft'],
     ['SENT', 'sent'],
     ['FAILED', 'failed'],
+    ['SEND_UNCONFIRMED', 'unconfirmed'],
+    ['SENDING', 'sending'],
   ] as const)('%s classifies as %s', (status, state) => {
     expect(kinTaleState(status)).toBe(state);
   });
@@ -165,6 +167,8 @@ describe('kinTaleStateInfo', () => {
     ['draft', 'Draft', 'DRAFT', 'draft'],
     ['sent', 'Sent', 'SENT', 'sent'],
     ['failed', 'Needs another look', 'FAILED', 'failed'],
+    ['unconfirmed', 'Send not confirmed', 'NOT CONFIRMED', 'failed'],
+    ['sending', 'Sending', 'SENDING', 'draft'],
     ['unknown', 'Unknown', 'UNKNOWN', 'unknown'],
   ] as const)('%s -> label %s / chip %s / css %s', (state, label, chipLabel, cssClass) => {
     expect(kinTaleStateInfo(state)).toEqual({ label, chipLabel, cssClass });

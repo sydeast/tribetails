@@ -42,8 +42,14 @@ import {
   DRAFT_SEND_UNCONFIRMED,
   DRAFT_SEND_UNCONFIRMED_MESSAGE,
 } from '../src/admin/sendGeneratedDraft';
-import { deleteGeneratedDraftHandler } from '../src/admin/kinTaleDrafts';
-import { draftSendState, draftWentOut, draftMessageChannel } from '../src/lib/generatedDraftType';
+import { deleteGeneratedDraftHandler, DRAFT_DELETE_UNCONFIRMED_MESSAGE } from '../src/admin/kinTaleDrafts';
+import {
+  draftSendState,
+  draftSendStanding,
+  draftWentOut,
+  draftMessageChannel,
+  messageDraftStanding,
+} from '../src/lib/generatedDraftType';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { wrapAdminCallable } from '../src/lib/wrapAdminCallable';
 import { SMTP2GO_NO_VERDICT_MESSAGE } from '../src/lib/providerFailure';
@@ -413,6 +419,79 @@ describe('sendGeneratedDraft: when the send gets no answer', () => {
     expect(ctx.deletes).toHaveLength(0);
   });
 
+  it('#2452 the delete refusal for an unconfirmed draft says not confirmed, never sent', async () => {
+    const { ctx } = db({ 'generated_drafts/d1': { ...EMAIL_DRAFT }, ...HOUSEHOLD });
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(headersTimeout());
+    await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({ details: { code: DRAFT_SEND_UNCONFIRMED } });
+    const refusal = await deleteGeneratedDraftHandler(owner({ draftId: 'd1' })).catch((e: unknown) => e);
+    expect(refusal).toMatchObject({
+      code: 'failed-precondition',
+      message: DRAFT_DELETE_UNCONFIRMED_MESSAGE,
+      details: { code: DRAFT_SEND_UNCONFIRMED },
+    });
+    expect(DRAFT_DELETE_UNCONFIRMED_MESSAGE).toContain('did not get an answer');
+    expect(DRAFT_DELETE_UNCONFIRMED_MESSAGE).not.toMatch(/already been sent|has been sent|was sent/);
+    expect(ctx.deletes).toHaveLength(0);
+  });
+
+  it('#2452 a claim left by a call that died reads as unconfirmed to delete too', async () => {
+    const stale = new Date(Date.now() - DRAFT_SEND_LEASE_MS - 1000).toISOString();
+    const { ctx } = db({
+      'generated_drafts/d2': { ...TEXT_DRAFT, status: 'approved', approvedAt: stale, sendClaimedAt: stale },
+    });
+    await expect(deleteGeneratedDraftHandler(owner({ draftId: 'd2' }))).rejects.toMatchObject({
+      details: { code: DRAFT_SEND_UNCONFIRMED },
+    });
+    expect(ctx.deletes).toHaveLength(0);
+  });
+
+  it('#2452 a draft being sent right now is kept, and delete says so', async () => {
+    const now = new Date().toISOString();
+    const { ctx } = db({
+      'generated_drafts/d2': { ...TEXT_DRAFT, status: 'approved', approvedAt: now, sendClaimedAt: now },
+    });
+    await expect(deleteGeneratedDraftHandler(owner({ draftId: 'd2' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'This message is being sent right now, so the draft is kept.',
+      details: { code: DRAFT_SEND_IN_FLIGHT },
+    });
+    expect(ctx.deletes).toHaveLength(0);
+  });
+
+  it('#2452 a sent draft, and one an older version sent, keep the sent refusal', async () => {
+    const { ctx } = db({
+      'generated_drafts/sent': { ...EMAIL_DRAFT, status: 'approved', sentAt: '2026-11-20T10:00:01.000Z' },
+      'generated_drafts/old': { ...TEXT_DRAFT, status: 'approved' },
+    });
+    for (const draftId of ['sent', 'old']) {
+      await expect(deleteGeneratedDraftHandler(owner({ draftId }))).rejects.toMatchObject({
+        message: 'This draft has already been sent, so it is kept.',
+        details: { code: 'draft_already_sent' },
+      });
+    }
+    expect(ctx.deletes).toHaveLength(0);
+  });
+
+  it('#2452 draftSendStanding tells a running send from one that got no answer', () => {
+    const now = Date.parse('2026-11-20T10:05:00.000Z');
+    const claimed = (agoMs: number) => new Date(now - agoMs).toISOString();
+    expect(draftSendStanding({ status: 'generated' }, now)).toBe('unsent');
+    expect(draftSendStanding({ status: 'approved' }, now)).toBe('approved');
+    expect(draftSendStanding({ status: 'approved', sentAt: claimed(0) }, now)).toBe('sent');
+    expect(draftSendStanding({ status: 'approved', sendClaimedAt: claimed(1000) }, now)).toBe('in_flight');
+    expect(draftSendStanding({ status: 'approved', sendClaimedAt: claimed(DRAFT_SEND_LEASE_MS - 1) }, now)).toBe('in_flight');
+    expect(draftSendStanding({ status: 'approved', sendClaimedAt: claimed(DRAFT_SEND_LEASE_MS) }, now)).toBe('unconfirmed');
+    expect(draftSendStanding({ status: 'approved', sendClaimedAt: 'not a time' }, now)).toBe('unconfirmed');
+    expect(
+      draftSendStanding({ status: 'approved', sendClaimedAt: claimed(1000), sendUnconfirmedAt: claimed(500) }, now),
+    ).toBe('unconfirmed');
+    // A stamp wins over a claim that was never cleared.
+    expect(draftSendStanding({ status: 'approved', sendClaimedAt: claimed(1000), sentAt: claimed(0) }, now)).toBe('sent');
+    // Only an Email or a Text has a standing.
+    expect(messageDraftStanding({ communication_type: 'push', status: 'approved', sendClaimedAt: claimed(1000) }, now)).toBeNull();
+    expect(messageDraftStanding({ communicationType: 'sms', status: 'approved', sendUnconfirmedAt: claimed(1), sendClaimedAt: claimed(2) }, now)).toBe('unconfirmed');
+  });
+
   it('nothingWentOut: only what proves no send lets a claim go', () => {
     const unavailable = (details: Record<string, unknown>) => ({ code: 'unavailable', details });
     // Refused before the provider was called.
@@ -613,7 +692,6 @@ describe('deleteGeneratedDraft keeps every draft a household was sent (#2428)', 
   const sentDrafts: Array<[string, Record<string, unknown>]> = [
     ['an Email sendGeneratedDraft stamped', { ...EMAIL_DRAFT, status: 'approved', sentAt: '2026-11-20T10:00:01.000Z' }],
     ['a Text an older client approved and sent', { ...TEXT_DRAFT, status: 'approved' }],
-    ['an Email whose send is in flight', { ...EMAIL_DRAFT, status: 'approved', sendClaimedAt: '2026-11-20T10:00:00.000Z' }],
     ['a Push that reached their phone', { ...EMAIL_DRAFT, communication_type: 'push', status: 'approved', pushOutcome: 'sent' }],
     ['a Push on their notifications list', { ...EMAIL_DRAFT, communication_type: 'push', status: 'approved', pushOutcome: 'listed' }],
   ];
@@ -629,6 +707,20 @@ describe('deleteGeneratedDraft keeps every draft a household was sent (#2428)', 
     });
   }
 
+  // #2452: this row used to sit in the table above, and so asserted "already
+  // been sent" about a claim nobody answered. It is kept, with its own words.
+  it('refuses an Email whose claim was never answered, without saying it was sent', async () => {
+    const { ctx, docs } = db({
+      'generated_drafts/d1': { ...EMAIL_DRAFT, status: 'approved', sendClaimedAt: '2026-11-20T10:00:00.000Z' },
+    });
+    await expect(deleteGeneratedDraftHandler(owner({ draftId: 'd1' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: DRAFT_DELETE_UNCONFIRMED_MESSAGE,
+      details: { code: DRAFT_SEND_UNCONFIRMED },
+    });
+    expect(ctx.deletes).toHaveLength(0);
+    expect(docs['generated_drafts/d1']).toBeDefined();
+  });
   const unsentDrafts: Array<[string, Record<string, unknown>]> = [
     ['an Email nobody approved', { ...EMAIL_DRAFT }],
     ['an Email whose send the provider refused', { ...EMAIL_DRAFT, sendFailedAt: '2026-11-20T10:00:01.000Z' }],
