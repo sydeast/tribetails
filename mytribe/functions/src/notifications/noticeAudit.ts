@@ -13,6 +13,7 @@ import {
   notificationTurnedOffWords,
   notificationsHeldSummaryWords,
   notificationsTurnedOffSummaryWords,
+  notSentLaterWords,
 } from '../lib/activityWords';
 import { notificationName } from './notificationName';
 import { HELD_NOTICE_REASONS, heldNoticeTotal, type HeldNoticeBatch, type HeldNoticeReason } from './heldNoticeBatch';
@@ -296,12 +297,15 @@ async function heldDay(batch: HeldNoticeBatch): Promise<string> {
 function summaryLine(
   reason: HeldNoticeReason,
   kinds: Parameters<typeof notificationsHeldSummaryWords>[0],
+  /** #2478: the batch's copies came off the queue for good (`HeldNoticeBatch.final`). */
+  final: { count: number } | null = null,
 ): { description: string; outcome: 'held' | 'turned_off'; severity: 'info' | 'warn' } {
+  const tail = final === null ? '' : `. ${notSentLaterWords(final.count)}`;
   if (reason === 'turnedOff') {
-    return { description: notificationsTurnedOffSummaryWords(kinds), outcome: 'turned_off', severity: 'info' };
+    return { description: notificationsTurnedOffSummaryWords(kinds) + tail, outcome: 'turned_off', severity: 'info' };
   }
   return {
-    description: notificationsHeldSummaryWords(kinds, reason === 'unreadable'),
+    description: notificationsHeldSummaryWords(kinds, reason === 'unreadable') + tail,
     outcome: 'held',
     severity: reason === 'unreadable' ? 'warn' : 'info',
   };
@@ -376,7 +380,7 @@ export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<v
         const count = kinds.reduce((sum, k) => sum + k.count, 0);
         if (count === 0) return;
 
-        const line = summaryLine(reason, kinds);
+        const line = summaryLine(reason, kinds, batch.final === true ? { count } : null);
         const chain = await readAuditChain(db(), tx);
         stageAuditEntry(
           db(),
