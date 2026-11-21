@@ -141,13 +141,16 @@ export interface ScheduleMarketingBlastResult {
   key: MarketingKey;
   /** Households (or named accounts) the audience selection matched. */
   matched: number;
-  /** Matched households with no linked MyTribe account, so nothing could be scheduled. */
+  /** Matched households with no MyTribe account by the member check, so nothing could be scheduled. */
   noLinkedAccount: number;
   /** Recipients a scheduled notification was written for. */
   dispatched: number;
   /** Recipients the dispatcher suppressed (marketing opt-in absent, or the operator's gate is off). */
   suppressed: number;
-  /** Recipients whose enqueue threw. Never folded into `suppressed`: they are a different fact. */
+  /**
+   * Recipients whose enqueue threw, plus households whose member check could
+   * not be read (#2482). Never folded into `suppressed`: they are a different fact.
+   */
   failed: number;
   /**
    * #814. True when this reply describes a blast an EARLIER attempt with the
@@ -465,7 +468,10 @@ export async function scheduleMarketingBlastHandler(
     fanoutProcessed: 0,
     dispatched: 0,
     suppressed: 0,
-    failed: 0,
+    // #2482: a household whose member check could not be read got nothing
+    // scheduled, and nothing went to its stored login instead. It starts the
+    // count of households this blast failed; the fan-out adds to it.
+    failed: audience.accountCheckFailed,
   };
 
   if (args.idempotencyKey) {
