@@ -45,6 +45,7 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.StaffMember
+import com.tribetails.auntieos.web.data.staffByline
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -778,7 +779,7 @@ private fun displayDateTime(iso: String, zone: TimeZone): String {
  * household's note reads "Kinfolk". Never the raw role, never "Auntie" by default.
  */
 internal fun bookingNoteAuthorLabel(note: BookingNote, staff: List<StaffMember>?): String = when (note.authorRole.trim().lowercase()) {
-    "admin" -> staff?.firstOrNull { it.uid == note.authorUid && note.authorUid.isNotBlank() }?.pickerLabel ?: "Staff"
+    "admin" -> staff?.firstOrNull { it.uid == note.authorUid && note.authorUid.isNotBlank() }?.let(::staffByline) ?: "Staff"
     "kinfolk" -> "Kinfolk"
     else -> "Unknown"
 }

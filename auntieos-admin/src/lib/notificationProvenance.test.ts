@@ -346,7 +346,8 @@ describe('fieldWords and deliveryRecipient (#1592)', () => {
   });
   it('names the recipient, and keeps the uid only when nobody answers to it', () => {
     expect(deliveryRecipient({ recipientName: 'Dre East', recipientUid: 'kin1' })).toBe('Dre East');
-    expect(deliveryRecipient({ recipientName: null, recipientUid: 'ghost' })).toBe('ghost');
+    expect(deliveryRecipient({ recipientName: null, recipientUid: 'ghost' })).toBe('someone with no name on file');
+    expect(deliveryRecipient({ recipientName: 'e2e-admin@tribetails.com', recipientUid: 'op1' })).toBe('someone with no name on file');
     expect(deliveryRecipient({ recipientName: null, recipientUid: '' })).toBe('an unknown recipient');
   });
 });

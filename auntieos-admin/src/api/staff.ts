@@ -81,7 +81,7 @@ export function looksLikeEmail(value: string): boolean {
  * The word a byline uses for a staff member with no name on file (#1882): the
  * same words the visit notes already sign with. Never an email, never a uid.
  */
-export function staffRoleWord(role: StaffRole | null | undefined): string {
+export function staffBylineWord(role: StaffRole | null | undefined): string {
   if (role === 'owner') return 'Office';
   if (role === 'auntie') return 'Auntie';
   return 'Staff';
@@ -94,7 +94,7 @@ export function staffRoleWord(role: StaffRole | null | undefined): string {
  */
 export function staffByline(member: StaffMember): string {
   const name = (member.displayName ?? '').trim();
-  return name !== '' && !looksLikeEmail(name) ? name : staffRoleWord(member.role);
+  return name !== '' && !looksLikeEmail(name) ? name : staffBylineWord(member.role);
 }
 
 /**

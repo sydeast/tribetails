@@ -247,7 +247,7 @@ describe('listBusinessAdmins', () => {
       docs: {
         [DOC]: { uids: ['op1'] },
         'staff/op1': {},
-        'users/op1': { displayName: 'Syd', firstName: 'Syd', lastName: 'Tester' },
+        'users/op1': { displayName: 'Jamie', firstName: 'Jamie', lastName: 'Tester' },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -256,21 +256,34 @@ describe('listBusinessAdmins', () => {
       notFound: [],
     });
     const res = await listBusinessAdminsHandler(req);
-    expect(res.members[0]).toMatchObject({ displayName: 'Syd', email: null });
+    expect(res.members[0]).toMatchObject({ displayName: 'Jamie', email: null });
   });
   it('#1882: an address stored as a display name is not a name', async () => {
     const ctx = buildDbMock({
       docs: {
         [DOC]: { uids: ['op1'] },
         'staff/op1': { displayName: 'e2e-admin@tribetails.com' },
-        'users/op1': { displayName: '', firstName: 'Syd', lastName: '' },
+        'users/op1': { displayName: '', firstName: 'Jamie', lastName: '' },
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await listBusinessAdminsHandler(req);
-    expect(res.members[0]).toMatchObject({ displayName: 'Syd' });
+    expect(res.members[0]).toMatchObject({ displayName: 'Jamie' });
   });
 
+  it('#1882: a failed Account page read falls through to the sign-in name', async () => {
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] }, 'staff/op1': {} } });
+    const realGetAll = ctx.db.getAll.bind(ctx.db);
+    ctx.db.getAll = (...refs: Array<{ path: string }>) =>
+      refs[0]?.path.startsWith('users/') ? Promise.reject(new Error('read failed')) : realGetAll(...refs);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.getUsers.mockResolvedValue({
+      users: [{ uid: 'op1', displayName: 'Jamie Signin', email: 'e2e-admin@tribetails.com' }],
+      notFound: [],
+    });
+    const res = await listBusinessAdminsHandler(req);
+    expect(res.members[0]).toMatchObject({ displayName: 'Jamie Signin', email: null });
+  });
   it('#1564: carries businessEmail, where every business email goes', async () => {
     const ctx = buildDbMock({
       docs: {
