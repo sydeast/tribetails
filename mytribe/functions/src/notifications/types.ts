@@ -230,6 +230,14 @@ export interface EnqueueArgs {
    * is emailed, texted or pushed.
    */
   listOnlyFor?: string[];
+  /**
+   * #2277: THIS send is about something `actorUid` did herself, so she gets no
+   * copy of it: no email, text or push, and no row on her notifications list.
+   * Every other recipient is unchanged. `onBookingNoteCreate` sets it, so the
+   * owner is not told about a visit note she just wrote, and neither is an
+   * Auntie. Without an `actorUid` it does nothing.
+   */
+  skipActorCopy?: boolean;
 }
 
 /**

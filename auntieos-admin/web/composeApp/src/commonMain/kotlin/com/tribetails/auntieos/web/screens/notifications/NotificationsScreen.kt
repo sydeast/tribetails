@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens.notifications
 
 import com.tribetails.auntieos.web.screens.notificationHeadline
 import com.tribetails.auntieos.web.screens.notificationCategoryLabel
+import com.tribetails.auntieos.web.screens.notificationMetaLine
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -606,7 +607,8 @@ private fun NotificationRow(
             )
             Text(
                 // #1592: the category in words. The delivery mode was a key too.
-                text = notificationCategoryLabel(entry.category),
+                // #2277: led by who caused it, as on admin web and Android.
+                text = notificationMetaLine(entry.actorName, entry.category),
                 style = typo.bodySmall,
                 color = c.textDim,
             )
