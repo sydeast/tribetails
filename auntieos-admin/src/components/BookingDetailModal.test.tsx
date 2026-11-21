@@ -344,6 +344,23 @@ describe('BookingDetailModal notes', () => {
     ]);
   });
 
+  it('#2227: a failed kinfolk-facing read says so in plain words, and Try again re-subscribes', async () => {
+    const retry = vi.fn();
+    mockNotes({ kinfolk: { status: 'error', message: 'Missing or insufficient permissions.', retry } });
+    open();
+    expect(screen.getByText('Could not load the notes')).toBeInTheDocument();
+    expect(screen.getByText(/Check the connection and try again\./)).toBeInTheDocument();
+    expect(screen.queryByText(/insufficient permissions/)).toBeNull();
+    expect(screen.queryByText(/No kinfolk-facing notes yet/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+  it('#2227: the kinfolk-facing thread shows a moving wait while it loads, never an empty list', () => {
+    mockNotes({ kinfolk: { status: 'loading' } });
+    open();
+    expect(screen.getAllByRole('status').some((el) => /Loading the notes/.test(el.textContent ?? ''))).toBe(true);
+    expect(screen.queryByText(/No kinfolk-facing notes yet/)).toBeNull();
+  });
   it('#2030: lists the note written on Accept with the thread, named by its writer, oldest first', () => {
     staffNames.current = new Map([['owner1', 'Syd']]);
     useDocById.mockImplementation((path: string, id: string) => {
