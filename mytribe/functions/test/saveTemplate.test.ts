@@ -321,11 +321,76 @@ describe('saveTemplate: expectNew', () => {
     expect(err.message).toBe('Every section needs a title. Give the untitled section a title, or remove it.');
     expect(ctx.writes).toEqual([]);
   });
+  // Review of #2084: a client that does not edit sections (Android, the desktop
+  // console) leaves them out, so an old stored untitled section never blocks
+  // its save, and the stored sections are left as they were.
+  it('HAPPY: an old template with an untitled section still saves when the sections are not sent', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'emailTemplates/k': { subject: 'old', body: 'old', sectionDefinitions: [{ title: '', description: 'Old notes' }] },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveTemplateHandler(req({ templateId: 'k', subject: 'New subject', body: 'b' }));
+    const write = ctx.writes.find((w) => w.path === 'emailTemplates/k');
+    expect(write?.data.subject).toBe('New subject');
+    expect(write?.data).not.toHaveProperty('sectionDefinitions');
+  });
   it('HAPPY: titled sections are stored as sent', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
     const sections = [{ title: 'Intro', description: '' }, { title: 'Close', description: 'Sign-off' }];
     await saveTemplateHandler(req({ templateId: 'k', subject: 's', body: 'b', sectionDefinitions: sections }));
     expect(ctx.writes.find((w) => w.path === 'emailTemplates/k')?.data.sectionDefinitions).toEqual(sections);
+  });
+  // #2251: a template the sender cannot fill in used to save, and then every
+  // send of that notice threw and the household heard nothing.
+  describe('markup the sender cannot fill in (#2251)', () => {
+    it('SAD: refuses an unclosed {{#if}} in the subject, names the field, writes nothing', async () => {
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const err = await saveTemplateHandler(
+        req({ templateId: 'invoice.new', subject: '{{#if isQuote}}Your quote is ready', body: 'Hello' }),
+      ).catch((e) => e);
+      expect(err.code).toBe('invalid-argument');
+      expect(err.message).toBe(
+        'The subject cannot be sent as written. {{#if}} is never closed. Add {{/if}} where that part ends.',
+      );
+      expect(err.details).toEqual({
+        reason: 'template-markup-refused',
+        fieldErrors: { subject: err.message },
+      });
+      expect(ctx.writes).toEqual([]);
+    });
+    it('SAD: a stray {{/if}} in the body and a half field in the html are each keyed to their box', async () => {
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const err = await saveTemplateHandler(
+        req({ templateId: 'k', subject: 'ok', body: 'Paid{{/if}}', html: '<p>Hi {{kinName</p>' }),
+      ).catch((e) => e);
+      expect(Object.keys(err.details.fieldErrors).sort()).toEqual(['body', 'html']);
+      expect(err.details.fieldErrors.body).toMatch(/^The body cannot be sent as written\. \{\{\/if\}\} closes a part/);
+      expect(err.details.fieldErrors.html).toMatch(/^The HTML cannot be sent as written\./);
+      expect(ctx.writes).toEqual([]);
+    });
+    it('SAD: a visual headline or content that does not pair up is refused', async () => {
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const err = await saveTemplateHandler(
+        req({ templateId: 'k', subject: 'S', format: 'visual', headline: 'Hi', content: '<p>{{#if a}}x</p>' }),
+      ).catch((e) => e);
+      expect(err.details.fieldErrors).toEqual({
+        content: 'The email cannot be sent as written. {{#if}} is never closed. Add {{/if}} where that part ends.',
+      });
+      expect(ctx.writes).toEqual([]);
+    });
+    it('HAPPY: paired block tags and {{else}} still save', async () => {
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await saveTemplateHandler(
+        req({ templateId: 'k', subject: '{{#if isQuote}}Quote{{else}}Invoice{{/if}} for {{kinName}}', body: 'b' }),
+      );
+      expect(ctx.writes.find((w) => w.path === 'emailTemplates/k')).toBeDefined();
+    });
   });
 });

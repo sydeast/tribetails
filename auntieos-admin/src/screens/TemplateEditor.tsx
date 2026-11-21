@@ -6,6 +6,7 @@ import {
   convertTemplateToVisual,
   isLiveNotificationKeyWarning,
   isTemplateKeyTakenError,
+  templateMarkupFieldErrors,
 } from '../api/templatesWrite';
 import type { TemplateSummary } from '../api/templates';
 import {
@@ -469,7 +470,10 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     // unlocked one must keep the seed's repeating lists (see visualContentForSave).
     const visual = mode === 'visual' ? visualContentForSave(seed.content, withTag.content, bodyLocked) : null;
     const effective: TemplateFormFields = visual ? { ...withTag, content: visual.content } : withTag;
-    const found = visual ? visualFieldErrors(effective, { isCreate }) : templateFieldErrors(effective, { isCreate });
+    const all = visual ? visualFieldErrors(effective, { isCreate }) : templateFieldErrors(effective, { isCreate });
+    // A repeating list cut or split by the edit has its own, plainer sentence
+    // (just below), so the content's markup complaint (#2251) gives way to it.
+    const found = visual?.error ? all.filter((e) => e.field !== 'content') : all;
     const untitled = sectionTitleErrors(effective.sections);
     if (found.length > 0 || Object.keys(untitled).length > 0) {
       setFieldErrors(Object.fromEntries(found.map((e) => [e.field, e.message])));
@@ -508,6 +512,13 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           `The key ${effective.templateId.trim()} is already in use. Pick a different key, ` +
             `or close this and edit the existing template.`,
         );
+        return;
+      }
+      // #2251: the server refused a field the sender could not fill in. Each
+      // sentence goes beside its own box, as the local check's would.
+      const markup = templateMarkupFieldErrors(err);
+      if (markup) {
+        setFieldErrors(markup);
         return;
       }
       setError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
@@ -1028,7 +1039,14 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                     placeholder="<p>Hi {{kinfolkName}}, ...</p>"
                     rows={6}
                     maxLength={50000}
+                    aria-invalid={fieldErrors.html ? true : undefined}
+                    aria-describedby={fieldErrors.html ? 'template-editor-html-error' : undefined}
                   />
+                  {fieldErrors.html ? (
+                    <p id="template-editor-html-error" className="template-editor__field-error" role="alert">
+                      {fieldErrors.html}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 
