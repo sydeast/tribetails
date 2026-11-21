@@ -34,6 +34,7 @@ vi.mock('../api/templatesWrite', () => ({
   convertTemplateToVisual: vi.fn(),
   isLiveNotificationKeyWarning: () => false,
   isTemplateKeyTakenError: () => false,
+  templateMarkupFieldErrors: () => null,
 }));
 vi.mock('../api/myNotifications', () => ({
   getNotificationMatrix: vi.fn().mockResolvedValue({
