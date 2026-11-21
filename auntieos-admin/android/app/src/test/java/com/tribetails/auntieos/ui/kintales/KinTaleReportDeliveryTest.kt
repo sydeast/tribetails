@@ -35,7 +35,7 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * Slice 5 UI test: a SENT KinTale report renders (a) the GPS RouteMap
  * Distance/Duration stats from the session's persisted gpsSummary route, and
- * (b) the new Delivery panel (Sent via / Receipt) with NO "SUGGESTION" pill,
+ * (b) the new Delivery panel (Sent at / Sent via / Receipt, in words: #1817, #2551) with NO "SUGGESTION" pill,
  * since the send pipeline now writes a real deliveryReceiptId. A blank receipt
  * omits the Receipt row (fail-loud by omission).
  */
@@ -115,7 +115,12 @@ class KinTaleReportDeliveryTest {
         // below the fold in the scrolling report, so assert existence, not on-screen.
         compose.onNodeWithText("Delivery").assertExists()
         compose.onNodeWithText("RECEIPT").assertExists()
-        compose.onNodeWithText("n8n_99").assertExists()
+        // #2551: the row says a receipt is on file. The dispatch id never shows.
+        compose.onNodeWithText("On file").assertExists()
+        compose.onAllNodesWithText("n8n_99").assertCountEquals0()
+        // #2551: Sent at in words on the business clock, never the stored stamp.
+        compose.onAllNodesWithText("2026-05-30T09:50:00Z").assertCountEquals0()
+        compose.onNodeWithText("04:50", substring = true).assertExists()
         // No SUGGESTION pill anywhere on the now-reliable receipt.
         compose.onAllNodesWithText("SUGGESTION").assertCountEquals0()
     }
@@ -127,6 +132,9 @@ class KinTaleReportDeliveryTest {
         compose.onNodeWithText("Delivery").assertExists()
         compose.onNodeWithText("SENT VIA").assertExists()
         compose.onAllNodesWithText("RECEIPT").assertCountEquals0()
+        // #1817: the stored "catalog" marker reads as where the tale went.
+        compose.onNodeWithText("MyTribe").assertExists()
+        compose.onAllNodesWithText("catalog").assertCountEquals0()
     }
 }
 

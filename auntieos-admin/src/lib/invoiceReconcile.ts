@@ -167,9 +167,24 @@ export function checkInvoiceTotal(doc: ReconcilableInvoice): InvoiceTotalCheck {
 /** "$36.00" / "-$12.50" / "$1,234.50" from an integer count of cents. */
 export { formatCentsUsd };
 
-/** Which doc field a stored total came from, in words the operator can act on. */
-export function storedTotalSourceLabel(from: 'totalCents' | 'total'): string {
-  return from === 'totalCents'
-    ? 'the total stored on the invoice'
-    : 'the total stored on the invoice (its legacy dollar field)';
+/**
+ * #1860: the banner's title and words when the lines and the total disagree.
+ *
+ * The old copy named the stored field ("its legacy dollar field") and the
+ * "normal edit path", which the Admin can do nothing with, and told her to
+ * re-save the lines even on a paid invoice, whose lines are locked. It now
+ * says both figures, which one is billed, and the one thing she can do: save
+ * the lines through Edit when they are editable, or that they are locked once
+ * a payment is recorded. Same words on the desktop console and Android
+ * (`invoiceTotalDisagreementText`).
+ */
+export const INVOICE_TOTAL_MISMATCH_TITLE = 'The line items do not add up to the total';
+export function invoiceTotalMismatchText(derivedCents: number, storedCents: number, linesEditable: boolean): string {
+  const stored = formatCentsUsd(storedCents);
+  const head =
+    `The line items add up to ${formatCentsUsd(derivedCents)}, but the invoice total is ${stored}. ` +
+    `The household is billed ${stored}. Nothing was changed to make them match.`;
+  return linesEditable
+    ? `${head} If the line items are right, press Edit and save them, and the total will follow.`
+    : `${head} The line items on this invoice are locked, so they cannot be edited.`;
 }

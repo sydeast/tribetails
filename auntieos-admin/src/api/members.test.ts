@@ -16,6 +16,7 @@ import {
   listHouseholdMembers,
   listRecoveryCandidates,
   memberLabel,
+  memberSubject,
   memberStatusTone,
 } from './members';
 
@@ -303,7 +304,7 @@ describe('permission metadata', () => {
 });
 
 describe('display helpers', () => {
-  it('labels a member by email, then label, then uid, never blank', () => {
+  it('labels a member by name, then label, then role in words: never blank, never an email or the uid', () => {
     const base = {
       uid: 'u1',
       displayName: null,
@@ -318,10 +319,23 @@ describe('display helpers', () => {
         home_access: false,
       },
     };
-    expect(memberLabel({ ...base, secondaryLabel: 'Spouse', invitedEmail: 'a@b.com' })).toBe('a@b.com');
-    expect(memberLabel({ ...base, secondaryLabel: 'Spouse', invitedEmail: null })).toBe('Spouse');
+    // #1853: the email is not a name.
+    expect(memberLabel({ ...base, secondaryLabel: 'Spouse', invitedEmail: 'a@b.com' })).toBe('Spouse');
+    expect(memberLabel({ ...base, secondaryLabel: null, invitedEmail: 'a@b.com' })).toBe('Secondary kinfolk');
+    expect(
+      memberLabel({ ...base, role: 'PRIMARY', secondaryLabel: null, invitedEmail: 'lost@example.com' }),
+    ).toBe('Primary contact');
+    expect(memberLabel({ ...base, displayName: '  ', secondaryLabel: null, invitedEmail: null })).toBe(
+      'Secondary kinfolk',
+    );
     // #1589: never the database id.
-    expect(memberLabel({ ...base, secondaryLabel: null, invitedEmail: null })).toBe('Unnamed member');
+    expect(memberLabel({ ...base, secondaryLabel: null, invitedEmail: null })).toBe('Secondary kinfolk');
+    expect(
+      memberSubject({ ...base, role: 'PRIMARY', secondaryLabel: null, invitedEmail: 'lost@example.com' }),
+    ).toBe('The primary contact');
+    expect(memberSubject({ ...base, displayName: 'Dre East', secondaryLabel: null, invitedEmail: null })).toBe(
+      'Dre East',
+    );
     expect(memberLabel({ ...base, displayName: 'Dre East', secondaryLabel: 'Spouse', invitedEmail: 'a@b.com' })).toBe('Dre East');
   });
 

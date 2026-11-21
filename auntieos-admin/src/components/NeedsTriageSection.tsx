@@ -128,7 +128,7 @@ export function NeedsTriageSection({ kinfolk, candidateReports }: NeedsTriageSec
               <span className="needs-triage__row-dot" aria-hidden="true">
                 ·
               </span>
-              <span className="needs-triage__row-via">{sentViaLabel(report.sentVia)}</span>
+              <span className="needs-triage__row-via">{sentViaLabel(report.sentVia) ?? 'imported'}</span>
             </div>
             <p className="needs-triage__row-body">{bodyPreview(report.bodyCopy)}</p>
             <div className="needs-triage__row-actions">
