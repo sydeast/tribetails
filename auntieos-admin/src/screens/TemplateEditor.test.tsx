@@ -36,6 +36,7 @@ vi.mock('../api/templatesWrite', async () => {
     convertTemplateToVisual,
     isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning,
     isTemplateKeyTakenError: actual.isTemplateKeyTakenError,
+    templateMarkupFieldErrors: actual.templateMarkupFieldErrors,
   };
 });
 
@@ -361,7 +362,7 @@ describe('TemplateEditor: I9 usage instructions + sections', () => {
     expect(screen.queryByLabelText(/section 1 title/i)).toBeNull();
   });
 
-  it('sends edited usage instructions and non-blank sections in the save payload, dropping titleless rows', async () => {
+  it('sends edited usage instructions and non-blank sections in the save payload, dropping empty rows', async () => {
     saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
     render(
       <TemplateEditor
@@ -372,12 +373,11 @@ describe('TemplateEditor: I9 usage instructions + sections', () => {
     );
     await userEvent.type(screen.getByLabelText(/usage instructions/i), 'Use for confirmed bookings.');
 
-    // First section: fully filled. Second: no title, dropped on save.
+    // First section: fully filled. Second: nothing typed, dropped on save.
     await userEvent.click(screen.getByRole('button', { name: /add section/i }));
     await userEvent.type(screen.getByLabelText(/section 1 title/i), 'Greeting');
     await userEvent.type(screen.getByLabelText(/section 1 description/i), 'Warm hello');
     await userEvent.click(screen.getByRole('button', { name: /add section/i }));
-    await userEvent.type(screen.getByLabelText(/section 2 description/i), 'orphan, no title');
 
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
 
@@ -387,6 +387,111 @@ describe('TemplateEditor: I9 usage instructions + sections', () => {
           usageInstructions: 'Use for confirmed bookings.',
           sectionDefinitions: [{ title: 'Greeting', description: 'Warm hello' }],
         }),
+      ),
+    );
+  });
+
+  // #2084: the walk typed a description into a section with no title, pressed
+  // Save, saw "Saved", and the text was gone on reopening.
+  it('#2084: a section with text and no title stops Save, says so at the row, and loses nothing', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={tpl({ templateId: 'booking.confirmed' })} onClose={vi.fn()} onSaved={onSaved} />);
+    await userEvent.click(screen.getByRole('button', { name: /add section/i }));
+    await userEvent.type(screen.getByLabelText(/section 1 description/i), 'What this section covers');
+    await userEvent.click(screen.getByRole('button', { name: /add section/i }));
+    await userEvent.type(screen.getByLabelText(/section 2 title/i), 'QA-R1 section');
+
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    expect(saveTemplate).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^Saved /)).toBeNull();
+    expect(screen.getByLabelText(/section 1 title/i)).toHaveAttribute('aria-invalid', 'true');
+    expect(document.getElementById('template-editor-section-0-error')).toHaveTextContent(
+      'Give this section a title, or remove it.',
+    );
+    expect(screen.getByLabelText(/section 1 description/i)).toHaveValue('What this section covers');
+    expect(screen.getByText('One thing needs fixing. It is marked below.')).toBeInTheDocument();
+
+    // Typing a title clears the mark, and the save keeps both rows.
+    await userEvent.type(screen.getByLabelText(/section 1 title/i), 'Intro');
+    expect(document.getElementById('template-editor-section-0-error')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sectionDefinitions: [
+            { title: 'Intro', description: 'What this section covers' },
+            { title: 'QA-R1 section', description: '' },
+          ],
+        }),
+      ),
+    );
+    expect(await screen.findByText('Saved Booking Confirmed.')).toBeInTheDocument();
+  });
+
+  it('#2084: removing the untitled section also lets the save through', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(<TemplateEditor template={tpl({ templateId: 'booking.confirmed' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /add section/i }));
+    await userEvent.type(screen.getByLabelText(/section 1 description/i), 'orphan');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(saveTemplate).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalledWith(expect.objectContaining({ sectionDefinitions: [] })));
+  });
+
+  // Review of #2084: a template stored before this with an untitled section
+  // still opens and saves after an unrelated edit.
+  it('#2084: an old template with an empty untitled section saves after an unrelated edit', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    const onSaved = vi.fn();
+    render(
+      <TemplateEditor
+        template={tpl({
+          templateId: 'booking.confirmed',
+          sectionDefinitions: [
+            { title: '', description: '' },
+            { title: 'Greeting', description: 'Warm hello' },
+          ],
+        })}
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+    await userEvent.type(screen.getByLabelText(/usage instructions/i), 'Use for confirmed bookings.');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ sectionDefinitions: [{ title: 'Greeting', description: 'Warm hello' }] }),
+      ),
+    );
+    expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('#2084: an old untitled section with text is shown, marked, and saves once titled', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'booking.confirmed', sectionDefinitions: [{ title: '  ', description: 'Old notes' }] })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/section 1 description/i)).toHaveValue('Old notes');
+    await userEvent.type(screen.getByLabelText(/usage instructions/i), 'x');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(saveTemplate).not.toHaveBeenCalled();
+    expect(document.getElementById('template-editor-section-0-error')).toHaveTextContent(
+      'Give this section a title, or remove it.',
+    );
+    await userEvent.type(screen.getByLabelText(/section 1 title/i), 'Notes');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ sectionDefinitions: [{ title: 'Notes', description: 'Old notes' }] }),
       ),
     );
   });
@@ -407,6 +512,82 @@ describe('TemplateEditor: save failure (fail loud)', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Email template');
     expect(screen.getByLabelText(/template key/i)).toHaveValue('booking.confirmed');
     expect(onSaved).not.toHaveBeenCalled();
+  });
+});
+
+// #2251: a template the sender cannot fill in used to save, and every send of
+// that notice then failed while the household heard nothing.
+describe('TemplateEditor: markup the sender cannot fill in (#2251)', () => {
+  it('an unclosed {{#if}} in the subject stops Save and says so beside the subject', async () => {
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={tpl()} onClose={vi.fn()} onSaved={onSaved} />);
+    fireEvent.change(screen.getByLabelText(/^subject$/i), { target: { value: '{{#if isQuote}}Your quote is ready' } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    const subject = screen.getByLabelText(/^subject$/i);
+    expect(subject).toHaveAttribute('aria-invalid', 'true');
+    expect(document.getElementById('template-editor-subject-error')).toHaveTextContent(
+      'The subject cannot be sent as written. {{#if}} is never closed. Add {{/if}} where that part ends.',
+    );
+    expect(saveTemplate).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^Saved /)).toBeNull();
+  });
+
+  it('a stray {{/if}} in the HTML is caught at the HTML field', async () => {
+    render(<TemplateEditor template={tpl({ html: '<p>Hi</p>' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/html/i), { target: { value: '<p>Paid{{/if}}</p>' } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(document.getElementById('template-editor-html-error')).toHaveTextContent(
+      /^The HTML cannot be sent as written\. \{\{\/if\}\} closes a part that was never opened/,
+    );
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it("draws the server's refusal beside the field it names, not as a page banner", async () => {
+    saveTemplate.mockRejectedValue(
+      Object.assign(new Error('The body cannot be sent as written.'), {
+        code: 'functions/invalid-argument',
+        details: {
+          reason: 'template-markup-refused',
+          fieldErrors: { body: 'The body cannot be sent as written. {{#each}} is not something a notification can use here.' },
+        },
+      }),
+    );
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={tpl()} onClose={vi.fn()} onSaved={onSaved} />);
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    await waitFor(() =>
+      expect(document.getElementById('template-editor-body-error')).toHaveTextContent(
+        'The body cannot be sent as written. {{#each}} is not something a notification can use here.',
+      ),
+    );
+    expect(screen.getByLabelText(/^body$/i)).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.queryByText(/Could not save:/)).toBeNull();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('a visual template whose content opens a block and never closes it is held back', async () => {
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/template key/i), 'quote.ready');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Ready');
+    fillVisualBody('<p>{{#if isQuote}}Your quote</p>');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(document.getElementById('template-editor-content-error')).toHaveTextContent(
+      /^The email cannot be sent as written\. \{\{#if\}\} is never closed/,
+    );
+    expect(saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('paired block tags with {{else}} save as before', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(<TemplateEditor template={tpl()} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/^subject$/i), {
+      target: { value: '{{#if isQuote}}Quote{{else}}Invoice{{/if}} for {{kinName}}' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalledTimes(1));
   });
 });
 
