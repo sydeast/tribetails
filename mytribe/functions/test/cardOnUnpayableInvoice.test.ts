@@ -256,6 +256,12 @@ describe('#2361: a declined card on an invoice that was cancelled or written off
       ['a draft', { ...OPEN, status: 'draft' }, 'invoice-not-sent', NOT_SENT_LINE],
       ['a quote saved unsent', { ...OPEN, status: 'draft', invoiceStatus: 'draft', quoteDraft: true }, 'invoice-not-sent', NOT_SENT_LINE],
       ['a quote', { ...OPEN, status: 'quote' }, 'invoice-not-sent', NOT_SENT_LINE],
+      [
+        'a draft in the older status field only',
+        { kinfolkId: 'fam1', invoiceNumber: '1029', invoiceStatus: 'draft', total: 40, totalCents: 4000, amountDue: 40, amountDueCents: 4000 },
+        'invoice-not-sent',
+        NOT_SENT_LINE,
+      ],
       ['a credit by its label', { ...OPEN, status: 'credit' }, 'invoice-credit', CREDIT_LINE],
       [
         'a credit with a negative balance',
@@ -345,6 +351,13 @@ describe('#2361: a declined card on an invoice that was cancelled or written off
       expect(notices('invoice.charge.failed')).toHaveLength(1);
       expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(1);
       expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')[0]![0].payload.reason).toBe(reason);
+      // The notice is closed as skipped, so a later retry, even with the
+      // invoice open again, sends nothing and writes no second line.
+      expect(docs['stripeEvents/evt_fail_1']).toMatchObject({ noticeSkippedReason: 'declined-after-payment' });
+      docs[INVOICE] = { ...docs[INVOICE]!, status: 'open' };
+      expect(await deliver('declined-1')).toBe(200);
+      expect(notices('invoice.charge.failed')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(1);
     });
 
     it('a quote the household accepted is an open invoice, and a decline on it still tells them', async () => {
