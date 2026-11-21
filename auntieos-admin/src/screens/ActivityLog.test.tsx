@@ -933,6 +933,22 @@ describe('ActivityLog older entries (#1880)', () => {
     expect(screen.getByText(/line 660/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: LOAD_OLDER_LABEL })).toBeInTheDocument();
   });
+  it('keeps the rows new entries push out of the newest 200, so no entry falls between the pages', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: page(1059, 200) });
+    fetchOlderActivity.mockResolvedValueOnce(page(859, 200)).mockResolvedValueOnce(page(659, 200));
+    const { rerender } = render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('button', { name: LOAD_OLDER_LABEL }));
+    await screen.findByText('400 of 400 loaded');
+    // Five new entries arrive: the live newest 200 now starts at 865.
+    useCollection.mockReturnValue({ status: 'ready', data: page(1064, 200) });
+    rerender(<ActivityLog />);
+    expect(await screen.findByText('405 of 405 loaded')).toBeInTheDocument();
+    for (const seq of [860, 862, 864]) expect(screen.getByText(new RegExp(`line ${seq}\\b`))).toBeInTheDocument();
+    // The next press still starts below the oldest entry on screen.
+    await userEvent.click(screen.getByRole('button', { name: LOAD_OLDER_LABEL }));
+    expect(fetchOlderActivity).toHaveBeenLastCalledWith(660, 200);
+    expect(await screen.findByText('605 of 605 loaded')).toBeInTheDocument();
+  });
   it('stops offering once a page comes back short, because nothing older is left', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: page(250, 200) });
     fetchOlderActivity.mockResolvedValue(page(50, 50));

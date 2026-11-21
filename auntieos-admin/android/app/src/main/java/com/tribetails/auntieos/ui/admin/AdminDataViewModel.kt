@@ -719,7 +719,15 @@ class AdminDataViewModel(
         val oldest = _activityLog.value.mapNotNull { it.seq }.minOrNull() ?: return
         _olderActivity.value = _olderActivity.value.copy(loading = true, error = null)
         viewModelScope.launch {
-            repository.getOlderActivityLog(oldest).onSuccess { page ->
+            val result = repository.getOlderActivityLog(oldest)
+            // A refresh that landed while this page was read replaced the list with
+            // a newer first page. This page sits below the old one, so adding it
+            // would leave a hole above it that no later press fills: drop it.
+            if (_activityLog.value.mapNotNull { it.seq }.minOrNull() != oldest) {
+                _olderActivity.value = _olderActivity.value.copy(loading = false)
+                return@launch
+            }
+            result.onSuccess { page ->
                 val seen = _activityLog.value.map { it.id }.toSet()
                 _activityLog.value = (_activityLog.value + page.filter { it.id !in seen })
                     .sortedByDescending { it.timestamp }

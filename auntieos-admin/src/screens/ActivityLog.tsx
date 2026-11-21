@@ -98,10 +98,25 @@ interface OlderState {
 
 const NO_OLDER: OlderState = { rows: [], loading: false, error: null, exhausted: false };
 
-/** The live rows, then the older pages, with no entry twice. */
+/**
+ * Every row given, no entry twice, newest chain sequence first. The first
+ * list's copy of an entry wins, so the live listener's copy is the one shown.
+ */
+function mergeRows(...lists: ReadonlyArray<readonly ActivityLogEntry[]>): ActivityLogEntry[] {
+  const byId = new Map<string, ActivityLogEntry>();
+  for (const list of lists) for (const e of list) if (!byId.has(e._id)) byId.set(e._id, e);
+  const seqOf = (e: ActivityLogEntry) => (typeof e.seq === 'number' ? e.seq : Number.NEGATIVE_INFINITY);
+  return [...byId.values()].sort((a, b) => seqOf(b) - seqOf(a));
+}
+
+/**
+ * The live rows, then the older pages, with no entry twice. The older rows
+ * also hold every live row seen since the first older page was read: a new
+ * entry pushes the oldest live row out of the newest 200, and without them that
+ * row would sit in neither list, a hole no later press could fill.
+ */
 function withOlder(live: readonly ActivityLogEntry[], older: readonly ActivityLogEntry[]): ActivityLogEntry[] {
-  const seen = new Set(live.map((e) => e._id));
-  return [...live, ...older.filter((e) => !seen.has(e._id))];
+  return mergeRows(live, older);
 }
 
 /** The lowest chain sequence on screen, where the next older page starts. */
@@ -231,6 +246,17 @@ export function ActivityLog() {
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(new Set());
   /** #1880: the pages read below the live 200, and whether another read is running or failed. */
   const [older, setOlder] = useState<OlderState>(NO_OLDER);
+  const hasOlder = older.rows.length > 0;
+  // #1880: once an older page is on screen, keep every live row the listener
+  // hands over, so a row that new entries push out of the newest 200 stays.
+  useEffect(() => {
+    if (!hasOlder || entries.status !== 'ready') return;
+    const live = entries.data;
+    setOlder((prev) => {
+      const kept = new Set(prev.rows.map((e) => e._id));
+      return live.every((e) => kept.has(e._id)) ? prev : { ...prev, rows: mergeRows(prev.rows, live) };
+    });
+  }, [entries, hasOlder]);
 
   async function loadOlder(shown: readonly ActivityLogEntry[]): Promise<void> {
     if (older.loading) return;
@@ -240,7 +266,8 @@ export function ActivityLog() {
     try {
       const page = await fetchOlderActivity(oldest, ACTIVITY_OLDER_PAGE);
       setOlder((prev) => ({
-        rows: [...prev.rows, ...page],
+        // What was on screen at the press, then the page below it.
+        rows: mergeRows(prev.rows, shown, page),
         loading: false,
         error: null,
         exhausted: page.length < ACTIVITY_OLDER_PAGE,
