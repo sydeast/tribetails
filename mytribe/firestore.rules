@@ -912,7 +912,11 @@ service cloud.firestore {
  // The create guard closes the delete-and-recreate walkaround: without it a
  // client reaches the same terminal state on the same doc id in two writes
  // instead of one.
-      allow create: if (isStaff() || testOwnsIncoming())
+      // #2187 ruling, 2026-11-20 ("owner-only"): only the owner makes a New
+      // visit. An Auntie is refused a visit created here, as she is refused
+      // `createKinCareSession`; she works the visits the owner made (the
+      // update grant below).
+      allow create: if (isOwner() || testOwnsIncoming())
                     && !(('status' in request.resource.data)
                          && terminalBookingStatus(request.resource.data.status));
       // #944: THIS GRANT IS LOAD-BEARING FOR THE AUNTIE AND MUST NOT NARROW.

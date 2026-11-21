@@ -91,7 +91,9 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'setMediaProfilePhoto',
 
   // ── Visits and her own schedule ────────────────────────────────────────
-  'createKinCareSession',
+  // #2187 ruling, 2026-11-20 ("owner-only"): only the owner makes a New
+  // visit, so createKinCareSession is not here. Admin web does not draw New
+  // visit for her, and the rules refuse her a visit created directly.
   'updateKinCareSession',
   'setVisitLifecycle', // On my way / Arrived / Departed, the in-visit clock
   'verifyVisitArrival',
