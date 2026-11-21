@@ -39,6 +39,7 @@ class InvoiceLedgerRowTest {
         appliedInvoiceId: String = "",
         appliedInvoiceNumber: String = "",
         method: String = "Venmo",
+        methodLabel: String = method,
         date: String = "2026-07-20",
     ) = GetInvoiceLedgerResultLedgerPayment(
         paymentId = "p1",
@@ -55,6 +56,7 @@ class InvoiceLedgerRowTest {
         appliedInvoiceId = appliedInvoiceId,
         appliedInvoiceNumber = appliedInvoiceNumber,
         method = method,
+        methodLabel = methodLabel,
         reference = "",
         date = date,
         notes = "",
@@ -161,6 +163,25 @@ class InvoiceLedgerRowTest {
     fun `a blank method is an absence, not a method called payment`() {
         assertEquals("no method recorded", ledgerRowMethodLabel(row(method = "")))
         assertEquals("no method recorded", ledgerRowMethodLabel(row(method = "  ")))
+    }
+
+    // #2334: a checkout payment reads as what it was paid with.
+    @Test
+    fun `a checkout payment reads as the server's words for its method`() {
+        assertEquals("Klarna", ledgerRowMethodLabel(row(method = "stripe", methodLabel = "Klarna")))
+        assertEquals("Card", ledgerRowMethodLabel(row(method = "stripe", methodLabel = "Card")))
+    }
+
+    @Test
+    fun `an old checkout payment reads Online payment, never stripe, even from an older server`() {
+        assertEquals("Online payment", ledgerRowMethodLabel(row(method = "stripe", methodLabel = "Online payment")))
+        assertEquals("Online payment", ledgerRowMethodLabel(row(method = "stripe", methodLabel = "")))
+        assertEquals("Online payment", ledgerRowMethodLabel(row(method = "Stripe", methodLabel = "  ")))
+    }
+
+    @Test
+    fun `a card payment's day from the server reads as a date, not no date recorded`() {
+        assertEquals("Nov 20, 2026", ledgerRowDateLabel(row(method = "stripe", methodLabel = "Card", date = "2026-11-20")))
     }
 
     // ── Fee ───────────────────────────────────────────────────────────────────

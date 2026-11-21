@@ -897,3 +897,184 @@ describe('#1848 getMyInvoices ships the invoice number', () => {
     });
   });
 });
+
+describe('#2334: an invoice carries its Payment History for the household', () => {
+  function seedPaid(settings: Record<string, unknown> | null = { timeZone: 'America/Chicago' }) {
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'families/3': { accountBalanceCents: 0 },
+      ...(settings ? { 'business_settings/business_settings': settings } : {}),
+      'invoices/inv-paid': {
+        kinfolkId: '3',
+        status: 'paid',
+        invoiceStatus: 'paid',
+        total: 60,
+        totalCents: 6000,
+        amountDue: 0,
+        amountDueCents: 0,
+        paidCents: 6000,
+      },
+      // 8:30 PM on Nov 20 in Chicago.
+      'invoices/inv-paid/payments/stripe_pi_1': {
+        amountCents: 2500,
+        method: 'stripe',
+        onlineMethod: 'klarna',
+        reference: 'pi_1',
+        paidAt: '2026-11-21T02:30:00.000Z',
+        recordedBy: 'system:stripe',
+      },
+      'invoices/inv-paid/payments/stripe_pi_0': {
+        amountCents: 1500,
+        method: 'stripe',
+        reference: 'pi_0',
+        paidAt: '2026-11-01T15:00:00.000Z',
+        recordedBy: 'system:stripe',
+      },
+      'invoices/inv-paid/payments/hand': {
+        amount: 20,
+        method: 'venmo',
+        reference: '@riveras',
+        paidAt: '2026-10-30T15:00:00.000Z',
+        recordedBy: 'admin1',
+      },
+      'invoices/inv-open': { kinfolkId: '3', status: 'open', total: 9, amountDue: 9, amountDueCents: 900 },
+      // #2470: brought over with $25 already paid in the old system, then $10
+      // by hand here, $5 still owed.
+      'invoices/inv-brought': {
+        kinfolkId: '3',
+        status: 'open',
+        invoiceStatus: 'open',
+        total: 40,
+        totalCents: 4000,
+        amountDue: 5,
+        amountDueCents: 500,
+        paidCents: 1000,
+        broughtOverPaidCents: 2500,
+      },
+      'invoices/inv-brought/payments/auto1': {
+        amountCents: 1000,
+        method: 'CASH',
+        reference: 'receipt 88',
+        paidAt: '2026-11-05T15:00:00.000Z',
+        recordedBy: 'admin1',
+        notes: 'left on the counter',
+      },
+      // Paid in full in the old system, with no row here at all.
+      'invoices/inv-old': {
+        kinfolkId: '3',
+        status: 'paid',
+        invoiceStatus: 'paid',
+        total: 30,
+        totalCents: 3000,
+        amountDue: 0,
+        amountDueCents: 0,
+        broughtOverPaidCents: 3000,
+      },
+      // A draft and its rows stay the office's own.
+      'invoices/inv-draft': { kinfolkId: '3', invoiceStatus: 'draft', status: 'draft', total: 5 },
+      'invoices/inv-draft/payments/x': { amountCents: 500, method: 'cash', paidAt: '2026-11-02T15:00:00.000Z' },
+    };
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs, writeThrough: true }).db);
+  }
+
+  async function listedAll() {
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    return [...res.open, ...res.paid, ...res.credits];
+  }
+
+  it('lists each payment newest first, by its method in plain words, its business day and its amount', async () => {
+    seedPaid();
+    const inv = (await listedAll()).find((i) => i.id === 'inv-paid');
+    expect(inv?.payments).toEqual([
+      { paymentId: 'p1', methodLabel: 'Klarna', paidDay: '2026-11-20', amountCents: 2500 },
+      { paymentId: 'p2', methodLabel: 'Online payment', paidDay: '2026-11-01', amountCents: 1500 },
+      { paymentId: 'p3', methodLabel: 'Venmo', paidDay: '2026-10-30', amountCents: 2000 },
+    ]);
+  });
+  it('carries nothing of the stored rows but the words, the day and the amount: no row id, reference, recorder or note', async () => {
+    seedPaid();
+    const all = await listedAll();
+    const shipped = JSON.stringify(all.map((i) => i.payments));
+    // A card row is stored under the Stripe payment's own reference.
+    for (const secret of ['pi_0', 'pi_1', 'stripe', '@riveras', 'admin1', 'system:', 'receipt 88', 'counter', 'auto1', 'hand']) {
+      expect(shipped).not.toContain(secret);
+    }
+  });
+  it('a bill brought over part paid ends with one undated "Paid before" line, and the lines add up to what it shows as paid', async () => {
+    seedPaid();
+    const inv = (await listedAll()).find((i) => i.id === 'inv-brought');
+    expect(inv?.payments).toEqual([
+      { paymentId: 'p1', methodLabel: 'Cash', paidDay: '2026-11-05', amountCents: 1000 },
+      { paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 2500 },
+    ]);
+    expect(inv?.paidCents).toBe(3500);
+    expect((inv?.payments ?? []).reduce((sum, p) => sum + p.amountCents, 0)).toBe(inv?.paidCents);
+  });
+  it('a bill paid in full before it was brought over shows that one line', async () => {
+    seedPaid();
+    const inv = (await listedAll()).find((i) => i.id === 'inv-old');
+    expect(inv?.payments).toEqual([{ paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 3000 }]);
+    expect(inv?.paidCents).toBe(3000);
+  });
+
+  it('never says stripe, and never carries the reference, who recorded it, or a fee', async () => {
+    seedPaid();
+    const inv = (await listedAll()).find((i) => i.id === 'inv-paid');
+    for (const p of inv?.payments ?? []) {
+      expect(p.methodLabel.toLowerCase()).not.toContain('stripe');
+      expect(Object.keys(p).sort()).toEqual(['amountCents', 'methodLabel', 'paidDay', 'paymentId']);
+    }
+  });
+
+  it('an invoice with no rows has an empty history, and a hidden draft is not listed at all', async () => {
+    seedPaid();
+    const all = await listedAll();
+    expect(all.find((i) => i.id === 'inv-open')?.payments).toEqual([]);
+    expect(all.find((i) => i.id === 'inv-draft')).toBeUndefined();
+  });
+
+  it('no business zone set reads the day on the shared default, Chicago', async () => {
+    seedPaid(null);
+    const inv = (await listedAll()).find((i) => i.id === 'inv-paid');
+    expect(inv?.payments[0]).toMatchObject({ methodLabel: 'Klarna', paidDay: '2026-11-20' });
+  });
+});
+
+describe('#2334: householdPaymentsOf', () => {
+  it('a row with no date sorts last with a null day, and an empty row is left out', async () => {
+    const { householdPaymentsOf } = await import('../src/portal/getMyInvoices');
+    expect(
+      householdPaymentsOf(
+        [
+          { id: 'a', data: { amountCents: 100, method: 'account credit' } },
+          { id: 'b', data: { amountCents: 200, method: 'stripe', onlineMethod: 'card', paidAt: '2026-11-03T12:00:00.000Z' } },
+          { id: 'c', data: { amountCents: 0, method: 'cash', paidAt: '2026-11-04T12:00:00.000Z' } },
+        ],
+        'America/Chicago',
+      ),
+    ).toEqual([
+      { paymentId: 'p1', methodLabel: 'Card', paidDay: '2026-11-03', amountCents: 200 },
+      { paymentId: 'p2', methodLabel: 'Account credit', paidDay: null, amountCents: 100 },
+    ]);
+  });
+  it('what was paid before the bill was brought over is the last line, and it stands with no rows read', async () => {
+    const { householdPaymentsOf } = await import('../src/portal/getMyInvoices');
+    expect(householdPaymentsOf([], 'America/Chicago', 2500)).toEqual([
+      { paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 2500 },
+    ]);
+    expect(
+      householdPaymentsOf([{ id: 'x', data: { amountCents: 700, method: 'venmo', paidAt: '2026-11-03T12:00:00.000Z' } }], 'America/Chicago', 300),
+    ).toEqual([
+      { paymentId: 'p1', methodLabel: 'Venmo', paidDay: '2026-11-03', amountCents: 700 },
+      { paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 300 },
+    ]);
+  });
+  it('nothing brought over, or a broken figure, adds no line', async () => {
+    const { householdPaymentsOf } = await import('../src/portal/getMyInvoices');
+    expect(householdPaymentsOf([], 'America/Chicago')).toEqual([]);
+    expect(householdPaymentsOf([], 'America/Chicago', 0)).toEqual([]);
+    expect(householdPaymentsOf([], 'America/Chicago', -500)).toEqual([]);
+    expect(householdPaymentsOf([], 'America/Chicago', 12.5)).toEqual([]);
+  });
+});

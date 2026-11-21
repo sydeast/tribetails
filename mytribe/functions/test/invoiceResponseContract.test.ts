@@ -115,6 +115,8 @@ function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown>
     payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
     // #2410: null on an invoice that can be paid.
     payBlockedReason: null,
+    // #2334: the bill's Payment History, empty on an unpaid bill.
+    payments: [],
     ...over,
   };
 }

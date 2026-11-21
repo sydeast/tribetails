@@ -88,6 +88,7 @@ class InvoiceDetailPaymentUnitsTest {
         amountCents: Long = 13750L,
         tipCents: Long = 0L,
         method: String = "stripe",
+        methodLabel: String = "Card",
         date: String = "2026-07-20",
         amountResolved: Boolean = true,
     ) = GetInvoiceLedgerResultLedgerPayment(
@@ -105,6 +106,7 @@ class InvoiceDetailPaymentUnitsTest {
         appliedInvoiceId = "",
         appliedInvoiceNumber = "",
         method = method,
+        methodLabel = methodLabel,
         reference = "",
         date = date,
         notes = "",
