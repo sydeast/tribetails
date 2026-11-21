@@ -1270,9 +1270,9 @@ service cloud.firestore {
         allow delete: if hasPerm(fid,'billing_full');
 
  // Per-visit KinCare docs. Same create gate as the envelope. Kinfolks may
- // mutate the visit's own fields (status/notes/title/window); the
- // isAuntie() update branch is the AuntieOS write-back path that lands
- // visitProgress, auntieDisplayName, sourceBookingId, sessionId, etc.
+ // mutate the visit's own fields (status/notes/title/window); the staff
+ // update branches are the AuntieOS write-back path that lands status,
+ // auntieDisplayName, auntieAvatarUrl, sourceBookingId and sessionId.
         match /kinCares/{visitId} {
  // #1906: HOUSEHOLD READS MATCH WHAT THE PORTAL SHOWS. This document is the
  // office's working copy of a visit: it carries `priceCents` (#1037) and the
@@ -1286,29 +1286,68 @@ service cloud.firestore {
  // it unused. If the portal ever takes direct reads of visits (accepted, not yet
  // built), give it a household copy first.
  //
- // Writes below are unchanged: a household member may still move a visit it
- // may move, and a rules write does not need the read. The envelope above
+ // A household member may still move a visit it may move (the writes below),
+ // and a rules write does not need the read. The envelope above
  // carries no amount and stays readable by every active member.
           allow read: if isStaff();
+
+ // EACH APP WRITES ONLY THE FIELDS IT OWNS. Every other field on this document
+ // is written by the Cloud Functions (Admin SDK, not subject to these rules).
+ //
+ // The client writers, read off every app that can reach this path:
+ //   admin Android   `EnhancedSchedulingViewModel.writeBackKinCareApproval`
+ //                   (KinCareRepository.patchKinCareDoc): status,
+ //                   auntieDisplayName, auntieAvatarUrl, sourceBookingId,
+ //                   sessionId, updatedAt. The same six since the first
+ //                   committed build, for the owner and for an Auntie.
+ //   admin web       none; every visit change goes through a callable.
+ //   desktop console none; `platformPatchKinCareDoc` is a stub with no caller.
+ //   MyTribe web     none; the portal reaches visits through callables only.
+ //   MyTribe Android none, for the same reason.
+ // `visitProgress` is kept on the staff list for older installed builds; the
+ // household lists keep what they allowed before.
+ //
+ // The server-only fields are named outright as well, and refused on create
+ // and update for every client, so a later widening of one role's list cannot
+ // let one through by accident.
+          function visitServerOnlyKeys() {
+            return ['officeNoticeStamp', 'kinAddedStamp', 'seriesApprovedAt', 'requestDeclinedAt'];
+          }
+          function visitServerOnlyKeysUntouched() {
+            return !request.resource.data.diff(resource.data).affectedKeys().hasAny(visitServerOnlyKeys());
+          }
+          function staffVisitWriteKeys() {
+            return ['status', 'auntieDisplayName', 'auntieAvatarUrl', 'sourceBookingId',
+                    'sessionId', 'visitProgress', 'updatedAt'];
+          }
+          function householdVisitWriteKeys() {
+            return ['status', 'notes', 'title', 'window', 'updatedAt'];
+          }
+
           allow create: if activeMember(fid)
             && request.resource.data.familyId == fid
             && request.resource.data.targetType in ['KIN','KINFOLK']
+            && !affects(visitServerOnlyKeys())
             && (hasPerm(fid,'billing_full')
                 || (!affects(invoiceKeys()) && !affects(restrictedSitterKeys())));
           // #944: `priceCents` is the real per-visit price
           // (portal/requestBooking.ts:762) and it lives on this document. An
-          // Auntie writes the visit back (status, visitProgress,
-          // auntieDisplayName, sessionId) and may not move the price.
+          // Auntie writes the visit back (status, auntieDisplayName, sessionId)
+          // and may not move the price; it is not on her list.
           //
           // She can still READ it, here and through the collectionGroup query
           // below. That is the second of the two exposures the spec names: the
           // queue and the grid are the job, and no rule can serve the visit
           // while hiding one field of it.
-          allow update: if isOwner()
-            || (isCaretaker() && caretakerMoneyUnchanged())
-            || hasPerm(fid,'billing_full')
+          //
+          // A member with billing access keeps the invoice keys it could write
+          // before on top of the household list.
+          allow update: if visitServerOnlyKeysUntouched() && (
+            (isOwner() && diffOnly(staffVisitWriteKeys()))
+            || (isCaretaker() && caretakerMoneyUnchanged() && diffOnly(staffVisitWriteKeys()))
+            || (hasPerm(fid,'billing_full') && diffOnly(householdVisitWriteKeys().concat(invoiceKeys())))
             || (activeMember(fid) && invoiceFieldsUnchanged() && sitterFieldsUnchanged()
-                && diffOnly(['status','notes','title','window','updatedAt']));
+                && diffOnly(householdVisitWriteKeys())));
           allow delete: if hasPerm(fid,'billing_full');
 
  // KinCare notes, server-written via addBookingNote callable.
