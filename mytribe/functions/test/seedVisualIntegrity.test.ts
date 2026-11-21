@@ -4,8 +4,8 @@ import { sanitizeEmailContent, MERGE_TOKEN } from '../src/lib/emailContent';
 import { TEMPLATE_FIELDS } from '../src/notifications/enrichTemplateData';
 
 describe('every seed is a valid visual template', () => {
-  // 58 since #1874 (`message.reply`).
-  it('there are 58', () => expect(SEED_CORPUS.length).toBe(58));
+  // 64 since #2487 (the four portal invites and the two recovery emails).
+  it('there are 64', () => expect(SEED_CORPUS.length).toBe(64));
   for (const s of SEED_CORPUS) {
     it(`${s.key}: headline, clean content, known tokens`, () => {
       expect(s.emailSubject.trim()).not.toBe('');

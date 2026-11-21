@@ -194,7 +194,8 @@ export async function sendKinfolkMessageHandler(
       key: 'message.received',
       data: {
         kinfolkId,
-        kinfolkName,
+        // #2487: the record id is not a name; blank lets the enricher read the household's.
+        kinfolkName: kinfolkName === kinfolkId ? '' : kinfolkName,
         messageId,
         preview: messagePreview(body, 200),
       },

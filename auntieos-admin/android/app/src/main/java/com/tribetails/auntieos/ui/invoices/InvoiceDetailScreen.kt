@@ -431,6 +431,15 @@ fun InvoiceDetailScreen(
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )
+            // #2258: the payment terms the invoice will carry.
+            val quoteInvoice = uiState.invoice
+            if (action == "convert" && quoteInvoice != null) {
+                Text(
+                    text  = com.tribetails.auntieos.domain.convertQuoteTermsLine(quoteInvoice),
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
         }
     }
     // ── Archive / restore confirm ────────────────────────────────────────────────

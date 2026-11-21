@@ -75,8 +75,9 @@ class InvoicePaymentAmountUnitsTest {
         autoApply: Boolean = false,
         appliedNumber: String = "1029",
         date: String = "2026-10-12",
+        methodLabel: String? = null,
     ) = """
-        {"paymentId":"$id","amountCents":$amountCents,"amountResolved":$resolved,"tipCents":$tipCents,
+        {${methodLabel?.let { "\"methodLabel\":\"$it\"," } ?: ""}"paymentId":"$id","amountCents":$amountCents,"amountResolved":$resolved,"tipCents":$tipCents,
          "feeCents":$feeCents,"tipBasis":"$tipBasis","reconciles":$reconciles,"appliedCents":$appliedCents,
          "unappliedCents":$unappliedCents,"proceedsCents":${amountCents - feeCents},"autoApply":$autoApply,
          "appliedInvoiceId":"${if (appliedNumber.isEmpty()) "" else "inv1"}","appliedInvoiceNumber":"$appliedNumber",
@@ -335,6 +336,36 @@ class InvoicePaymentAmountUnitsTest {
         assertEquals("2026-10-123", ledgerRowDateLabel(one(row("p1", 100, date = "2026-10-123"))))
         assertEquals("2026-02-30", ledgerRowDateLabel(one(row("p1", 100, date = "2026-02-30"))), "not a real day")
         assertEquals("10/12/2026", ledgerRowDateLabel(one(row("p1", 100, date = "10/12/2026"))))
+    }
+
+    // ── #2334: a checkout payment reads as what it was paid with ────────────
+
+    @Test
+    fun aCheckoutPaymentReadsAsTheServersWordsForItsMethod() {
+        assertEquals("Klarna", ledgerRowMethodLabel(one(row("p1", 100, method = "stripe", methodLabel = "Klarna"))))
+        assertEquals("Card", ledgerRowMethodLabel(one(row("p1", 100, method = "stripe", methodLabel = "Card"))))
+    }
+
+    @Test
+    fun anOldCheckoutPaymentReadsOnlinePaymentNeverStripe() {
+        assertEquals("Online payment", ledgerRowMethodLabel(one(row("p1", 100, method = "stripe", methodLabel = "Online payment"))))
+        // A server older than the field sends no label at all.
+        assertEquals("Online payment", ledgerRowMethodLabel(one(row("p1", 100, method = "stripe"))))
+    }
+
+    @Test
+    fun aCardPaymentsDayFromTheServerReadsAsADate() {
+        assertEquals("Nov 20, 2026", ledgerRowDateLabel(one(row("p1", 100, method = "stripe", methodLabel = "Card", date = "2026-11-20"))))
+    }
+
+    @Test
+    fun theScreenShowsKlarnaAndTheDayForACheckoutPayment() = render(
+        ledger(listOf(row("p1", 4200, method = "stripe", methodLabel = "Klarna", date = "2026-11-20"))),
+    ) {
+        waitUntil(timeoutMillis = 10_000) { shown("Klarna") }
+        assertTrue(shown("Nov 20, 2026"), "the card payment's day")
+        assertFalse(shown("stripe"), "never the stored word")
+        assertFalse(shown("no date recorded"))
     }
 
     @Test

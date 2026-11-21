@@ -35,11 +35,14 @@ import com.kinfolk.portal.portal.InvoiceStatus
 import com.kinfolk.portal.portal.PayMethod
 import com.kinfolk.portal.portal.PayMethodKind
 import com.kinfolk.portal.portal.QuoteDecision
+import com.kinfolk.portal.portal.paymentRowMethodLabel
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.formatUsd
 import com.kinfolk.portal.util.invoiceDayLabel
+import com.kinfolk.portal.util.invoiceDiscountAmount
+import com.kinfolk.portal.util.invoiceLineDiscount
 import com.kinfolk.portal.util.invoiceLineUnits
 import com.kinfolk.portal.util.relativeTime
 
@@ -167,13 +170,32 @@ fun InvoiceDetailScreen(
                 // #1330: "Jul 01, 2026", as the web detail prints it, not the stored string.
                 DetailRow("Date", com.kinfolk.portal.util.invoiceDayLabel(invoice.date))
                 DetailRow("Due Date", com.kinfolk.portal.util.invoiceDayLabel(invoice.dueDate))
-                DetailRow("Discount", invoice.discount)
+                // #1974: an invoice built from lines shows its discount as an
+                // amount under the lines; only one with no stored lines (or an
+                // older server) keeps the free-text row.
+                if (invoice.subtotalCents == null) DetailRow("Discount", invoice.discount)
                 DetailRow("Terms", invoice.terms)
                 DetailRow("Address", invoice.address)
-                if (!invoice.paymentsHistory.isNullOrBlank()) {
+                // #2334: each payment on this bill, how it was paid, the day and
+                // the amount; then the old system's free text on a migrated bill.
+                if (invoice.payments.isNotEmpty() || !invoice.paymentsHistory.isNullOrBlank()) {
                     Spacer(Modifier.height(KinfolkSpacing.s))
                     Text("Payment History", style = type.sansLabel)
-                    Text(invoice.paymentsHistory, style = type.sansBody)
+                    invoice.payments.forEach { p ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().testTag("payment-history-row"),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(paymentRowMethodLabel(p), style = type.sansBody)
+                                val day = invoiceDayLabel(p.paidDay)
+                                if (day.isNotEmpty()) Text(day, style = type.sansLabel)
+                            }
+                            Text(formatUsd(p.amountCents / 100.0), style = type.sansBody)
+                        }
+                    }
+                    invoice.paymentsHistory?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.sansBody) }
                 }
             }
         }
@@ -209,11 +231,32 @@ fun InvoiceDetailScreen(
                                 if (units.isNotBlank()) {
                                     Text(units, style = type.sansMeta)
                                 }
+                                // #1974: what was taken off, already out of the amount.
+                                val off = invoiceLineDiscount(item.discountCents)
+                                if (off.isNotBlank()) {
+                                    Text(off, style = type.sansMeta)
+                                }
                             }
                             item.amountCents?.let { cents ->
                                 Text(formatUsd(cents.toDouble() / 100.0), style = type.sansBody)
                             }
                         }
+                    }
+                    // #1974: an invoice built from lines closes the sum, as the
+                    // web portal and the PDF do: subtotal, the invoice discount
+                    // as an amount, then the total.
+                    val subtotal = invoice.subtotalCents
+                    if (subtotal != null) {
+                        Spacer(Modifier.height(KinfolkSpacing.xs))
+                        AmountRow("Subtotal", formatUsd(subtotal.toDouble() / 100.0), INVOICE_SUBTOTAL_TAG)
+                        val off = invoice.invoiceDiscountCents ?: 0L
+                        if (off > 0L) {
+                            AmountRow("Discount", invoiceDiscountAmount(off), INVOICE_DISCOUNT_TAG)
+                            invoice.discount?.trim()?.takeIf { it.isNotEmpty() }?.let { note ->
+                                Text(note, style = type.sansMeta)
+                            }
+                        }
+                        AmountRow("Total", formatUsd(invoice.total), null)
                     }
                 }
             }
@@ -486,6 +529,21 @@ private fun PayOptions(
                 }
             }
         }
+    }
+}
+
+internal const val INVOICE_SUBTOTAL_TAG = "invoice-subtotal"
+internal const val INVOICE_DISCOUNT_TAG = "invoice-discount"
+
+@Composable
+private fun AmountRow(label: String, value: String, tag: String?) {
+    val type = LocalKinfolkTypography.current
+    Row(
+        modifier = Modifier.fillMaxWidth().let { if (tag != null) it.testTag(tag) else it },
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, style = type.sansLabel)
+        Text(value, style = type.sansBody)
     }
 }
 

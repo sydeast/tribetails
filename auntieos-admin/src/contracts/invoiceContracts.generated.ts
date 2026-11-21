@@ -25,6 +25,7 @@ export interface InvoiceLineItemDto {
   amountCents: number | null;
   qty: number | null;
   unitCents: number | null;
+  discountCents: number | null;
 }
 
 /**
@@ -36,6 +37,16 @@ export interface InvoiceDtoPayMethod {
   kind: 'checkout' | 'link' | 'instructions';
   url: string | null;
   instructions: string | null;
+}
+
+/**
+ * `InvoiceDtoPayment`, shared across callables.
+ */
+export interface InvoiceDtoPayment {
+  paymentId: string;
+  methodLabel: string;
+  paidDay: string | null;
+  amountCents: number;
 }
 
 /**
@@ -70,8 +81,11 @@ export interface InvoiceDto {
   creditRedeemedAtMs: number | null;
   writtenOffCents: number | null;
   lineItems?: InvoiceLineItemDto[];
+  subtotalCents: number | null;
+  invoiceDiscountCents: number | null;
   payMethods: InvoiceDtoPayMethod[];
   payBlockedReason: string | null;
+  payments: InvoiceDtoPayment[];
 }
 
 // ---------- acceptQuote ----------
@@ -296,6 +310,7 @@ export interface GetInvoiceLedgerResultPayment {
   paidAt: string | null;
   recordedBy: string | null;
   sourcePaymentId: string | null;
+  methodLabel: string;
 }
 
 /**
@@ -326,6 +341,7 @@ export interface GetInvoiceLedgerResultLedgerPayment {
   appliedInvoiceId: string;
   appliedInvoiceNumber: string;
   method: string;
+  methodLabel: string;
   reference: string;
   date: string;
   notes: string;
@@ -456,6 +472,7 @@ export interface ListPaymentsResultPayment {
   appliedInvoiceId: string;
   appliedInvoiceNumber: string;
   method: string;
+  methodLabel: string;
   reference: string;
   date: string;
   notes: string;
@@ -905,6 +922,14 @@ export interface GetAccountCreditHistoryResultUse {
 }
 
 /**
+ * Nested in the `getAccountCreditHistory` contract.
+ */
+export interface GetAccountCreditHistoryResultEarlierCredit {
+  amountCents: number;
+  remainingCents: number;
+}
+
+/**
  * Response from the `getAccountCreditHistory` callable.
  */
 export interface GetAccountCreditHistoryResult {
@@ -913,6 +938,7 @@ export interface GetAccountCreditHistoryResult {
   accountBalanceCents: number;
   credits: GetAccountCreditHistoryResultCredit[];
   uses: GetAccountCreditHistoryResultUse[];
+  earlierCredit: GetAccountCreditHistoryResultEarlierCredit | null;
 }
 
 // ---------- listUnappliedPayments ----------

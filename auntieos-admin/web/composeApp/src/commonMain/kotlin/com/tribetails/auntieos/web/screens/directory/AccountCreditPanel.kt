@@ -20,6 +20,7 @@ import com.composables.icons.lucide.Lucide
 import com.tribetails.auntieos.web.data.AccountCreditHistory
 import com.tribetails.auntieos.web.data.CreditHistoryLoad
 import com.tribetails.auntieos.web.data.CreditUseDto
+import com.tribetails.auntieos.web.data.EarlierCreditDto
 import com.tribetails.auntieos.web.data.GiveCreditEntry
 import com.tribetails.auntieos.web.data.GivenCreditDto
 import com.tribetails.auntieos.web.data.MAX_GIVE_CREDIT_CENTS
@@ -82,6 +83,19 @@ fun givenCreditStatusLine(c: GivenCreditDto, zone: TimeZone = TimeZone.currentSy
 fun creditUseLine(u: CreditUseDto, zone: TimeZone = TimeZone.currentSystemDefault()): String {
     val on = u.invoiceNumber?.takeIf { it.isNotBlank() } ?: "an invoice"
     return "${creditUsd(u.amountCents)} on $on, ${creditDate(u.usedAtMs, zone)}"
+}
+
+/** #1939: the row for credit the log does not itemise, beside the given credits. */
+const val EARLIER_CREDIT_LABEL: String = "Earlier credit"
+
+/** "$2,015.00 · Earlier credit", in the same shape as a given credit's head line. */
+fun earlierCreditHeadLine(e: EarlierCreditDto): String = "${creditUsd(e.amountCents)} · $EARLIER_CREDIT_LABEL"
+
+/** "Not used yet", "$1,058.00 of $2,015.00 applied", or "All applied". */
+fun earlierCreditStatusLine(e: EarlierCreditDto): String {
+    if (e.remainingCents <= 0L) return "All applied"
+    val used = e.amountCents - e.remainingCents
+    return if (used > 0L) "${creditUsd(used)} of ${creditUsd(e.amountCents)} applied" else "Not used yet"
 }
 
 /** The confirmation step's sentence. The new balance here is a preview; the toast repeats the server's. */
@@ -154,7 +168,10 @@ private fun AccountCreditHistoryView(h: AccountCreditHistory) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(creditBalanceLine(h.accountBalanceCents), style = t.titleMedium, color = c.textPrimary)
         Text("Credits given", style = t.labelSmall, color = c.textDim)
-        if (h.credits.isEmpty()) {
+        // #1939: credit the log does not itemise is its own row, so the credits
+        // listed, less the credit used, are the balance above.
+        val earlier = h.earlierCredit
+        if (h.credits.isEmpty() && earlier == null) {
             Text("No credit given yet.", style = t.bodySmall, color = c.textDim)
         } else {
             h.credits.forEach { credit ->
@@ -168,6 +185,12 @@ private fun AccountCreditHistoryView(h: AccountCreditHistory) {
                         Text(credit.reason, style = t.bodySmall, color = c.textDim)
                     }
                     Text(givenCreditStatusLine(credit), style = t.labelSmall, color = c.textDim)
+                }
+            }
+            if (earlier != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(earlierCreditHeadLine(earlier), style = t.bodyMedium, color = c.textPrimary)
+                    Text(earlierCreditStatusLine(earlier), style = t.labelSmall, color = c.textDim)
                 }
             }
         }

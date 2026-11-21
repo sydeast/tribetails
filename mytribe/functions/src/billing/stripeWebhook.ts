@@ -22,6 +22,7 @@ import {
   type PaymentAmount,
 } from '../lib/invoiceMath';
 import { stageApply } from '../lib/paymentApply';
+import { ONLINE_METHOD_FIELD, onlineMethodOfCharge } from '../lib/onlinePaymentMethod';
 import {
   CARD_APPLY_FALLBACK_FIELD,
   CARD_PAYMENT_METHOD,
@@ -728,6 +729,11 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // A `feeCents: 0` would be a claim that Stripe charged nothing.
   let feeCents: number | null = null;
   let feeResolved = false;
+  // #2334: what the household actually paid with (card, Klarna, Affirm, a
+  // wallet), off the same charge the fee comes from: no second Stripe call.
+  // Null when the retrieve failed or the charge does not say, and then the
+  // rows carry no method field and read "Online payment".
+  let onlineMethod: string | null = null;
   if (isPaidEvent) {
     if (paymentIntentId) {
       try {
@@ -736,6 +742,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
           expand: ['latest_charge.balance_transaction'],
         });
         const charge = pi.latest_charge;
+        onlineMethod = onlineMethodOfCharge(charge);
         const balanceTransaction = charge && typeof charge === 'object' ? charge.balance_transaction : null;
         const fee =
           balanceTransaction && typeof balanceTransaction === 'object' && typeof balanceTransaction.fee === 'number'
@@ -983,6 +990,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         amountResolved: chargeCents > 0,
         amountSource: chargeCents > 0 ? 'stripe-event' : 'unresolved',
         paymentMethod: 'stripe',
+        ...(onlineMethod !== null ? { [ONLINE_METHOD_FIELD]: onlineMethod } : {}),
         referenceNumber,
         date: FieldValue.serverTimestamp(),
         stripeEventId: event.id,
@@ -1190,6 +1198,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     const rowExtras = {
       stripeEventId: event.id,
       ...(paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : {}),
+      ...(onlineMethod !== null ? { [ONLINE_METHOD_FIELD]: onlineMethod } : {}),
     };
     // What the ledger row says about the invoice. Absent on a row with no
     // invoice row behind it (no amount, or no invoice document).
@@ -1348,6 +1357,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       amountResolved,
       amountSource: eventAmount !== null ? 'stripe-event' : localAmount !== null ? 'local-invoice' : 'unresolved',
       paymentMethod: 'stripe',
+      ...(onlineMethod !== null ? { [ONLINE_METHOD_FIELD]: onlineMethod } : {}),
       referenceNumber,
       date: FieldValue.serverTimestamp(),
       stripeEventId: event.id,

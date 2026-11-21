@@ -28,7 +28,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountCreditControllerTest {
 
-    private fun history(balance: Long) = GetAccountCreditHistoryResult(true, "fam1", balance, emptyList(), emptyList())
+    private fun history(balance: Long) = GetAccountCreditHistoryResult(true, "fam1", balance, emptyList(), emptyList(), null)
     private fun given(balance: Long) = GiveAccountCreditResult(true, "k", 2500L, balance, false)
 
     private var minted = 0

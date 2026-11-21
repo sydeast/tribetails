@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { FirebaseError } from 'firebase/app';
 import type { GetAccountCreditHistoryResult } from '../contracts/invoiceContracts.generated';
@@ -8,7 +8,13 @@ import type { GetAccountCreditHistoryResult } from '../contracts/invoiceContract
 const api = vi.hoisted(() => ({ getAccountCreditHistory: vi.fn() }));
 vi.mock('../api/invoicesApi', () => api);
 
-import { CreditHistorySection, creditApplicationLines, creditStatusLine, creditUseLine } from './CreditHistorySection';
+import {
+  CreditHistorySection,
+  creditApplicationLines,
+  creditStatusLine,
+  creditUseLine,
+  earlierCreditStatusLine,
+} from './CreditHistorySection';
 
 /**
  * Q6: the PRIMARY, and a secondary the PRIMARY granted billing, see each
@@ -44,6 +50,7 @@ const HISTORY: GetAccountCreditHistoryResult = {
     },
   ],
   uses: [{ useId: 'draw_p1', usedAtMs: OCT_3, amountCents: 2500, invoiceId: 'inv9', invoiceNumber: 'INV-1009' }],
+  earlierCredit: null,
 };
 
 function renderSection() {
@@ -91,6 +98,45 @@ describe('CreditHistorySection', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('#1969: the walk household adds up: earlier credit less the uses is the balance', async () => {
+    api.getAccountCreditHistory.mockResolvedValue({
+      ...HISTORY,
+      accountBalanceCents: 95_700,
+      credits: [],
+      uses: [
+        { useId: 'd3', usedAtMs: OCT_3, amountCents: 300, invoiceId: 'i23', invoiceNumber: '1023' },
+        { useId: 'd2', usedAtMs: OCT_3, amountCents: 500, invoiceId: 'i21', invoiceNumber: '1021' },
+        { useId: 'd1', usedAtMs: OCT_3, amountCents: 105_000, invoiceId: 'i20', invoiceNumber: '1020' },
+      ],
+      earlierCredit: { amountCents: 201_500, remainingCents: 95_700 },
+    });
+    renderSection();
+    const row = await screen.findByTestId('ch-earlier');
+    expect(screen.getByText('Credits given')).toBeInTheDocument();
+    expect(within(row).getByText('$2,015.00')).toBeInTheDocument();
+    expect(within(row).getByText('Earlier credit')).toBeInTheDocument();
+    expect(within(row).getByText('$1,058.00 of $2,015.00 applied')).toBeInTheDocument();
+  });
+
+  it('#1969: a balance with no events still shows, as earlier credit not used yet', async () => {
+    api.getAccountCreditHistory.mockResolvedValue({
+      ...HISTORY,
+      credits: [],
+      uses: [],
+      earlierCredit: { amountCents: 4200, remainingCents: 4200 },
+    });
+    renderSection();
+    expect(within(await screen.findByTestId('ch-earlier')).getByText('Not used yet')).toBeInTheDocument();
+  });
+
+  it('#1969: an older server with no earlierCredit key shows no earlier row', async () => {
+    const { earlierCredit: _omit, ...old } = HISTORY;
+    api.getAccountCreditHistory.mockResolvedValue(old);
+    renderSection();
+    expect(await screen.findByText('Account credit history')).toBeInTheDocument();
+    expect(screen.queryByTestId('ch-earlier')).not.toBeInTheDocument();
+  });
+
   it('says it could not load for any other failure', async () => {
     api.getAccountCreditHistory.mockImplementation(() => Promise.reject(new Error('offline')));
     renderSection();
@@ -115,6 +161,14 @@ describe('credit history lines', () => {
     expect(creditUseLine({ useId: 'u', usedAtMs: OCT_3, amountCents: 600, invoiceId: 'inv_1731000000000_ab12cd', invoiceNumber: null })).toBe(
       '$6.00 on an invoice with no number, Oct 3, 2026',
     );
+  });
+
+  it('#1969: earlier credit reads Not used yet, part applied, or All applied', () => {
+    expect(earlierCreditStatusLine({ amountCents: 4200, remainingCents: 4200 })).toBe('Not used yet');
+    expect(earlierCreditStatusLine({ amountCents: 201_500, remainingCents: 95_700 })).toBe(
+      '$1,058.00 of $2,015.00 applied',
+    );
+    expect(earlierCreditStatusLine({ amountCents: 4200, remainingCents: 0 })).toBe('All applied');
   });
 
   it('a use line names the invoice when it has a number', () => {

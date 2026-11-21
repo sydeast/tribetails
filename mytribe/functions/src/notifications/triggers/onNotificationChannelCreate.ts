@@ -79,7 +79,49 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
     // hydrate the standard entities into the full {{token}} context here, once at
     // the single fan-out choke point, so every channel + delivery mode benefits.
     // Emitter-provided values win; a missing entity degrades to blank (never throws).
-    const enrichedData = await enrichTemplateData(parent.key, parent.recipientUid, parent.data ?? {});
+    // #2487: the copy's own stream, so a household's copy of a key that also
+    // reaches the office is worded for the household (its visit time as the
+    // window the portal shows, #1863), the way its notifications list line is.
+    const enriched = await enrichTemplateData(
+      parent.key,
+      parent.recipientUid,
+      parent.data ?? {},
+      [],
+      parent.stream === 'kinfolk',
+    );
+    // #2259, #2100: what this notice opens, from the work order's own data and
+    // target, never the enriched context. Loaded here, not at the top, so it
+    // adds no module to the cold-start graph.
+    const [{ noticeOpenTarget }, { noticeLink }] = await Promise.all([
+      import('../noticeOpenTarget.js'),
+      import('../noticeLink.js'),
+    ]);
+    const stream = isAudienceStream(parent.stream) ? parent.stream : undefined;
+    const open = noticeOpenTarget({
+      key: parent.key,
+      ...(stream ? { stream } : {}),
+      data: parent.data ?? {},
+      targetType: parent.targetType,
+      targetId: parent.targetId,
+      notificationId: parent.notificationId,
+    });
+    // #2487: `{{link}}`, the address of the item this notice is about, for
+    // this reader: MyTribe for a household's copy, auntieOS for the office's
+    // and an Auntie's. An emitter's own `link` (the password reset) wins.
+    // A work order written before the stream was stamped is read by the
+    // catalog's audience, so a household is never handed an AuntieOS link.
+    const link = noticeLink({
+      key: parent.key,
+      stream: stream ?? (def.audience === 'kinfolk' ? 'kinfolk' : 'business'),
+      auntie: def.recipientResolver === 'auntieAssignedToKincare' && stream !== 'kinfolk',
+      data: parent.data ?? {},
+      targetType: parent.targetType,
+      targetId: parent.targetId,
+      open,
+    });
+    const supplied = enriched['link'];
+    const enrichedData =
+      typeof supplied === 'string' && supplied.trim() !== '' ? enriched : { ...enriched, link };
     try {
       const result = await sender({
         def,
@@ -87,23 +129,11 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
         data: enrichedData,
         // #2280: a household's text message and push are kept short with a link.
         ...(isAudienceStream(parent.stream) ? { stream: parent.stream } : {}),
-        // #2259, #2100: a tap on the push opens what the notice is about. From
-        // the work order's own data, not the enriched template context. #2371:
-        // a household's text message links to the same entry a cut push opens.
-        // Loaded here, for a push or text only, so email adds no module to the
-        // cold-start graph.
-        ...(channel === 'push' || channel === 'sms'
-          ? {
-              open: (await import('../noticeOpenTarget.js')).noticeOpenTarget({
-                key: parent.key,
-                ...(isAudienceStream(parent.stream) ? { stream: parent.stream } : {}),
-                data: parent.data ?? {},
-                targetType: parent.targetType,
-                targetId: parent.targetId,
-                notificationId: parent.notificationId,
-              }),
-            }
-          : {}),
+        // #2259, #2100: a tap on the push opens what the notice is about.
+        // #2371, #2487: a household's text message links to that item, or to
+        // the notice's own entry when its message was cut. An email carries
+        // its link as `{{link}}` in the data above.
+        ...(channel === 'push' || channel === 'sms' ? { open } : {}),
       });
       // Fail-soft skip (e.g. recipient has no email on file): a permanent,
       // undeliverable-on-this-channel condition that must NOT throw — throwing

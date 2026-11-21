@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Timestamp } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
@@ -87,6 +88,7 @@ describe('getInvoiceLedger payments (the settlement authority)', () => {
         paymentId: 'p1',
         amountCents: 2000,
         method: 'check',
+        methodLabel: 'check',
         reference: '#881',
         paidAt: '2026-07-20T10:00:00Z',
         recordedBy: 'admin1',
@@ -250,6 +252,7 @@ describe('getInvoiceLedger ledgerPayments (the display ledger)', () => {
         appliedInvoiceId: '',
         appliedInvoiceNumber: '',
         method: 'card',
+        methodLabel: 'card',
         reference: 'ch_123',
         date: '2026-07-22',
         notes: 'stripe',
@@ -840,5 +843,100 @@ describe('getInvoiceLedger gate and refusals', () => {
     mocks.dbFn.mockReturnValue(seed().db);
     await expect(run({})).rejects.toThrow(/validation failed/i);
     await expect(run({ invoiceId: 'inv1', extra: 1 })).rejects.toThrow(/validation failed/i);
+  });
+});
+
+describe('#2334: a card payment reads as its method and has a date', () => {
+  // 2026-11-21T02:30:00Z: 8:30 PM on Nov 20 in Chicago, 6:30 PM in Los Angeles.
+  const lateEvening = Timestamp.fromMillis(Date.parse('2026-11-21T02:30:00Z'));
+
+  function seedCard(settings: Record<string, unknown> | null) {
+    return buildDbMock({
+      docs: {
+        'invoices/inv1': { kinfolkId: 'fam1', total: 40 },
+        ...(settings ? { 'business_settings/business_settings': settings } : {}),
+      },
+      queryDocs: {
+        'invoices/inv1/payments': [
+          {
+            id: 'stripe_pi_1',
+            data: { amountCents: 2500, method: 'stripe', onlineMethod: 'klarna', reference: 'pi_1', paidAt: '2026-11-21T02:30:00.000Z' },
+          },
+          {
+            id: 'stripe_pi_0',
+            data: { amountCents: 1500, method: 'stripe', reference: 'pi_0', paidAt: '2026-11-01T15:00:00.000Z' },
+          },
+        ],
+        'invoices/inv1/writeOffs': [],
+        payments: [
+          {
+            id: 'evt_cs_1',
+            data: {
+              kinfolkId: 'fam1',
+              invoiceId: 'inv1',
+              amount: 2500,
+              amountCents: 2500,
+              amountSource: 'stripe-event',
+              paymentMethod: 'stripe',
+              onlineMethod: 'klarna',
+              referenceNumber: 'pi_1',
+              date: lateEvening,
+            },
+          },
+          {
+            id: 'evt_cs_0',
+            data: {
+              kinfolkId: 'fam1',
+              invoiceId: 'inv1',
+              amount: 1500,
+              amountCents: 1500,
+              amountSource: 'stripe-event',
+              paymentMethod: 'stripe',
+              referenceNumber: 'pi_0',
+              date: Timestamp.fromMillis(Date.parse('2026-11-01T15:00:00Z')),
+            },
+          },
+          {
+            id: 'r9',
+            data: { kinfolkId: 'fam1', invoiceId: 'inv1', amount: 10, paymentMethod: 'Venmo', date: 'February 17, 2026' },
+          },
+        ],
+        kin_care_sessions: [],
+      },
+    });
+  }
+
+  it('the settlement rows say Klarna, and an old card row says "Online payment", never "stripe"', async () => {
+    mocks.dbFn.mockReturnValue(seedCard({ timeZone: 'America/Chicago' }).db);
+    const res = await run();
+    const byId = Object.fromEntries(res.payments.map((p) => [p.paymentId, p]));
+    expect(byId['stripe_pi_1']).toMatchObject({ method: 'stripe', methodLabel: 'Klarna' });
+    expect(byId['stripe_pi_0']).toMatchObject({ method: 'stripe', methodLabel: 'Online payment' });
+  });
+
+  it('the ledger rows say the method, and a card row has its business day instead of no date', async () => {
+    mocks.dbFn.mockReturnValue(seedCard({ timeZone: 'America/Chicago' }).db);
+    const res = await run();
+    const byId = Object.fromEntries(res.ledgerPayments.map((p) => [p.paymentId, p]));
+    expect(byId['evt_cs_1']).toMatchObject({ method: 'stripe', methodLabel: 'Klarna', date: '2026-11-20' });
+    expect(byId['evt_cs_0']).toMatchObject({ methodLabel: 'Online payment', date: '2026-11-01' });
+    // A row a person recorded keeps its own words and its own date text.
+    expect(byId['r9']).toMatchObject({ method: 'Venmo', methodLabel: 'Venmo', date: 'February 17, 2026' });
+    for (const row of res.ledgerPayments) expect(row.methodLabel.toLowerCase()).not.toBe('stripe');
+  });
+
+  it("the day is read on the business's own clock", async () => {
+    mocks.dbFn.mockReturnValue(seedCard({ timeZone: 'America/Los_Angeles' }).db);
+    const res = await run();
+    expect(res.ledgerPayments.find((p) => p.paymentId === 'evt_cs_1')?.date).toBe('2026-11-20');
+    mocks.dbFn.mockReturnValue(seedCard({ timeZone: 'Asia/Tokyo' }).db);
+    const tokyo = await run();
+    expect(tokyo.ledgerPayments.find((p) => p.paymentId === 'evt_cs_1')?.date).toBe('2026-11-21');
+  });
+
+  it('no business zone set reads on the shared default, Chicago', async () => {
+    mocks.dbFn.mockReturnValue(seedCard(null).db);
+    const res = await run();
+    expect(res.ledgerPayments.find((p) => p.paymentId === 'evt_cs_1')?.date).toBe('2026-11-20');
   });
 });

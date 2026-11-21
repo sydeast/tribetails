@@ -375,6 +375,32 @@ describe('updateInvoice edit gating (enforced here, not in the UI)', () => {
     }
   });
 
+  it('#2471: refuses an edit to an invoice cancelled only in the legacy invoiceStatus field', async () => {
+    const { status: _status, ...noStatus } = OPEN_INVOICE;
+    const legacyCancelled = { ...noStatus, invoiceStatus: 'cancelled' };
+    for (const patch of [
+      { terms: 'x' },
+      { lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 1000 }] },
+    ]) {
+      const ctx = seed(legacyCancelled, [{ id: 'p1', data: { amount: 10 } }]);
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(updateInvoiceHandler(req({ invoiceId: 'inv1', patch }))).rejects.toMatchObject({
+        code: 'failed-precondition',
+        message: expect.stringContaining('cancelled'),
+      });
+      // Nothing written: it is never re-stamped open, or paid by the lowered total.
+      expect(invoiceWrite(ctx)).toBeUndefined();
+    }
+  });
+
+  it('#2471: a stored status still wins over the legacy field, so an open invoice stays editable', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, invoiceStatus: 'cancelled' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { terms: 'x' } }))).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
   it('allows a draft to be edited freely', async () => {
     const ctx = seed({ ...OPEN_INVOICE, status: 'draft' });
     mocks.dbFn.mockReturnValue(ctx.db);
