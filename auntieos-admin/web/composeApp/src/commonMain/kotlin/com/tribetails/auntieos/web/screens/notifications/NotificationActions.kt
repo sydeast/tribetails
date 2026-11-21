@@ -199,6 +199,17 @@ fun applicableActions(entry: NotificationEntry, pending: Set<String>? = null): L
  */
 fun needsDecisionCount(entries: List<NotificationEntry>, pending: Set<String>? = null): Int =
     entries.count { NotificationAction.ApproveBooking in applicableActions(it, pending) }
+
+/**
+ * #1877: the waiting requests, less the ones answered on this screen since the
+ * queue was last read. After Approve the row read BOOKED while "Needs a
+ * decision" kept counting the request until the next poll of the queue. The
+ * caller forgets [answered] whenever a new read of the queue lands, so that
+ * read speaks for a request still waiting (an approval where some visits did
+ * not go through). Null while the queue is unknown. Pure; unit-tested.
+ */
+fun pendingLessAnswered(pending: Set<String>?, answered: Collection<String>): Set<String>? =
+    if (pending == null || answered.isEmpty()) pending else pending - answered.toSet()
 /**
  * The one catalog key that means "a booking request is waiting on a decision"
  * (mytribe/functions/src/notifications/catalog.ts: "Kinfolk requested a KinCare

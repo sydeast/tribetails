@@ -12,7 +12,12 @@ vi.mock('./visitRequestSignal', () => ({ useVisitRequestSignal: () => mocks.sign
 const scope = vi.hoisted(() => ({ current: null as string | null }));
 vi.mock('./testScope', () => ({ getTestScope: () => scope.current }));
 
-import { usePendingBookingRequests } from './pendingBookingRequests';
+import {
+  NO_ANSWERED_REQUESTS,
+  pendingLessAnswered,
+  usePendingBookingRequests,
+  withAnsweredRequest,
+} from './pendingBookingRequests';
 
 const request = (kinfolkId: string, batchId: string) => ({ kinfolkId, batchId, kinfolkName: 'The Wrens' });
 
@@ -56,5 +61,35 @@ describe('usePendingBookingRequests (#2069)', () => {
     const { result } = renderHook(() => usePendingBookingRequests());
     await waitFor(() => expect(result.current.status).toBe('ready'));
     expect(result.current.status === 'ready' && result.current.data.size).toBe(0);
+  });
+});
+
+describe('answered requests leave the queue at once (#1877)', () => {
+  const req = (kinfolkId: string, batchId: string) => ({ kinfolkId, batchId }) as never;
+  const queue = new Map([
+    ['kf1/b1', req('kf1', 'b1')],
+    ['kf2/b2', req('kf2', 'b2')],
+  ]);
+  it('drops a request answered against the queue in hand', () => {
+    const answered = withAnsweredRequest(NO_ANSWERED_REQUESTS, queue, 'kf1/b1');
+    expect([...(pendingLessAnswered(queue, answered)?.keys() ?? [])]).toEqual(['kf2/b2']);
+  });
+
+  it('lets the next read of the queue speak, so a request still waiting comes back', () => {
+    const answered = withAnsweredRequest(NO_ANSWERED_REQUESTS, queue, 'kf1/b1');
+    const reread = new Map(queue);
+    expect(pendingLessAnswered(reread, answered)).toBe(reread);
+  });
+
+  it('keeps every answer made against the same read, and starts over on a new one', () => {
+    const one = withAnsweredRequest(NO_ANSWERED_REQUESTS, queue, 'kf1/b1');
+    const two = withAnsweredRequest(one, queue, 'kf2/b2');
+    expect(pendingLessAnswered(queue, two)?.size).toBe(0);
+    const reread = new Map(queue);
+    expect([...withAnsweredRequest(two, reread, 'kf2/b2').keys]).toEqual(['kf2/b2']);
+  });
+
+  it('answers null while the queue is unknown', () => {
+    expect(pendingLessAnswered(null, withAnsweredRequest(NO_ANSWERED_REQUESTS, null, 'kf1/b1'))).toBeNull();
   });
 });

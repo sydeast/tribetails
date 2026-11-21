@@ -63,6 +63,45 @@ async function loadPending(): Promise<ReadonlyMap<string, PendingBookingRequestD
  * Deny on visits long since booked, and "Needs a decision" read 19 while
  * Bookings had 5 waiting. A request is waiting when the queue says so.
  */
+/**
+ * #1877: the requests answered on this screen since the queue was last read.
+ * `queue` is the read the answers were made against; once a new read lands it
+ * is the one that speaks, so a request that is somehow still waiting (an
+ * approval where some visits did not go through) comes back.
+ */
+export interface AnsweredRequests {
+  queue: ReadonlyMap<string, PendingBookingRequestDto> | null;
+  keys: ReadonlySet<string>;
+}
+
+export const NO_ANSWERED_REQUESTS: AnsweredRequests = { queue: null, keys: new Set() };
+
+/** #1877: `answered` plus one more request, answered against `queue`. */
+export function withAnsweredRequest(
+  answered: AnsweredRequests,
+  queue: ReadonlyMap<string, PendingBookingRequestDto> | null,
+  key: string,
+): AnsweredRequests {
+  const keys = answered.queue === queue ? new Set(answered.keys) : new Set<string>();
+  keys.add(key);
+  return { queue, keys };
+}
+
+/**
+ * #1877: the queue, less the requests answered here since it was read. After
+ * Approve the row read BOOKED while "Needs a decision" kept counting the
+ * request until the next read of the queue, which can take ten seconds from
+ * cold; a Deny happened to land sooner. The answer the server just confirmed
+ * drops the request at once, for every count and button that reads the queue.
+ */
+export function pendingLessAnswered(
+  queue: ReadonlyMap<string, PendingBookingRequestDto> | null,
+  answered: AnsweredRequests,
+): ReadonlyMap<string, PendingBookingRequestDto> | null {
+  if (queue === null || answered.queue !== queue || answered.keys.size === 0) return queue;
+  return new Map([...queue].filter(([key]) => !answered.keys.has(key)));
+}
+
 export function usePendingBookingRequests(): Async<ReadonlyMap<string, PendingBookingRequestDto>> {
   const signal = useVisitRequestSignal(NEW_REQUESTS);
   const tick = usePollTick();
