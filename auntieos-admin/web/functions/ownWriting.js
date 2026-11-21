@@ -4,11 +4,13 @@
 // What counts: messages the office typed and sent to a household. Inbox
 // replies (`conversations/{kinfolkId}/messages`, sender `auntie`), text replies
 // sent from the Inbox (`sms_messages` rows mirrored by `sendExternalMessage`),
-// outbound emails on file (`emails`, direction `outbound`), sent KinTales
-// written in the composer (`kin_care_reports`, status SENT, not published from
+// sent KinTales written in the composer (`kin_care_reports`, status SENT, not published from
 // a generated draft and not a legacy import), the office's comments on those
 // KinTales, and broadcasts (`broadcasts`). A row whose text overlaps a
 // generated draft is left out, so generated copy does not train the voice.
+// The `emails` collection is not read: nothing in this system writes it, so a
+// row there cannot be told apart from automated mail or a household's own
+// words quoted in a reply.
 //
 // What reaches the model: STYLE EXAMPLES ONLY, the same small set for every
 // request. Before any example is used:
@@ -17,13 +19,15 @@
 //      [phone], [link], [address], [number].
 //   2. Every name the Tribe holds (every household person, every Kin, every
 //      staff member, and the names on the row itself) becomes [Kinfolk],
-//      [Kin] or [Auntie], numbered within the example.
+//      [Kin] or [Auntie], numbered within the example, in any case, even
+//      where the name is also an everyday word.
 //   3. Any other capitalised word that nothing vouches for as an everyday word
 //      becomes [Name].
 //   4. The example is read again. One that still carries a Tribe name or a
 //      contact detail is dropped, never sent.
 //
-// If the names cannot all be read, no example is sent at all: the voice files
+// If the names, or the generated drafts, cannot all be read, no example is
+// sent at all: the voice files
 // still go and the generate still works. Every read is a single-field query
 // with the rest filtered in memory. The log gets counts, never a line of text.
 
@@ -44,23 +48,28 @@ const SHINGLE_WORDS = 8;
 const KIND_LABEL = {
   inbox_reply: 'Inbox reply',
   text_reply: 'Text reply',
-  email: 'Email',
   kintale: 'KinTale',
   kintale_comment: 'KinTale comment',
   broadcast: 'Broadcast',
 };
 
-// Capitalised words that are never a name. The brand words, the calendar, and
-// a few forms that never appear in lowercase.
-const ALWAYS_WORDS = new Set([
+// Capitalised words that are never a name: the brand words, greetings, titles
+// and a few forms that never appear in lowercase.
+const NEVER_NAMES = new Set([
   'i', "i'm", "i'll", "i've", "i'd", 'ok', 'okay', 'am', 'pm', 'tv', 'asap', 'lol', 'diy',
   'hi', 'hey', 'hello', 'dear', 'thanks', 'thank', 'xoxo', 'ps',
   'dr', 'mr', 'mrs', 'ms', 'mx',
   'kin', 'kinfolk', 'auntie', 'aunties', 'tribe', 'kintale', 'kintales', 'kincare', 'mytribe', 'tribetails', 'tails',
+]);
+// The calendar keeps its capital and is not taken for a name, unless someone
+// in the Tribe is called by it ("April", "June"): then it is a name like any
+// other in the examples. A draft that writes one means the calendar.
+const CALENDAR_WORDS = new Set([
   'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
   'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september',
   'october', 'november', 'december',
 ]);
+const ALWAYS_WORDS = new Set([...NEVER_NAMES, ...CALENDAR_WORDS]);
 
 const APOSTROPHES = /['’‘ʼ]/gu;
 const tidy = (text) => String(text || '').normalize('NFC');
@@ -146,7 +155,7 @@ function addNames(roster, role, texts) {
     for (const form of forms) {
       if (form.length < 2) continue;
       const key = fold(form);
-      if (ALWAYS_WORDS.has(key) && role !== 'kin') continue;
+      if (NEVER_NAMES.has(key) && role !== 'kin') continue;
       if (!roster.has(key)) roster.set(key, { form, role });
     }
   }
@@ -227,15 +236,14 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
     // the names come in the text. Each name is a group of its own.
     const sourceOf = (form) => form.split(' ').map((w) => escapeRegExp(w).replace(APOSTROPHES, "['’‘ʼ]")).join('\\s+');
     const pattern = new RegExp(
-      `(?<![\\p{L}\\p{N}])(?:${entries.map((e) => `(${sourceOf(e.form)})`).join('|')})((?:['’‘ʼ]s)?|e?s)(?![\\p{L}\\p{N}])`,
+      `(?<![\\p{L}\\p{N}\\[])(?:${entries.map((e) => `(${sourceOf(e.form)})`).join('|')})((?:['’‘ʼ]s)?|e?s)(?![\\p{L}\\p{N}])`,
       'giu',
     );
     out = out.replace(pattern, (match, ...groups) => {
       const i = groups.findIndex((g, n) => n < entries.length && g !== undefined);
       const entry = entries[i];
-      const name = groups[i];
-      // A name that is also an everyday word is replaced only with its capital.
-      if (vocabulary.has(fold(entry.form)) && name.charAt(0) === name.charAt(0).toLowerCase()) return match;
+      // A Tribe name is replaced in any case, even where it is also an
+      // everyday word: "will" for someone called Will becomes a placeholder too.
       found.set(fold(entry.form), entry);
       return placeholderFor(entry) + (groups[entries.length] || '');
     });
@@ -253,30 +261,14 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
     return '[Name]';
   });
   out = out.replace(/\[Name\](?:\s+\[Name\])+/gu, '[Name]');
-  // Read it again: a Tribe name with its capital, or a contact detail, and it is dropped.
+  // Read it again: a Tribe name in any case, or a contact detail, and it is dropped.
   for (const entry of entries) {
-    const capital = entry.form.charAt(0).toUpperCase() + entry.form.slice(1);
-    if (new RegExp(`(?<![\\p{L}\\p{N}\\[])${escapeRegExp(capital)}(?![\\p{L}\\p{N}])`, 'u').test(out)) return null;
+    if (new RegExp(`(?<![\\p{L}\\p{N}\\[])${escapeRegExp(entry.form)}(?![\\p{L}\\p{N}])`, 'iu').test(out)) return null;
   }
   if (hasIdentifier(out.replace(/\[(?:email|phone|link|address|number)\]/gu, ''))) return null;
   return out;
 }
 
-/**
- * An email body without what it quotes: lines starting with ">" and
- * everything from the line that introduces a quoted message. The quoted part
- * is the household's writing, never the office's.
- */
-function withoutQuotedReply(text) {
-  const out = [];
-  for (const line of String(text || '').split(/\r?\n/)) {
-    const t = line.trim();
-    if (/^On\b.*\bwrote:?$/iu.test(t) || /^-{2,}\s*(?:Original|Forwarded) Message/iu.test(t) || /^From:\s/iu.test(t)) break;
-    if (t.startsWith('>')) continue;
-    out.push(line);
-  }
-  return out.join('\n').trim();
-}
 
 /** Text without markup, entities decoded, spaces tidied. */
 function plainText(body) {
@@ -317,7 +309,7 @@ async function optional(label, read) {
 const rowsOf = async (q) => (await q.get()).docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
 
 async function readCandidates(db) {
-  const [threads, texts, emails, tales, broadcasts] = await Promise.all([
+  const [threads, texts, tales, broadcasts] = await Promise.all([
     optional('inbox', async () => {
       const convs = await rowsOf(db.collection('conversations').orderBy('lastMessageAtMs', 'desc').limit(30));
       const perThread = await Promise.all(convs.map((c) => optional('inbox thread', async () => {
@@ -331,9 +323,6 @@ async function readCandidates(db) {
     optional('texts', async () => (await rowsOf(db.collection('sms_messages').orderBy('timestamp', 'desc').limit(200)))
       .filter((m) => m.direction === 'outbound' && m.mirroredFrom === 'sendExternalMessage')
       .map((m) => ({ kind: 'text_reply', text: plainText(m.body), at: Date.parse(m.timestamp) || 0, names: [m.kinfolkName] }))),
-    optional('emails', async () => (await rowsOf(db.collection('emails').orderBy('timestamp', 'desc').limit(200)))
-      .filter((m) => m.direction === 'outbound')
-      .map((m) => ({ kind: 'email', text: withoutQuotedReply(plainText(m.body || m.bodyHtml)), at: Date.parse(m.timestamp) || 0, names: [m.kinfolkName] }))),
     optional('kintales', async () => (await rowsOf(db.collection('kin_care_reports').orderBy('createdAt', 'desc').limit(100)))
       .filter((t) => String(t.status || '').toUpperCase() === 'SENT'
         && !textOf(t.sourceDraftId)
@@ -352,12 +341,16 @@ async function readCandidates(db) {
     (await rowsOf(db.collection(`kin_care_reports/${t.id}/comments`).orderBy('createdAtMs', 'desc').limit(5)))
       .filter((c) => c.authorRole === 'admin')
       .map((c) => ({ kind: 'kintale_comment', text: plainText(c.body), at: Number(c.createdAtMs) || 0, names: [t.kinfolkName] })))))).flat();
-  return [...threads, ...texts, ...emails, ...taleRows, ...comments, ...broadcasts];
+  return [...threads, ...texts, ...taleRows, ...comments, ...broadcasts];
 }
 
-/** The generated copy on file, as shingles, so generated text is left out. */
+/**
+ * The generated copy on file, as shingles, so generated text is left out. Not
+ * optional: without it generated copy could pass for the office's own, so a
+ * read that fails throws.
+ */
 async function generatedShingles(db) {
-  const rows = await optional('generated drafts', () => rowsOf(db.collection('generated_drafts').orderBy('createdOn', 'desc').limit(500)));
+  const rows = await rowsOf(db.collection('generated_drafts').orderBy('createdOn', 'desc').limit(500));
   const out = new Set();
   for (const r of rows) for (const field of ['generated_copy', 'generatedCopy']) for (const s of shingles(r[field])) out.add(s);
   return out;
@@ -394,18 +387,21 @@ async function buildOwnWriting(db, voiceText) {
     console.error('generate: the Tribe names could not all be read, so no own writing is sent');
     return null;
   }
-  const [candidates, generated] = await Promise.all([readCandidates(db), generatedShingles(db)]);
+  let candidates;
+  let generated;
+  try {
+    [candidates, generated] = await Promise.all([readCandidates(db), generatedShingles(db)]);
+  } catch (_) {
+    console.error('generate: the generated drafts could not be read, so no own writing is sent');
+    return null;
+  }
   const usable = candidates
     .map((c) => ({ ...c, text: c.text.length > MAX_EXAMPLE_CHARS ? `${c.text.slice(0, MAX_EXAMPLE_CHARS).replace(/\s+\S*$/u, '')} ...` : c.text }))
     .filter((c) => c.text.length >= MIN_EXAMPLE_CHARS)
     .filter((c) => ![...shingles(c.text)].some((s) => generated.has(s)));
-  // An everyday word is one the voice files write in lowercase, or two
-  // different examples do. A Tribe name is an everyday word only by the voice
-  // files: two examples writing a Kin's name in lowercase do not make it one.
-  const seen = new Map();
-  for (const c of usable) for (const w of lowercaseWords([c.text])) seen.set(w, (seen.get(w) || 0) + 1);
+  // An everyday word is one the voice files write in lowercase. The examples
+  // never teach one: a name typed in lowercase twice is still a name.
   const vocabulary = lowercaseWords([voiceText || '']);
-  for (const [w, n] of seen) if (n >= 2 && !roster.has(w)) vocabulary.add(w);
 
   const found = new Map();
   const examples = [];
@@ -486,7 +482,7 @@ function tribeNamesIn(draft, names, vocabulary, requestText, carriedNames) {
   const found = [];
   for (const entry of names || []) {
     const form = entry.forms[0];
-    if (carried.has(fold(form))) continue;
+    if (carried.has(fold(form)) || CALENDAR_WORDS.has(fold(form))) continue;
     const capital = form.charAt(0).toUpperCase() + form.slice(1);
     const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(capital)}(?![\\p{L}\\p{N}])`, 'gu');
     if (new RegExp(pattern.source, 'u').test(request)) continue;
@@ -509,7 +505,6 @@ module.exports = {
   readTribeRoster,
   scrubExample,
   plainText,
-  withoutQuotedReply,
   atSentenceStart,
   readCandidates,
   buildOwnWriting,

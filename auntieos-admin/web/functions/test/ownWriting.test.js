@@ -174,9 +174,18 @@ describe('one example made safe', () => {
     assert.strictEqual(out, '[Kinfolk], [Kin]\'s bowl and the two [Kin 2]s are fine. [Kinfolk]!');
     assert.deepStrictEqual([...found.keys()].sort(), ['marzipan', 'ottoline', 'sprocket']);
   });
-  it('a name that is also an everyday word is replaced only with its capital', () => {
+  it('a name that is also an everyday word is replaced in any case', () => {
     const out = own.scrubExample('Will, we will be by at noon.', roster(), [], vocab, new Map());
-    assert.strictEqual(out, '[Kinfolk], we will be by at noon.');
+    assert.strictEqual(out, '[Kinfolk], we [Kinfolk] be by at noon.');
+  });
+  it('a household person named for a month is replaced, and the month alone keeps its capital', () => {
+    const withApril = own.addNames(roster(), 'kinfolk', ['April Dunmore']);
+    assert.ok(withApril.has('april'));
+    assert.strictEqual(
+      own.scrubExample('April, see you Monday in March.', withApril, [], vocab, new Map()),
+      '[Kinfolk], see you Monday in March.',
+    );
+    assert.strictEqual(own.scrubExample('See you Monday in April.', roster(), [], new Set([...vocab, 'see']), new Map()), 'See you Monday in April.');
   });
   it('a name in lowercase that is not an everyday word is still replaced', () => {
     assert.strictEqual(own.scrubExample('marzipan ate.', roster(), [], vocab, new Map()), '[Kin] ate.');
@@ -213,29 +222,24 @@ describe('the roster', () => {
   });
 });
 
-describe('an email\'s quoted reply', () => {
-  it('is cut: quoted lines and everything from the line that introduces them', () => {
-    const body = 'Thanks so much, see you Tuesday.\n\nOn Mon, Nov 3, 2026 at 9:00 AM someone wrote:\n> Can you come early?\n> Thanks';
-    assert.strictEqual(own.withoutQuotedReply(body), 'Thanks so much, see you Tuesday.');
-    assert.strictEqual(own.withoutQuotedReply('All good.\n> quoted line\nBack to me.'), 'All good.\nBack to me.');
-    assert.strictEqual(own.withoutQuotedReply('Done.\n-----Original Message-----\nFrom: them'), 'Done.');
-  });
-  it('never reaches the examples', async () => {
-    const data = tribeData({
-      emails: [{ id: 'e2', direction: 'outbound', body: 'We had the loveliest walk today and the water is fresh.\n\nOn Mon someone wrote:\n> please do not share this household text', timestamp: '2026-11-09T10:00:00.000Z' }],
-    });
-    const { value } = await silence(() => own.buildOwnWriting(makeDb(data), VOICE));
-    assert.match(value.text, /loveliest walk/);
-    assert.doesNotMatch(value.text, /household text|wrote/);
+describe('the emails collection', () => {
+  it('is never read: nothing marks a row there as the office\'s own typing', async () => {
+    const db = makeDb(tribeData());
+    const base = db.collection;
+    const asked = [];
+    db.collection = (name) => { asked.push(name); return base(name); };
+    const { value } = await silence(() => own.buildOwnWriting(db, VOICE));
+    assert.ok(!asked.includes('emails'));
+    assert.doesNotMatch(value.text, /spare key|\[Email\]/);
   });
 });
 
 describe('the office\'s own writing, collected', () => {
   const build = async (data = tribeData(), voice = VOICE) => (await silence(() => own.buildOwnWriting(makeDb(data), voice))).value;
 
-  it('takes inbox replies, text replies, emails, sent KinTales, office comments and broadcasts', async () => {
+  it('takes inbox replies, text replies, sent KinTales, office comments and broadcasts', async () => {
     const result = await build();
-    for (const label of ['[Inbox reply]', '[Text reply]', '[Email]', '[KinTale]', '[KinTale comment]', '[Broadcast]']) {
+    for (const label of ['[Inbox reply]', '[Text reply]', '[KinTale]', '[KinTale comment]', '[Broadcast]']) {
       assert.ok(result.text.includes(label), `${label} is sent`);
     }
   });
@@ -268,9 +272,26 @@ describe('the office\'s own writing, collected', () => {
     assert.strictEqual(failed, null);
   });
   it('one source that cannot be read leaves the others', async () => {
-    const { value } = await silence(() => own.buildOwnWriting(makeDb(tribeData(), { failing: ['emails', 'broadcasts'] }), VOICE));
+    const { value } = await silence(() => own.buildOwnWriting(makeDb(tribeData(), { failing: ['sms_messages', 'broadcasts'] }), VOICE));
     assert.ok(value.text.includes('[Inbox reply]'));
-    assert.ok(!value.text.includes('[Email]') && !value.text.includes('[Broadcast]'));
+    assert.ok(!value.text.includes('[Text reply]') && !value.text.includes('[Broadcast]'));
+  });
+  it('with the generated drafts unreadable, nothing is built', async () => {
+    const { value, logs } = await silence(() => own.buildOwnWriting(makeDb(tribeData(), { failing: ['generated_drafts'] }), VOICE));
+    assert.strictEqual(value, null);
+    assert.match(logs.join('\n'), /generated drafts could not be read/);
+  });
+  it('a name nobody has on file, typed in lowercase in two examples, is still a name at a sentence start', async () => {
+    const data = tribeData({
+      broadcasts: [
+        { id: 'b1', body: 'The walk was lovely and fenwold the neighbour waved at us from the gate.', sentAtMs: 400 },
+        { id: 'b2', body: 'The water is fresh and fenwold the neighbour says the gate is fixed now.', sentAtMs: 401 },
+        { id: 'b3', body: 'Fenwold the neighbour kept an eye on the yard while we were out on the walk.', sentAtMs: 402 },
+      ],
+    });
+    const { text } = await build(data);
+    assert.doesNotMatch(text, /Fenwold/);
+    assert.match(text, /\[Name\] the neighbour kept an eye/);
   });
   it('is held to a count, a length and a share per kind', async () => {
     const many = Array.from({ length: 30 }, (_, i) => ({
@@ -419,6 +440,10 @@ describe('the Tribe-name check on a draft', () => {
   it('an everyday-word name counts mid-sentence, not at a sentence start', () => {
     assert.deepStrictEqual(own.tribeNamesIn('Will you call? Thanks.', entries, vocab, 'notes', []), []);
     assert.deepStrictEqual(own.tribeNamesIn('Say hi to Will for me.', entries, vocab, 'notes', []), ['Will']);
+  });
+  it('a month or a day in a draft is the calendar, even when someone is named for it', () => {
+    const withApril = [...entries, { role: 'kinfolk', forms: ['April'] }];
+    assert.deepStrictEqual(own.tribeNamesIn('See you in April, Marzipan.', withApril, vocab, 'notes', ['Marzipan']), []);
   });
   it('the start of a new paragraph is a sentence start too', () => {
     assert.deepStrictEqual(own.tribeNamesIn('Hi Leopold,\n\nWill you call?', entries, vocab, 'notes', []), []);
