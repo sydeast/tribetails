@@ -1519,7 +1519,7 @@ describe('Bookings bulk reschedule', () => {
     expect(screen.getByText('Not offered a new time:')).toBeInTheDocument();
     // Scoped to the sheet: the "Pending" stat card carries the same phrase.
     const sheet = screen.getByRole('dialog');
-    expect(within(sheet).getByText(/awaiting a reply/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/not approved yet/i)).toBeInTheDocument();
     // Opening a sheet is not a transition: nothing was written by the press.
     expect(rescheduleBooking).not.toHaveBeenCalled();
   });

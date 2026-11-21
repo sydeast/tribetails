@@ -107,7 +107,7 @@ describe('planBulkReschedule', () => {
     expect(plan.eligible.map((t) => t.id)).toEqual(['ses1']);
     expect(plan.skipped).toHaveLength(1);
     expect(plan.skipped[0]!.name).toBe('The Devlins');
-    expect(plan.skipped[0]!.reason).toContain('awaiting a reply');
+    expect(plan.skipped[0]!.reason).toContain('not approved yet');
   });
 
   it('names a selected id that has left the list', () => {
