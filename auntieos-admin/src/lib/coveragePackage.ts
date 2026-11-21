@@ -819,7 +819,7 @@ export function priceDay(
   if (bonusFreeVisit) {
     const idx = items.findIndex((it) => !it.free);
     if (idx >= 0) {
-      items[idx] = { ...items[idx]!, price: 0, bonus: true, free: true, freeReason: 'free visit — overnight bundle' };
+      items[idx] = { ...items[idx]!, price: 0, bonus: true, free: true, freeReason: 'free visit, overnight bundle' };
     }
   }
 
@@ -926,7 +926,7 @@ export interface QuoteInput {
 export function quoteText({ clientName, startDate, days, priced }: QuoteInput): string {
   const { pkg, rows, subtotal, discountPct, discount, total } = priced;
   const money = formatUsd;
-  const lines: string[] = ['TribeTails — Coverage Package', ''];
+  const lines: string[] = ['TribeTails Coverage Package', ''];
   if (clientName.trim() !== '') lines.push(`Prepared for: ${clientName.trim()}`);
   lines.push(`${pkg.name} · ${days} day${days !== 1 ? 's' : ''}`);
   if (startDate) lines.push(`${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}`);
@@ -935,10 +935,10 @@ export function quoteText({ clientName, startDate, days, priced }: QuoteInput): 
   for (const r of rows) {
     const when = startDate ? dateLabel(startDate, r.dayIndex) : `Day ${r.dayIndex + 1}`;
     const on = r.isOvernight && r.overnightStartMin !== null ? `   (overnight from ${minutesToTime(r.overnightStartMin)})` : '';
-    lines.push(`Day ${r.dayIndex + 1} — ${when}${on}   ${money(r.dayCost)}`);
+    lines.push(`Day ${r.dayIndex + 1}: ${when}${on}   ${money(r.dayCost)}`);
     for (const it of r.items) {
       const price = it.free ? 'free' : money(it.price);
-      const reason = it.freeReason ? ` — ${it.freeReason}` : '';
+      const reason = it.freeReason ? `, ${it.freeReason}` : '';
       lines.push(`   ${minutesToTime(it.time).padEnd(9)} ${it.label} (${it.durationLabel})${reason}   ${price}`);
     }
     if (r.isOvernight && r.overnightStartMin !== null) {

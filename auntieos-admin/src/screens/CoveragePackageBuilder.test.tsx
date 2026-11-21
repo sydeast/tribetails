@@ -140,6 +140,17 @@ describe('CoveragePackageBuilder visit menu (issue #693)', () => {
     expect(label?.firstChild?.textContent?.trim()).toBe('Pinned visits');
   });
 
+  // #1859: the selects read "12 Hours / Overnight — $150" and "60 Minute — $45",
+  // and the gap warning ran on behind another em dash.
+  it('draws no em dash anywhere on the builder, options and warnings included', async () => {
+    render(<CoveragePackageBuilder />);
+    await screen.findByLabelText(/pinned visit length/i);
+    expect(document.body.textContent).not.toContain('—');
+    const options = [...document.querySelectorAll('option')].map((o) => o.textContent ?? '');
+    expect(options.length).toBeGreaterThan(0);
+    for (const option of options) expect(option).not.toContain('—');
+  });
+
   it('says where to set rates when the KinCare list is empty', async () => {
     getBusinessSettings.mockResolvedValue({ serviceRates: {}, serviceDurations: {} });
     render(<CoveragePackageBuilder />);
