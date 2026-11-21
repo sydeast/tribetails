@@ -764,7 +764,7 @@ private fun RefreshFailedLine(refreshing: Boolean, onRetry: () -> Unit) {
             style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
         )
         if (refreshing) {
-            KinSpinner(size = 24.dp)
+            KinSpinner(modifier = Modifier.testTag("invoices-refresh-spinner"), size = 24.dp)
         } else {
             KinGhostButton(label = "Try again", onClick = onRetry)
         }

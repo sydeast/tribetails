@@ -151,6 +151,46 @@ class PayFailureKeepsListTest {
         onNodeWithText("Invoice #1001").assertIsDisplayed()
     }
 
+    /** The wait after Try again is seen: a spinner in place of the button until the read is over. */
+    @Test
+    fun list_tryAgain_showsTheSpinnerWhileTheReadIsOut() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubTwoOpen(fake)
+        var gate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+        val held = object : com.kinfolk.portal.firebase.FunctionsClient {
+            override suspend fun call(name: String, payload: JsonObject?): JsonObject {
+                if (name == "getMyInvoices") gate?.await()
+                return fake.call(name, payload)
+            }
+        }
+        val readAgain = androidx.compose.runtime.mutableStateOf(0)
+        val api = PortalApi(held)
+        setThemedContent {
+            val c = rememberInvoicesController("3", api)
+            androidx.compose.runtime.LaunchedEffect(readAgain.value) { if (readAgain.value > 0) c.reload() }
+            InvoicesScreen("The Foster", "3", api, controller = c)
+        }
+        waitForIdle()
+        fake.stubError("getMyInvoices", IllegalStateException("network down"))
+        readAgain.value = 1
+        waitForIdle()
+        onNodeWithTag("invoices-refresh-failed").assertIsDisplayed()
+
+        val read = kotlinx.coroutines.CompletableDeferred<Unit>()
+        gate = read
+        stubTwoOpen(fake)
+        onNodeWithText("Try again").performClick()
+        waitForIdle()
+        onNodeWithTag("invoices-refresh-spinner", useUnmergedTree = true).assertExists()
+        onNodeWithText("Try again").assertDoesNotExist()
+
+        read.complete(Unit)
+        waitForIdle()
+        onNodeWithTag("invoices-refresh-spinner", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithTag("invoices-refresh-failed").assertDoesNotExist()
+        onNodeWithText("Invoice #1001").assertIsDisplayed()
+    }
+
     /** A first read that fails has nothing to keep: the title says so, and no refresh line is drawn over it. */
     @Test
     fun list_aFirstReadThatFails_drawsNoRefreshLine() = runComposeUiTest {
