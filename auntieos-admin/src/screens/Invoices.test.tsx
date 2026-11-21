@@ -130,6 +130,10 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
 
 import { Invoices } from './Invoices';
 
+/** #1827: the scope and coverage sentences live in an info tip, not under a title. */
+const inTip = (text: string) => (_: string, el: Element | null) =>
+  el?.getAttribute('role') === 'tooltip' && (el.textContent ?? '').includes(text);
+
 function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
 }
@@ -837,6 +841,8 @@ describe('Invoices screen: the date window', () => {
     expect(
       screen.getByText(/1 invoice whose stored date is not a real date was left out/),
     ).toBeInTheDocument();
+    // #1827: and the count stays on screen as the panel's value.
+    expect(screen.getByText('1 with no real date left out')).toBeInTheDocument();
   });
 
   it('says nothing at all when every row really is in the window', () => {
@@ -919,7 +925,7 @@ describe('Invoices screen: archived invoices are excluded by default', () => {
     // "1 archived invoice excluded" reads like a fact about the books.
     expect(
       screen.getByText(
-        'These totals cover the 1 invoice in the last 7 days. 1 archived invoice excluded, counted within the invoices loaded here rather than across the books.',
+        inTip('These totals cover the 1 invoice in the last 7 days. 1 archived invoice excluded, counted within the invoices loaded here rather than across the books.'),
       ),
     ).toBeInTheDocument();
   });
@@ -1062,7 +1068,7 @@ describe('Invoices screen: the totals say what they cover', () => {
     usePagedCollection.mockReturnValue(paged([entry({})]));
     render(<Invoices />);
     expect(
-      screen.getByText('These totals cover the 1 invoice in the last 7 days.'),
+      screen.getByText(inTip('These totals cover the 1 invoice in the last 7 days.')),
     ).toBeInTheDocument();
   });
 
@@ -1073,15 +1079,25 @@ describe('Invoices screen: the totals say what they cover', () => {
     render(<Invoices />);
     expect(
       screen.getByText(
-        'These totals cover the 2 invoices loaded so far, not all of the last 7 days.',
+        inTip('These totals cover the 2 invoices loaded so far, not all of the last 7 days.'),
       ),
     ).toBeInTheDocument();
+    // #1827: the sentence is a tip, so the partial count stays on screen as a value.
+    expect(screen.getByText('2 loaded so far')).toBeInTheDocument();
   });
 
   it('makes no claim at all while the first page is in flight', () => {
     usePagedCollection.mockReturnValue(paged([], { state: { status: 'loading' } }));
     render(<Invoices />);
     expect(screen.queryByText(/These totals cover/)).toBeNull();
+  });
+  // #1827: the walk read the totals and search sentences as grey paragraphs
+  // under the stat cards and the range chips.
+  it('keeps the totals and search sentences out of any paragraph on the page', () => {
+    usePagedCollection.mockReturnValue(paged([entry({})]));
+    render(<Invoices />);
+    expect(screen.queryByText(/These totals cover|Searching the/, { selector: 'p' })).toBeNull();
+    expect(screen.getByText(inTip('Searching the 1 invoice loaded'))).toBeInTheDocument();
   });
 });
 

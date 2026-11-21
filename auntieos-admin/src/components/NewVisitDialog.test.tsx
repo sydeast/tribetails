@@ -103,6 +103,17 @@ async function fillHouseholdAndService(service = '30Minute · $25') {
 }
 
 describe('NewVisitDialog', () => {
+  // #1827: the sentence that opened the body is the title's info tip, so the
+  // title reads alone and a screen reader still hears it as the description.
+  it('carries its explanation as the title tip, not a paragraph under the title', () => {
+    open();
+    const title = screen.getByRole('heading', { name: 'New visit' });
+    const tip = document.getElementById(title.getAttribute('aria-describedby') ?? '');
+    expect(tip).toHaveAttribute('role', 'tooltip');
+    expect(tip).toHaveTextContent(/^Puts a confirmed visit on the calendar now\./);
+    expect(screen.queryByText(/Puts a confirmed visit/, { selector: 'p' })).toBeNull();
+  });
+
   /**
    * The service picker is the whole billing chain: a session carries no price,
    * so `listUninvoicedSessions` looks this exact string up in

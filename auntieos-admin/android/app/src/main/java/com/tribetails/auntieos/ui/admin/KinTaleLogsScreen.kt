@@ -64,6 +64,7 @@ import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.isUntriagedOrphan
 import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.ui.components.AuntieBanner
+import com.tribetails.auntieos.ui.components.DenInfoTip
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
 import com.tribetails.auntieos.ui.components.AuntieDialog
@@ -240,11 +241,8 @@ fun KinTaleLogsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.size(6.dp))
-                    Text(
-                        text  = "Filters the KinTales loaded here, not the full archive.",
-                        style = AuntieTheme.typography.labelSmall,
-                        color = AuntieTheme.colors.textFaint,
-                    )
+                    // #1827: what the search reaches is guidance, an info tip, not a line under the field.
+                    DenInfoTip("Filters the KinTales loaded here, not the full archive.")
 
                     // KT1 (A8): operator-chosen ordering for the list (organizes Sent).
                     SortChipRow(selected = sortMode, onSelect = { sortMode = it })

@@ -33,7 +33,7 @@ import { kinTaleGpsBlock } from '../lib/kinTaleGps';
 import { projectRoute } from '@tribetails/geo';
 import { sessionState } from '../lib/sessionFormat';
 import { useCollection } from '../lib/firestore';
-import { DenScreenHeading, DenPanel, EmptyHint, ServicePill, StatusPill } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, EmptyHint, InfoTip, ServicePill, StatusPill } from '../components/DenScreenKit';
 import { kinTaleState, kinTaleWhen } from '../lib/kinTaleFormat';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -1204,12 +1204,17 @@ function ComposeForm({
             ) : (
               <>
                 {template.name || 'Untitled template'}
+                {/* #1827: where a built-in template comes from is guidance,
+                    an info tip beside its name rather than a line under it. */}
                 {draft.templateId === '' && (
-                  <span className="kintale-compose__provenance">
+                  <>
                     {' '}
-                    Built in. Nothing in the Template Bank matches
-                    {draft.serviceType ? ` ${serviceName}` : ' this visit'} yet.
-                  </span>
+                    <InfoTip
+                      text={`Built in. Nothing in the Template Bank matches${
+                        draft.serviceType ? ` ${serviceName}` : ' this visit'
+                      } yet.`}
+                    />
+                  </>
                 )}
               </>
             )}

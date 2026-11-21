@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { InfoTip } from './DenScreenKit';
 import './Dialog.css';
 
 interface DialogProps {
@@ -43,6 +44,12 @@ interface DialogProps {
    * height are the shape of the step flow rather than a caller's choice.
    */
   size?: 'standard' | 'wide' | 'full';
+  /**
+   * A sentence about the dialog as a whole, shown as an info tip beside the
+   * title (#1827). The ruling is no explanatory paragraph under a title, a tip
+   * at most, so guidance that used to open a dialog's body goes here.
+   */
+  titleTip?: string;
 }
 
 /**
@@ -60,10 +67,13 @@ export function Dialog({
   footer,
   variant = 'center',
   size = 'standard',
+  titleTip,
 }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
+  const tipId = useId();
+  const hasTip = titleTip !== undefined && titleTip.trim() !== '';
 
   // onClose is read through a ref so this effect runs ONCE (mount), not on every
   // onClose identity change. A caller passing an inline arrow recreates onClose
@@ -118,9 +128,12 @@ export function Dialog({
         tabIndex={-1}
       >
         <header className="dialog__head">
-          <h2 id={titleId} className="dialog__title">
-            {title}
-          </h2>
+          <div className="dialog__titlerow">
+            <h2 id={titleId} className="dialog__title" aria-describedby={hasTip ? tipId : undefined}>
+              {title}
+            </h2>
+            {hasTip ? <InfoTip id={tipId} text={titleTip ?? ''} /> : null}
+          </div>
           <button type="button" className="dialog__close" aria-label="Close" onClick={onClose}>
             ×
           </button>
