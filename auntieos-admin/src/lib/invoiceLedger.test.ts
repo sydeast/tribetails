@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ledgerCoversBalance,
+  ledgerRowCameOffABalance,
   ledgerRowAppliedLabel,
   ledgerRowBalanceCents,
   ledgerRowCaveat,
@@ -267,6 +268,36 @@ describe('ledgerCoversBalance', () => {
 
   it('stays quiet when there is no ledger row at all', () => {
     expect(ledgerCoversBalance({ amountDueCents: 4000, ledgerPayments: [] })).toBe(false);
+  });
+  // #2467: a row that already came off a balance is not money the balance has not seen.
+  it('#2467 leaves out a part payment that was applied to this invoice', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 4000,
+        ledgerPayments: [{ amountCents: 6000, tipCents: 0, appliedCents: 6000 }],
+      }),
+    ).toBe(false);
+  });
+  it('#2467 leaves out a row whose leftover went to account credit', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 11700,
+        ledgerPayments: [{ amountCents: 60000, tipCents: 0, appliedCents: 10000 }],
+      }),
+    ).toBe(false);
+  });
+  it('#2467 still flags a card row that applied nothing, beside one that did', () => {
+    const rows = [
+      { amountCents: 6000, tipCents: 0, appliedCents: 6000 },
+      { amountCents: 4000, tipCents: 0, appliedCents: 0 },
+    ];
+    expect(ledgerCoversBalance({ amountDueCents: 4000, ledgerPayments: rows })).toBe(true);
+    expect(ledgerCoversBalance({ amountDueCents: 4001, ledgerPayments: rows })).toBe(false);
+  });
+  it('#2467 a row that applied money came off a balance; one that applied none did not', () => {
+    expect(ledgerRowCameOffABalance({ appliedCents: 1 })).toBe(true);
+    expect(ledgerRowCameOffABalance({ appliedCents: 0 })).toBe(false);
+    expect(ledgerRowCameOffABalance({})).toBe(false);
   });
 });
 /**

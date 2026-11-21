@@ -9,6 +9,7 @@ import {
   parseDraftLines,
   blankDraftLine,
   draftFromLineItem,
+  editorPreviewOf,
   type DraftLine,
 } from './InvoiceLineItems';
 
@@ -335,5 +336,34 @@ describe('bound line items', () => {
       />,
     );
     expect(screen.getByText('No extra charges.')).toBeInTheDocument();
+  });
+});
+
+describe('editorPreviewOf (#1975)', () => {
+  const line = (unitText: string, qtyText = '1'): DraftLine => ({ ...blankDraftLine(), description: 'Extra walk', qtyText, unitText });
+  it('questions a unit price over the cap beside the line, as it is typed', () => {
+    const preview = editorPreviewOf([line('9999999')], '');
+    expect(preview.lineProblems).toEqual(['Unit price for "Extra walk" cannot be more than $100,000.00.']);
+  });
+  it('questions a quantity over the cap the same way', () => {
+    const preview = editorPreviewOf([line('10', '1000')], '');
+    expect(preview.lineProblems[0]).toBe('Quantity for "Extra walk" cannot be more than 999.');
+  });
+  it('takes a price at the cap', () => {
+    expect(editorPreviewOf([line('100000')], '').lineProblems).toEqual([null]);
+  });
+  it('shows no subtotal while a line is over the cap', async () => {
+    render(
+      <InvoiceLineItemsEditor
+        drafts={[line('9999999')]}
+        onChange={vi.fn()}
+        invoiceDiscountText=""
+        onInvoiceDiscountChange={vi.fn()}
+        disabled={false}
+        emptyHint=""
+      />,
+    );
+    expect(screen.getByText('Unit price for "Extra walk" cannot be more than $100,000.00.')).toBeInTheDocument();
+    expect(screen.queryByText('$9,999,999.00')).not.toBeInTheDocument();
   });
 });

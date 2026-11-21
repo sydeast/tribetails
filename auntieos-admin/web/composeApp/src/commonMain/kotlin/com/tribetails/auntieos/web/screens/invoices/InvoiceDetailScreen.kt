@@ -1311,6 +1311,11 @@ private fun RecordPaymentDialog(
     // auto-apply tick: a leftover is tip unless she enters a credit here.
     var credit    by remember(invoice._id, visible) { mutableStateOf("") }
     var sendConfirmation by remember(invoice._id, visible) { mutableStateOf(false) }
+    // #1975: the tip she ticked as right when it is larger than the invoice's total.
+    var bigTipConfirmedCents by remember(invoice._id, visible) { mutableStateOf<Long?>(null) }
+    val liveSplit = recordPaymentSplit(amount, apply, tip, credit, invoiceBalanceCents(invoice))
+    val totalCents = invoiceTotalCents(invoice)
+    val bigTipCents = (liveSplit as? RecordPaymentSplit.Ok)?.tipCents?.takeIf { tipNeedsConfirming(it, totalCents) }
     val canSave = amount.isNotBlank() && apply.isNotBlank() && method.isNotBlank()
     AuntieDialog(
         visible   = visible,
@@ -1327,6 +1332,7 @@ private fun RecordPaymentDialog(
                 onClick = {
                     when (val form = parseRecordPaymentForm(
                         invoice, amount, apply, tip, fee, method, reference, date, notes, credit, sendConfirmation,
+                        bigTipConfirmedCents,
                     )) {
                         is RecordPaymentForm.Invalid -> onInvalid(form.message)
                         is RecordPaymentForm.Ready   -> onSubmit(form.entry)
@@ -1354,10 +1360,18 @@ private fun RecordPaymentDialog(
             BottomBorderField(credit, { credit = it }, label = "Leave as account credit", placeholder = "0.00", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
             // #988: where the money goes, before Save.
             Text(
-                recordPaymentSplitLine(recordPaymentSplit(amount, apply, tip, credit, invoiceBalanceCents(invoice)), fee),
+                recordPaymentSplitLine(liveSplit, fee),
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )
+            if (bigTipCents != null && totalCents != null) {
+                AuntieCheckbox(
+                    checked = bigTipConfirmedCents == bigTipCents,
+                    onCheckedChange = { bigTipConfirmedCents = if (it) bigTipCents else null },
+                    label = bigTipConfirmLabel(bigTipCents, totalCents),
+                    enabled = on,
+                )
+            }
             BottomBorderField(method, { method = it }, label = "Method *", placeholder = "Venmo, PayPal, cash...", enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(reference, { reference = it }, label = "Reference #", enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(date, { date = it }, label = "Date (YYYY-MM-DD)", enabled = on, modifier = Modifier.fillMaxWidth())

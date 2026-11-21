@@ -511,3 +511,86 @@ describe('enqueueNotification fan-out (audience:both)', () => {
     expect(ctx.writes.filter((w) => /^notification/.test(w.path))).toEqual([]);
   });
 });
+
+/**
+ * #2277: `skipActorCopy`. The office note notice goes to the business roster
+ * only, and the person who wrote the note is never sent it.
+ */
+describe('#2277 skipActorCopy: the writer is not told about her own note', () => {
+  const NOTE = 'kincare.note.auntie';
+  const DATA = { kinfolkId: 'fam1', batchId: 'bat1', bookingId: 'vis1', visitId: 'vis1', noteId: 'n1', actorName: 'Nora Halbrook' };
+  const recordsFor = (writes: Array<{ path: string; data: Record<string, unknown> }>) =>
+    writes.filter((w) => w.path.startsWith('notifications/')).map((w) => w.data.recipientUid);
+  const emailOrders = (writes: Array<{ path: string; data: Record<string, unknown> }>) =>
+    writes.filter(
+      (w) => w.path.startsWith('notificationDispatch/') && (w.data.channels as string[]).includes('email'),
+    );
+
+  it("the owner's own note, owner alone on the roster: nothing written, nothing thrown", async () => {
+    const ctx = buildDbMock({ docs: { 'businessSettings/admins': { uids: ['owner1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { enqueueNotificationDetailed } = await import('../src/notifications/dispatcher');
+    const outcome = await enqueueNotificationDetailed({
+      key: NOTE,
+      recipientUid: 'primary1',
+      actorUid: 'owner1',
+      skipActorCopy: true,
+      data: DATA,
+    });
+    expect(outcome.written).toEqual([]);
+    expect(outcome.suppressed).toEqual([{ recipientUid: 'owner1', reason: 'actor' }]);
+    expect(ctx.writes.filter((w) => /^notification/.test(w.path))).toEqual([]);
+    expect(mocks.logEventFn.mock.calls.map((c) => c[0].event)).toContain('notification.actor.skipped');
+  });
+
+  it("an Auntie's note reaches the owner, named, and never the Auntie", async () => {
+    const ctx = buildDbMock({
+      docs: { 'businessSettings/admins': { uids: ['owner1'] }, 'staff/auntie1': { displayName: 'Mia Torres' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { enqueueNotificationDetailed } = await import('../src/notifications/dispatcher');
+    const outcome = await enqueueNotificationDetailed({
+      key: NOTE,
+      recipientUid: 'primary1',
+      actorUid: 'auntie1',
+      skipActorCopy: true,
+      data: { ...DATA, actorName: 'Mia Torres' },
+    });
+    expect(outcome.written).toHaveLength(1);
+    expect(recordsFor(ctx.writes)).toEqual(['owner1']);
+    const record = ctx.writes.find((w) => w.path.startsWith('notifications/'))!;
+    expect(record.data).toMatchObject({ actorUid: 'auntie1', actorName: 'Mia Torres', title: 'Note added to a KinCare' });
+  });
+
+  it('with a second admin on the roster, the business email moves to her copy', async () => {
+    const ctx = buildDbMock({ docs: { 'businessSettings/admins': { uids: ['owner1', 'admin2'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { enqueueNotificationDetailed } = await import('../src/notifications/dispatcher');
+    await enqueueNotificationDetailed({
+      key: NOTE,
+      recipientUid: 'primary1',
+      actorUid: 'owner1',
+      skipActorCopy: true,
+      data: DATA,
+    });
+    expect(recordsFor(ctx.writes)).toEqual(['admin2']);
+    const orders = emailOrders(ctx.writes);
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.data.recipientUid).toBe('admin2');
+  });
+
+  it('without the flag the actor keeps her copy (every other notice is unchanged)', async () => {
+    const ctx = buildDbMock({ docs: { 'businessSettings/admins': { uids: ['owner1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const ids = await enqueueNotification({ key: NOTE, recipientUid: 'primary1', actorUid: 'owner1', data: DATA });
+    expect(ids).toHaveLength(1);
+    expect(recordsFor(ctx.writes)).toEqual(['owner1']);
+  });
+
+  it('the flag with no actor uid leaves nobody out', async () => {
+    const ctx = buildDbMock({ docs: { 'businessSettings/admins': { uids: ['owner1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const ids = await enqueueNotification({ key: NOTE, recipientUid: 'primary1', skipActorCopy: true, data: DATA });
+    expect(ids).toHaveLength(1);
+  });
+});

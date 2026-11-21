@@ -1622,6 +1622,46 @@ describe('the payments panel', () => {
       await screen.findByText(/The ledger shows money this balance does not/i),
     ).toBeInTheDocument();
   });
+  it('#2467: a part payment recorded properly raises no ledger warning', async () => {
+    // $100.00 invoice, $60.00 recorded and applied: $40.00 owed beside a $60.00 row.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 10000,
+        paidCents: 6000,
+        amountDueCents: 4000,
+        payments: [subPayment({ amountCents: 6000 })],
+        ledgerPayments: [
+          ledgerPayment({
+            amountCents: 6000,
+            appliedCents: 6000,
+            unappliedCents: 0,
+            appliedInvoiceId: 'inv1',
+            appliedInvoiceNumber: '1042',
+          }),
+        ],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 100, amountDue: 40 })} onClose={vi.fn()} />);
+    expect(await screen.findByRole('table', { name: 'Payment history' })).toBeInTheDocument();
+    expect(screen.queryByText(/The ledger shows money this balance does not/i)).not.toBeInTheDocument();
+  });
+  it('#2467: a row with account credit beside what it applied raises no ledger warning', async () => {
+    // $100.00 applied and $500.00 left as credit; $117.00 still owed.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 21700,
+        paidCents: 10000,
+        amountDueCents: 11700,
+        payments: [subPayment({ amountCents: 10000 })],
+        ledgerPayments: [
+          ledgerPayment({ amountCents: 60000, appliedCents: 10000, unappliedCents: 50000, appliedInvoiceId: 'inv1' }),
+        ],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 217, amountDue: 117 })} onClose={vi.fn()} />);
+    expect(await screen.findByRole('table', { name: 'Payment history' })).toBeInTheDocument();
+    expect(screen.queryByText(/The ledger shows money this balance does not/i)).not.toBeInTheDocument();
+  });
   it('#1568: says nothing about "no payment" when the payment exists only in history (invoice #1018)', async () => {
     // $10.29 card payment in the root ledger, nothing in the settlement rows.
     getInvoiceLedger.mockResolvedValue(
@@ -2336,6 +2376,79 @@ describe('#988 where the payment goes, shown before Save', () => {
     await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2.71');
     await waitFor(() => expect(line()).toHaveTextContent('$72.50 tip (the $2.71 fee comes out of it)'));
   });
+  it('#1975 says a credit typed with Payment amount blank is on top of the amount collected', async () => {
+    await openForm();
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '100');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '500');
+    await waitFor(() => expect(line()).toHaveTextContent('$600.00 paid'));
+    expect(line()).toHaveTextContent(
+      'The $500.00 credit is on top of the $100.00 collected. If the household paid less, enter what they paid under Payment amount.',
+    );
+  });
+  it('#1975 says nothing about on top when the payment amount is typed', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
+    await waitFor(() => expect(line()).toHaveTextContent('$20.00 account credit.'));
+    expect(line()).not.toHaveTextContent(/on top/);
+  });
+  it('#1975 refuses a fee larger than the payment, on the line and on Record', async () => {
+    await openForm();
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '100');
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '500');
+    await waitFor(() =>
+      expect(line()).toHaveTextContent('A fee of $500.00 is more than the $100.00 payment it came out of. Check the fee.'),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/Action failed/i)).toBeInTheDocument();
+    expect(recordPayment).not.toHaveBeenCalled();
+  });
+  it('#1975 a fee larger than the tip comes out of the payment, and is recorded', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '3');
+    await waitFor(() => expect(line()).toHaveTextContent('$0.00 tip (the $3.00 fee comes out of the payment)'));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]![0]).toMatchObject({ fee: 3 });
+  });
+  it('#1975 asks about a tip larger than the invoice, and records only once it is ticked', async () => {
+    await openForm();
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '9999999');
+    await waitFor(() => expect(line()).toHaveTextContent('$9,999,871.50 tip'));
+    const tick = screen.getByRole('checkbox', { name: /the \$9,999,871\.50 tip is right/i });
+    expect(tick).toHaveAccessibleName(
+      "The $9,999,871.50 tip is right. It is more than this invoice's $127.50 total.",
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(
+      await screen.findByText("The tip is more than this invoice's total. Check the amounts, or tick the box to say the tip is right."),
+    ).toBeInTheDocument();
+    expect(recordPayment).not.toHaveBeenCalled();
+    await userEvent.click(tick);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]![0]).toMatchObject({ amount: 9999999, tip: 9999871.5 });
+  });
+  it('#1975 a tick for one tip does not carry to a different one', async () => {
+    await openForm();
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '1000');
+    await userEvent.click(await screen.findByRole('checkbox', { name: /tip is right/i }));
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '2000');
+    expect(await screen.findByRole('checkbox', { name: /\$1,872\.50 tip is right/i })).not.toBeChecked();
+    // A tip no larger than the invoice asks nothing.
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '200');
+    expect(screen.queryByRole('checkbox', { name: /tip is right/i })).not.toBeInTheDocument();
+  });
   it('shows the refusal while the figures do not add up', async () => {
     await openForm();
     await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
@@ -2530,6 +2643,11 @@ describe('#1566 the record-payment dialog on a $78.50 balance', () => {
   });
 });
 describe('what the operator is told after the payment lands', () => {
+  // #1975: the ledger agrees with the $127.50 invoice these cases open, so a
+  // payment over the balance is not read as a tip larger than the invoice.
+  beforeEach(() => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 12750, amountDueCents: 12750 }));
+  });
   it('says where the leftover went when it became account credit', async () => {
     recordPayment.mockResolvedValue({
       ok: true,

@@ -51,6 +51,17 @@ fun notificationCategoryLabel(category: String?): String {
     return CATEGORY_LABELS[key.lowercase()] ?: humanizeKey(key)
 }
 
+/**
+ * #2277: the line under a notification's headline, as admin web and Android
+ * print it: who caused it, then its category ("Mia Torres · Visits"). The
+ * category alone when the row names nobody. An email is never shown as a name.
+ */
+fun notificationMetaLine(actorName: String?, category: String?): String {
+    val who = actorName?.trim().orEmpty().takeIf { it.isNotEmpty() && !it.contains('@') }
+    val label = notificationCategoryLabel(category)
+    return if (who == null) label else "$who · $label"
+}
+
 private val APPLIES_TO_LABELS = mapOf(
     "NONE" to "Nothing yet",
     "KINFOLK" to "Kinfolk profiles",
