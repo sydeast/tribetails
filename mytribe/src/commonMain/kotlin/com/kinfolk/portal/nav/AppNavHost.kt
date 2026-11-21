@@ -641,6 +641,7 @@ fun AppNavHost(
                                 checkingPayment = invoicesController.checkingPayment == invoice.id,
                                 paymentNotSeen = invoicesController.paymentNotSeen == invoice.id,
                                 paymentNotChecked = invoicesController.paymentNotChecked == invoice.id,
+                                paymentBeingRecorded = invoicesController.paymentBeingRecorded == invoice.id,
                                 onCheckPaymentAgain = { invoicesController.checkPaymentAgain(invoice.id) },
                                 onPayMethod = { method -> invoicesController.startPayMethod(invoice, method) },
                                 onQuoteDecision = { accept -> invoicesController.startQuoteDecision(invoice, accept) },

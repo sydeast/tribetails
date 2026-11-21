@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -115,6 +116,7 @@ fun InvoicesScreen(
                     payingId = controller.paying,
                     checkingId = controller.checkingPayment,
                     notCheckedId = controller.paymentNotChecked,
+                    beingRecordedId = controller.paymentBeingRecorded,
                     onPay = { controller.startPay(it) },
                     onCheckAgain = { controller.checkPaymentAgain(it.id) },
                     onOpenInvoice = onOpenInvoice,
@@ -215,6 +217,7 @@ private fun OpenInvoicesCard(
     payingId: String?,
     checkingId: String?,
     notCheckedId: String?,
+    beingRecordedId: String?,
     onPay: (Invoice) -> Unit,
     onCheckAgain: (Invoice) -> Unit,
     onOpenInvoice: (String) -> Unit,
@@ -240,6 +243,7 @@ private fun OpenInvoicesCard(
                         paying = payingId == inv.id,
                         checking = checkingId == inv.id,
                         notChecked = notCheckedId == inv.id,
+                        beingRecorded = beingRecordedId == inv.id,
                         onPay = { onPay(inv) },
                         onCheckAgain = { onCheckAgain(inv) },
                         onClick = { onOpenInvoice(inv.id) },
@@ -283,6 +287,7 @@ private fun OpenInvoiceRow(
     paying: Boolean,
     checking: Boolean,
     notChecked: Boolean,
+    beingRecorded: Boolean,
     onPay: () -> Unit,
     onCheckAgain: () -> Unit,
     onClick: () -> Unit,
@@ -327,6 +332,15 @@ private fun OpenInvoiceRow(
         // `offersPayment`, not `isPayable` alone: a paid invoice takes no payment
         // whatever its status label says (operator ruling 2026-09-27, docket Q5).
         if (offersPayment(invoice)) {
+            // #2437: the server refused a Pay because a payment on this bill
+            // is still being recorded. Its sentence goes above the held button.
+            if (checking && beingRecorded) {
+                Text(
+                    PAYMENT_BEING_RECORDED,
+                    style = type.sansMeta,
+                    modifier = Modifier.fillMaxWidth().testTag("invoice-row-payment-being-recorded"),
+                )
+            }
             // #2366: held back while a payment just made is still landing.
             // #2402: and after a check that could not read the bill at all,
             // when the button checks again instead of paying.
@@ -557,6 +571,22 @@ internal fun payBlockedReason(invoice: Invoice): String? =
 
 /** The sentence the server sends for a paid invoice; shown when a stale screen tries anyway. */
 internal const val PAID_INVOICE_REFUSAL = "This invoice is already paid, so it cannot take another payment."
+
+/**
+ * #2437: the sentence `payInvoice` refuses with while a payment on the invoice
+ * has finished at Stripe and is not recorded yet. Printed where Pay was while
+ * the bill is read again.
+ */
+internal const val PAYMENT_BEING_RECORDED = "A payment on this invoice is still being recorded. Check again in a minute."
+
+/**
+ * #2437: whether a failed `payInvoice` call is that refusal. Read off the
+ * sentence and not off the error's details: this app reaches the server three
+ * ways (Android, desktop, web) and each hands back the details in a different
+ * shape, while the message carries the sentence on all three.
+ */
+internal fun isPaymentBeingRecorded(t: Throwable): Boolean =
+    t.message?.contains(PAYMENT_BEING_RECORDED) == true
 
 /**
  * Whether this state is one the household can hand money over for.
