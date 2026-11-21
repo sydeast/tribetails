@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
@@ -33,6 +34,8 @@ import { viewOfQuery } from '../lib/queryState';
 import { errorLine, usePortalMutation, type MutationPhase } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { announceSaved } from '../lib/saveNotice';
+import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
+import { checkoutReturnUrls } from '../lib/checkoutReturn';
 import '../styles/invoices.css';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
@@ -54,10 +57,35 @@ export function Invoices() {
   const auth = useAuth();
   const viewerUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
+  /**
+   * #2400, #825: ONE CHECKOUT KEY PER INVOICE, held across a re-tap. This
+   * button sent no key at all, so a reply lost on the way back from Stripe and
+   * a second tap opened a second live session (`lib/moneyIdempotency.ts`). A
+   * map and not one held key, because this screen has a Pay button per row: a
+   * household can tap one bill, fail, and tap another, and one held key would
+   * carry the first invoice's key to the second invoice's checkout. Same shape
+   * as the MyTribe Android app's `checkoutKeys`.
+   */
+  const checkoutKeys = useRef(new Map<string, string>());
   const pay = usePortalMutation({
-    mutationFn: (invoiceId: string) =>
-      payInvoice(invoiceId, `${window.location.origin}/invoices/${invoiceId}`, `${window.location.origin}/invoices/${invoiceId}`, kinfolkId),
-    onSuccess: (res) => {
+    mutationFn: (invoiceId: string) => {
+      let key = checkoutKeys.current.get(invoiceId);
+      if (key === undefined) {
+        key = mintCheckoutIdempotencyKey();
+        checkoutKeys.current.set(invoiceId, key);
+      }
+      // #2400: the same two addresses the invoice page sends. This button sent
+      // the bare invoice page for both, so a finished checkout came back with
+      // no marker: no "Checking payment…", and a live Pay button while the
+      // payment was still landing.
+      const { successUrl, cancelUrl } = checkoutReturnUrls(window.location.origin, invoiceId);
+      return payInvoice(invoiceId, successUrl, cancelUrl, kinfolkId, key);
+    },
+    onSuccess: (res, invoiceId) => {
+      // Dropped BEFORE the redirect, as on the invoice page: a household that
+      // comes back to pay a different balance must not reuse a key Stripe
+      // still holds.
+      checkoutKeys.current.delete(invoiceId);
       // WHAT THIS REDIRECT GUARANTEES (#826). `window.location.href` unloads
       // the page, so this list cannot hold two live Checkout Sessions — and
       // for a while that was the only thing stopping a household being charged

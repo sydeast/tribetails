@@ -413,6 +413,21 @@ const invoiceDetailRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/InvoiceDetail'), 'InvoiceDetail'),
 });
 
+/**
+ * #2401: where Stripe sends a household who paid from the MyTribe app, when
+ * the browser keeps the page (see screens/AppCheckoutReturn.tsx). NO GUARD, on
+ * purpose: a household who lives in the app has usually never signed in to
+ * this site in that browser, and the guard is what put the sign-in screen in
+ * front of them right after they paid. The page reads nothing and shows
+ * nothing about the invoice beyond what the address itself says.
+ */
+const appCheckoutReturnRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/app/invoices/$invoiceId',
+  staticData: { title: 'Card payment' },
+  component: lazyRouteComponent(() => import('./screens/AppCheckoutReturn'), 'AppCheckoutReturn'),
+});
+
 const tribeHubRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/tribe',
@@ -502,6 +517,7 @@ const routeTree = rootRoute.addChildren([
   kinTalesRoute,
   invoicesRoute,
   invoiceDetailRoute,
+  appCheckoutReturnRoute,
   tribeHubRoute,
   galleryRoute,
   tribeEditRoute,

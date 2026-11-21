@@ -42,6 +42,7 @@ import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { accountCreditHistoryKey, businessContactKey, myHomeKey, myInvoicesKey } from '../lib/portalQueryKeys';
 import { announceSaved } from '../lib/saveNotice';
 import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
+import { cameBackFromCheckout, checkoutReturnUrls, dropCheckoutMarker } from '../lib/checkoutReturn';
 import '../styles/invoices.css';
 import { BusinessFootnote } from '../components/BusinessFootnote';
 
@@ -55,41 +56,24 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
 const STRIPE_ONLY_FALLBACK: PayMethod[] = [
   { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null },
 ];
-/**
- * #2366: THE WAY BACK FROM STRIPE. Stripe sends the household to the success
- * address only when the checkout finished, so the marker on it says "they
- * paid at Stripe". It does NOT say the bill is paid: `stripeWebhook` decides
- * that, and it can land seconds after the household is back. So the marker
- * starts a check, never a paid claim. The cancel address is the bare invoice
- * page, which reads the bill exactly as it stands.
- *
- * The MyTribe Android app sends the same two addresses (`InvoicesController`).
- */
-export const CHECKOUT_RETURN_PARAM = 'checkout';
-export const CHECKOUT_RETURN_VALUE = 'done';
 /** How often the bill is read again while checking. */
 export const PAYMENT_CHECK_EVERY_MS = 3_000;
 /** How long the check runs before the screen stops waiting and says so. */
 export const PAYMENT_CHECK_FOR_MS = 60_000;
-/** The two Stripe return addresses for this invoice, on this origin. */
-export function checkoutReturnUrls(origin: string, invoiceId: string): { successUrl: string; cancelUrl: string } {
-  const page = `${origin}/invoices/${encodeURIComponent(invoiceId)}`;
-  return { successUrl: `${page}?${CHECKOUT_RETURN_PARAM}=${CHECKOUT_RETURN_VALUE}`, cancelUrl: page };
-}
-function cameBackFromCheckout(): boolean {
-  if (typeof window === 'undefined') return false;
-  return new URLSearchParams(window.location.search).get(CHECKOUT_RETURN_PARAM) === CHECKOUT_RETURN_VALUE;
-}
-/** Drops the marker from the address bar, so a reload or a shared link does not start another check. */
-function dropCheckoutMarker(): void {
-  if (typeof window === 'undefined') return;
-  const params = new URLSearchParams(window.location.search);
-  if (!params.has(CHECKOUT_RETURN_PARAM)) return;
-  params.delete(CHECKOUT_RETURN_PARAM);
-  const rest = params.toString();
-  window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
-}
-
+/**
+ * #2366, #2402: where the payment check stands after the household came back
+ * from Stripe.
+ *
+ *   checking   the bill is being read again, Pay held back.
+ *   not-seen   time ran out and a read made since the return still says owed.
+ *              Pay is offered again, beside Check again.
+ *   not-read   time ran out and NO read since the return got through. Nothing
+ *              is known about the payment, so Pay stays held back: a second
+ *              payment would be a second real charge, and there are no refunds.
+ *
+ * `since` is when the check began. Only a read that finished after it counts.
+ */
+type PaymentCheck = { since: number; phase: 'checking' | 'not-seen' | 'not-read' };
 /**
  * Invoice document view, ported from
  * ui-ideas/mytribe-invoice-detail-2026-05-31.html. There's no dedicated
@@ -108,10 +92,11 @@ export function InvoiceDetail() {
   const viewerUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
   // #2366: set when the household lands here from a finished Stripe checkout,
-  // cleared once the fresh read shows the bill settled or the check runs out.
-  const [checkingSince, setCheckingSince] = useState<number | null>(() => (cameBackFromCheckout() ? Date.now() : null));
-  const [checkRanOut, setCheckRanOut] = useState(false);
-  const checking = checkingSince !== null;
+  // cleared once a fresh read shows the bill settled. See `PaymentCheck`.
+  const [check, setCheck] = useState<PaymentCheck | null>(() =>
+    cameBackFromCheckout() ? { since: Date.now(), phase: 'checking' } : null,
+  );
+  const checking = check?.phase === 'checking';
   const invoices = useQuery({
     queryKey: myInvoicesKey(kinfolkId),
     queryFn: () => getMyInvoices(kinfolkId),
@@ -127,25 +112,32 @@ export function InvoiceDetail() {
     : undefined;
   const stillOwed = readBill ? offersPayment(readBill) : null;
   const readPaid = readBill ? readBill.isPaid || readBill.status === 'paid' : false;
+  // Only a read that FINISHED after the return counts: a cached copy from
+  // before the checkout says nothing about the payment. `dataUpdatedAt` moves
+  // on a read that worked and never on one that failed.
+  const readSinceReturn = check !== null && invoices.dataUpdatedAt >= check.since;
   useEffect(() => {
-    if (checkingSince === null) return;
-    // Only a read that FINISHED after the return counts: a cached copy from
-    // before the checkout says nothing about the payment.
-    if (stillOwed === false && invoices.dataUpdatedAt >= checkingSince) {
-      setCheckingSince(null);
+    if (check === null) return;
+    if (readSinceReturn && stillOwed === false) {
+      setCheck(null);
       if (readPaid) announceSaved('Payment received');
       return;
     }
-    const left = checkingSince + PAYMENT_CHECK_FOR_MS - Date.now();
+    // #2402: the check gave up with nothing read, and a read has got through
+    // since. The bill is known again and still owed, so Pay may come back.
+    if (check.phase === 'not-read' && readSinceReturn) {
+      setCheck({ since: check.since, phase: 'not-seen' });
+      return;
+    }
+    if (check.phase !== 'checking') return;
+    const left = check.since + PAYMENT_CHECK_FOR_MS - Date.now();
     const timer = setTimeout(() => {
-      setCheckingSince(null);
-      setCheckRanOut(true);
+      setCheck({ since: check.since, phase: readSinceReturn ? 'not-seen' : 'not-read' });
     }, Math.max(0, left));
     return () => clearTimeout(timer);
-  }, [checkingSince, stillOwed, readPaid, invoices.dataUpdatedAt]);
+  }, [check, readSinceReturn, stillOwed, readPaid]);
   const checkAgain = () => {
-    setCheckRanOut(false);
-    setCheckingSince(Date.now());
+    setCheck({ since: Date.now(), phase: 'checking' });
     void invoices.refetch();
   };
   const business = useQuery({ queryKey: businessContactKey(), queryFn: () => getBusinessContact() });
@@ -185,7 +177,8 @@ export function InvoiceDetail() {
     mutationFn: () => {
       checkoutKey.current ??= mintCheckoutIdempotencyKey();
       // #2366: back to this invoice either way; the success address carries
-      // the marker that starts the payment check above.
+      // the marker that starts the payment check above. The invoices list's
+      // Pay now sends the same two (`lib/checkoutReturn.ts`, #2400).
       const { successUrl, cancelUrl } = checkoutReturnUrls(window.location.origin, invoiceId);
       return payInvoice(invoiceId, successUrl, cancelUrl, kinfolkId, checkoutKey.current);
     },
@@ -276,13 +269,26 @@ export function InvoiceDetail() {
 
   // #1005: refused billing access is not a failure to report. Back to Home.
   if (invoices.isError && isPermissionDenied(invoices.error)) return <LeaveBilling />;
-  if (invoices.isError) {
+  // #2402: A FAILED RE-READ DURING A PAYMENT CHECK KEEPS THE INVOICE. The check
+  // reads the bill every few seconds on a phone that has just come back from
+  // Stripe, and one read that did not get through used to swap the whole page
+  // for the trouble-loading screen, at the moment the household had just paid.
+  // The invoice already loaded is still the right thing to show: the check cue
+  // stays beside it and the next tick reads again. The trouble-loading screen
+  // is for a read that failed with nothing to show.
+  const heldThroughFailure = invoices.isError && invoices.data !== undefined && check !== null;
+  if (invoices.isError && !heldThroughFailure) {
     return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   // Paused, this fell through to the "invoice not found" card, about a bill
   // that is on the account and was simply never fetched.
-  const invoicesView = viewOfQuery(invoices);
+  //
+  // `viewOfQuery` reads a failed query as 'error' whatever it still holds, so
+  // the held invoice is handed on as data here and not asked about again.
+  const invoicesView = heldThroughFailure
+    ? ({ kind: 'data', data: invoices.data } as const)
+    : viewOfQuery(invoices);
   if (invoicesView.kind === 'offline') {
     return (
       <>
@@ -565,7 +571,7 @@ export function InvoiceDetail() {
                       </LoadingLine>
                     </div>
                   )}
-                  {payable && !checking && checkRanOut && (
+                  {payable && check?.phase === 'not-seen' && (
                     <p className="pay-check-note" data-testid="payment-not-seen">
                       This payment has not shown up yet. If you finished paying, check again in a minute.{' '}
                       <button type="button" className="btn ghost" onClick={checkAgain}>
@@ -573,7 +579,18 @@ export function InvoiceDetail() {
                       </button>
                     </p>
                   )}
-                  {payable && !checking && (
+                  {/* #2402: the check ran out and no read got through, so
+                      nothing is known about the payment. Pay stays held back
+                      until a read says the bill is still owed. */}
+                  {payable && check?.phase === 'not-read' && (
+                    <p className="pay-check-note" data-testid="payment-not-checked">
+                      We could not check this payment. Check again in a minute.{' '}
+                      <button type="button" className="btn ghost" onClick={checkAgain}>
+                        Check again
+                      </button>
+                    </p>
+                  )}
+                  {payable && (check === null || check.phase === 'not-seen') && (
                     <PayOptions
                       methods={payMethods}
                       amountDue={amountDueCents}

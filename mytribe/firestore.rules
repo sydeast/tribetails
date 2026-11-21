@@ -1906,11 +1906,24 @@ service cloud.firestore {
  // the_411 on the Admin SDK, which does not evaluate these rules. The feed the
  // ruling says must keep working never ran through a client grant.
     match /the_411/{kinfolkId}                  { allow read: if isStaff(); allow write: if isOwner(); }
- // Tribal Intel (spec 23): admins READ here, but writes go ONLY through the
- // server-bound createTrainingDocument / updateTrainingDocument /
- // deleteTrainingDocument callables (admin SDK bypasses rules), so the audit
- // entry is structurally bound to every mutation. Direct client writes denied.
-    match /training_documents/{id}              { allow read: if isStaff(); allow write: if false; }
+ // Tribal Intel (spec 23): the OWNER reads here, and nobody else. A note is
+ // the owner's own words about a household, a Kinfolk or a Kin, and the nightly
+ // reconcile folds it into that household's bank, that Kinfolk's dossier or
+ // that Kin's 411. Two of those three records are the owner's alone (see
+ // `dossiers` and `household_bank`), and this collection holds the source text
+ // for all three in one place, so it takes the stricter boundary: `isOwner()`,
+ // the same as the dossier. An Auntie reads the 411 above, which is where a
+ // note about a Kin ends up; she never reads the notes.
+ //
+ // Not narrowed per row (say, by `targetType`) on purpose. A list read is only
+ // allowed when the query itself proves the rule for every row, older rows
+ // carry no `targetType` at all, and no Auntie screen reads this collection.
+ //
+ // Writes go ONLY through the server-bound createTrainingDocument /
+ // updateTrainingDocument / deleteTrainingDocument callables (admin SDK
+ // bypasses rules), so the audit entry is structurally bound to every
+ // mutation. Direct client writes denied, the owner's included.
+    match /training_documents/{id}              { allow read: if isOwner(); allow write: if false; }
  // #2215: an Auntie reads her OWN user record, which is where her Home layout
  // is kept (`dashboardWidgets`). Never anyone else's, and she writes none of
  // them from a client: her layout save goes through saveDashboardLayout, which

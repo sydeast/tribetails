@@ -41,9 +41,63 @@ internal fun decodeHouseholdPushResult(raw: Map<String, Any?>?): HouseholdPushRe
 data class HouseholdPushNotice(
     val title: String,
     val body: String,
-    /** True only when the push was held: it can be tried again once the cause is fixed. */
+    /** True when the push did not go out, or nobody knows yet: it can be tried again. */
     val retryable: Boolean,
+    /** #2389: the server refused these words. The draft goes back to unapproved and [body] says why. */
+    val needsApproval: Boolean = false,
 )
+/**
+ * #2381: this client's own name for an approved Push draft with no answer on
+ * it. Never the server's word, so [decodeHouseholdPushResult] does not take it.
+ */
+internal const val PUSH_UNANSWERED = "unanswered"
+/** #2389: the two refusals `sendHouseholdPush` names in `details.code`. */
+internal const val PUSH_WORDS_CHANGED_CODE = "push_words_changed"
+internal const val PUSH_IN_FLIGHT_CODE = "push_in_flight"
+/**
+ * Pure: the notice for a call that failed. Only the two named refusals are
+ * known answers. Anything else may be a send that went out and lost its reply,
+ * so it never says what did or did not reach the household.
+ */
+internal fun householdPushCallFailed(code: String?, message: String?): HouseholdPushNotice {
+    val said = message?.trim()?.ifBlank { null }
+    return when (code) {
+        PUSH_WORDS_CHANGED_CODE -> HouseholdPushNotice(
+            "Not sent",
+            said ?: "The words changed after this draft was approved. Approve it again to send them.",
+            retryable = false,
+            needsApproval = true,
+        )
+        PUSH_IN_FLIGHT_CODE -> HouseholdPushNotice(
+            "Sending now",
+            said ?: "This push is being sent right now. Wait a moment, then try again.",
+            retryable = true,
+        )
+        else -> HouseholdPushNotice(
+            "Not confirmed",
+            "The draft is approved, but the push was not confirmed: " +
+                "${said?.trimEnd('.') ?: "the server did not answer"}. " +
+                "Try again. A push that already went out is not sent twice.",
+            retryable = true,
+        )
+    }
+}
+/**
+ * #2381: whether the open draft offers Delete. A draft that reached its
+ * household is kept. An approved Push that did not go out, or whose send never
+ * answered, keeps its Delete beside Try again.
+ */
+internal fun canDeleteDraft(hasDraft: Boolean, sent: Boolean, approved: Boolean, notice: HouseholdPushNotice?): Boolean =
+    hasDraft && !sent && (!approved || notice?.retryable == true)
+/**
+ * #2389: an approved Push that has not gone out sends its approved words and
+ * no others, so editing them returns the draft to unapproved.
+ */
+internal fun editReturnsToUnapproved(notice: HouseholdPushNotice?): Boolean = notice?.retryable == true
+/** The delete confirm's line. It says "not sent" only when that is known. */
+internal fun deleteDraftConfirmLine(notice: HouseholdPushNotice?): String =
+    if (notice == null || notice.title == "Not sent") "It has not been sent. Deleting it cannot be undone."
+    else "Deleting it cannot be undone."
 
 /** Pure: the result in the operator's words. Only `sent` says a push went out. */
 internal fun householdPushNotice(r: HouseholdPushResult, household: String): HouseholdPushNotice = when (r.outcome) {
@@ -60,6 +114,12 @@ internal fun householdPushNotice(r: HouseholdPushResult, household: String): Hou
         },
         false,
     )
+    PUSH_UNANSWERED -> HouseholdPushNotice(
+        "Not confirmed",
+        "The last send did not answer, so it is not known whether this push reached $household. " +
+            "Try again. A push that already went out is not sent twice.",
+        true,
+    )
     else -> HouseholdPushNotice(
         "Not sent",
         when (r.reason) {
@@ -74,3 +134,7 @@ internal fun householdPushNotice(r: HouseholdPushResult, household: String): Hou
         true,
     )
 }
+
+/** The `details.code` of a callable refusal, or null. */
+internal fun pushRefusalCodeOf(t: Throwable): String? =
+    ((t as? com.google.firebase.functions.FirebaseFunctionsException)?.details as? Map<*, *>)?.get("code") as? String

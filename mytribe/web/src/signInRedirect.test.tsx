@@ -192,6 +192,8 @@ describe('#1384 portal sign-in keeps the deep link', () => {
     ['a visit', '/schedule/v1', 'THE BOOKING'],
     ['a KinTale', '/kintales?tale=t1', 'THE KINTALES'],
     ['an invoice', '/invoices/inv1', 'THE INVOICE'],
+    // #2401: the web link on the app return page keeps the payment marker through sign-in.
+    ['an invoice just paid for', '/invoices/inv1?checkout=done', 'THE INVOICE'],
     ['a Kin', '/kin/k1', 'THE KIN'],
     ['Messages', '/messages', 'THE MESSAGES'],
     // #2371: a cut text message links to its own notice entry.

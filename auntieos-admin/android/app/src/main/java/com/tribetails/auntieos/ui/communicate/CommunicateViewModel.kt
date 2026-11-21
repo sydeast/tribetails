@@ -302,7 +302,19 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     fun setToneHint(tone: String) { _uiState.value = _uiState.value.copy(toneHint = tone) }
     fun setMessageLength(len: String) { _uiState.value = _uiState.value.copy(messageLength = len) }
     fun setRawNotes(notes: String) { _uiState.value = _uiState.value.copy(rawNotes = notes) }
-    fun setGeneratedCopy(text: String) { _uiState.value = _uiState.value.copy(generatedCopy = text) }
+    /**
+     * The draft editor. #2389: an approved Push that has not gone out sends its
+     * approved words and no others, so editing them returns the draft to
+     * unapproved and the next step is Approve and send.
+     */
+    fun setGeneratedCopy(text: String) {
+        val state = _uiState.value
+        _uiState.value = if (text != state.generatedCopy && editReturnsToUnapproved(state.pushNotice)) {
+            state.copy(generatedCopy = text, savedDraftId = null, pushNotice = null)
+        } else {
+            state.copy(generatedCopy = text)
+        }
+    }
     fun clearError() { _uiState.value = _uiState.value.copy(error = null) }
     fun clearSuccess() { _uiState.value = _uiState.value.copy(successMessage = null) }
 
@@ -532,7 +544,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
 
     /**
      * #2061: the push for an approved Push draft. Never throws: a failed call is
-     * a held result the operator can try again, because the draft is already
+     * a notice the operator can try again from, because the draft is already
      * approved and the button that approved it is gone.
      */
     private suspend fun sendPushFor(state: CommunicateUiState, draftId: String): HouseholdPushNotice {
@@ -545,26 +557,30 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
         return result.fold(
             onSuccess = { householdPushNotice(it, household) },
-            onFailure = { e ->
-                HouseholdPushNotice(
-                    title = "Not sent",
-                    body = "The draft is approved, but the push could not be sent: " +
-                        (e.message ?: "the server did not answer") + ". Nothing reached $household.",
-                    retryable = true,
-                )
-            },
+            onFailure = { e -> householdPushCallFailed(pushRefusalCodeOf(e), e.message) },
         )
     }
+    /**
+     * What the screen holds after a push attempt. #2389: when the server
+     * refused the words, the draft goes back to unapproved and says why.
+     */
+    private fun CommunicateUiState.afterPush(draftId: String, notice: HouseholdPushNotice): CommunicateUiState =
+        if (notice.needsApproval) {
+            copy(isSaving = false, isRetryingPush = false, savedDraftId = null, pushNotice = null, error = notice.body)
+        } else {
+            copy(isSaving = false, isRetryingPush = false, savedDraftId = draftId, pushNotice = notice)
+        }
 
     /** #2061: try a held push again, once its cause is fixed. The draft stays approved. */
     fun retryHouseholdPush() {
         val state = _uiState.value
         val draftId = state.savedDraftId ?: return
-        if (state.isRetryingPush || state.pushNotice?.retryable != true) return
+        if (state.isRetryingPush || state.isSaving || state.isDeletingDraft || state.pushNotice?.retryable != true) return
+        // #2389: set before the coroutine starts, so a second tap finds it.
+        _uiState.value = state.copy(isRetryingPush = true, error = null)
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isRetryingPush = true)
             val notice = sendPushFor(state, draftId)
-            _uiState.value = _uiState.value.copy(isRetryingPush = false, pushNotice = notice)
+            _uiState.value = _uiState.value.afterPush(draftId, notice)
         }
     }
 
@@ -600,10 +616,15 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 val household = _uiState.value.kinfolkList.find { it.id == kinfolkId }
                 // #2293: a held Push draft opens where it was left: approved,
                 // with the held notice and its Try again.
-                val heldNotice = if (draft.isHeldPush) {
+                // #2381: so does one whose send never answered.
+                val heldNotice = if (draft.isHeldPush || draft.isUnansweredPush) {
                     val name = household?.displayName?.ifBlank { null }
                         ?: draft.kinfolkName?.ifBlank { null } ?: "the household"
-                    householdPushNotice(HouseholdPushResult("held", draft.pushReason.ifBlank { null }), name)
+                    householdPushNotice(
+                        if (draft.isHeldPush) HouseholdPushResult("held", draft.pushReason.ifBlank { null })
+                        else HouseholdPushResult(PUSH_UNANSWERED, null),
+                        name,
+                    )
                 } else null
                 _uiState.value = _uiState.value.copy(
                     draftLoading         = false,
@@ -668,9 +689,9 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     fun deleteDraft() {
         val state = _uiState.value
         val draftId = state.draftId ?: return
-        if (state.isDeletingDraft) return
+        if (state.isDeletingDraft || state.isSaving || state.isRetryingPush) return
+        _uiState.value = state.copy(isDeletingDraft = true, error = null)
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isDeletingDraft = true, error = null)
             repo.deleteGeneratedDraft(draftId)
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
@@ -719,8 +740,9 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
 
         AuntieLog.i("Approving and saving draft: $draftId")
+        // #2389: set before the coroutine starts, so a second tap finds it.
+        _uiState.value = state.copy(isSaving = true, error = null, approveConfirmOpen = false)
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSaving = true, error = null, approveConfirmOpen = false)
             repo.approveDraft(draftId, state.generatedCopy, state.kinfolkId)
                 .onSuccess {
                     AuntieLog.i("Draft #$draftId saved successfully")
@@ -783,11 +805,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     // what reached them.
                     if (isPushType(state.commType) && !state.kinfolkId.isNullOrBlank()) {
                         val notice = sendPushFor(state, draftId)
-                        _uiState.value = _uiState.value.copy(
-                            isSaving     = false,
-                            savedDraftId = draftId,
-                            pushNotice   = notice.copy(body = notice.body + auditNote),
-                        )
+                        _uiState.value = _uiState.value.afterPush(draftId, notice.copy(body = notice.body + auditNote))
                         return@onSuccess
                     }
                     // #1625: the send, AFTER the approve write landed, the same

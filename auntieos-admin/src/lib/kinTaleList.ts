@@ -154,6 +154,18 @@ export function isHeldPushDraft(draft: GeneratedDraftRow): boolean {
     str(draft.pushOutcome).trim() === 'held'
   );
 }
+/**
+ * #2381: an approved Push draft with no answer on it. Its send was cut off
+ * (a dropped connection, a timeout) before the server could say what happened,
+ * so it is listed under Drafts and opens with Try again, like a held one.
+ */
+export function isUnansweredPushDraft(draft: GeneratedDraftRow): boolean {
+  return (
+    either(draft.communicationType, draft.communication_type).toLowerCase() === 'push' &&
+    str(draft.status).trim().toLowerCase() === 'approved' &&
+    str(draft.pushOutcome).trim() === ''
+  );
+}
 /** The prefix `rowFromDraft` puts on a draft row's `_id`. */
 export const DRAFT_ROW_PREFIX = 'generated_drafts/';
 /**
@@ -202,7 +214,8 @@ export function rowFromDraft(draft: GeneratedDraftRow): KinTaleListRow {
     kinfolkName: draftHousehold(draft),
     title: draftTitle(draft),
     bodyCopy: draftBody(draft),
-    status: isHeldPushDraft(draft) ? 'DRAFT' : draftStatusAsKinTaleStatus(str(draft.status)),
+    status:
+      isHeldPushDraft(draft) || isUnansweredPushDraft(draft) ? 'DRAFT' : draftStatusAsKinTaleStatus(str(draft.status)),
     createdAt: draftCreatedAt(draft),
     ...(type !== '' ? { draftType: type } : {}),
   };
