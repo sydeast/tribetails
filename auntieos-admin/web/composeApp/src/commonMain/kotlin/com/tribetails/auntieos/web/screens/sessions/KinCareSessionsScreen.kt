@@ -474,6 +474,7 @@ internal fun AuntieTimeListScreen(
                                 arrivalRule = arrivalRule,
                                 onRefused = { msg -> showToast("Couldn't complete: $msg", ToastKind.Error) },
                                 breadcrumbsFor = { client.breadcrumbsStream(it) },
+                                lastPingFor = { client.lastBreadcrumbStream(it) },
                                 timeBlockLabelFor = timeBlockLabelFor,
                                 onOpenDetail = onOpenDetail,
                                 onWriteKinTale = onWriteKinTale,
@@ -525,6 +526,7 @@ internal fun AuntieTimeListScreen(
                                     arrivalRule = arrivalRule,
                                     onRefused = { msg -> showToast("Couldn't complete: $msg", ToastKind.Error) },
                                     breadcrumbsFor = { client.breadcrumbsStream(it) },
+                                    lastPingFor = { client.lastBreadcrumbStream(it) },
                                     timeBlockLabelFor = timeBlockLabelFor,
                                     onOpenDetail = onOpenDetail,
                                     onWriteKinTale = onWriteKinTale,
@@ -587,6 +589,8 @@ private fun PhaseGroup(
     arrivalRule: Boolean?,
     onRefused: (String) -> Unit,
     breadcrumbsFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
+    /** #2386: the visit's newest breadcrumb (0 or 1), for the Arrived card's GPS line. */
+    lastPingFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
     timeBlockLabelFor: (KinCareSession) -> String?,
     onOpenDetail: (String) -> Unit,
     onWriteKinTale: (String) -> Unit,
@@ -619,6 +623,7 @@ private fun PhaseGroup(
                     arrivalRule = arrivalRule,
                     onRefused   = onRefused,
                     breadcrumbsFor = breadcrumbsFor,
+                    lastPingFor = lastPingFor,
                     timeBlockLabel = timeBlockLabelFor(session),
                     onOpenDetail = { onOpenDetail(session._id) },
                     onWriteKinTale = { onWriteKinTale(session._id) },
@@ -640,6 +645,8 @@ private fun KinCareCard(
     arrivalRule: Boolean?,
     onRefused: (String) -> Unit,
     breadcrumbsFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
+    /** #2386: the visit's newest breadcrumb (0 or 1), for the Arrived card's GPS line. */
+    lastPingFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
     timeBlockLabel: String?,
     onOpenDetail: () -> Unit,
     onWriteKinTale: () -> Unit,
@@ -767,10 +774,14 @@ private fun KinCareCard(
                         nowMs = Clock.System.now().toEpochMilliseconds()
                     }
                 }
+                // The newest ping only (#2386): the console reads it by itself, one
+                // document per poll, rather than the whole route.
+                val lastPing by remember(session._id) { lastPingFor(session._id) }
+                    .collectAsState(initial = FirestoreResult.Loading)
                 GpsLiveRow(
                     gpsLineFor(
                         trackingHere = false,
-                        crumbs = (crumbsState as? FirestoreResult.Data)?.value,
+                        crumbs = (lastPing as? FirestoreResult.Data)?.value,
                         zone = LocalAuntieTimeZone.current,
                         nowMs = nowMs,
                     ),
