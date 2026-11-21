@@ -9,9 +9,10 @@ import kotlin.test.assertTrue
 import kotlinx.datetime.TimeZone
 
 /**
- * #2338: the Arrived card's GPS line on the console. A visit put back to
- * Arrived by Undo departed may have no device tracking it, so the card says
- * when the route last pinged instead of claiming a live route.
+ * #2338 / #2386 ruling: the Arrived card's GPS line on the console. "GPS
+ * tracking · live route" with the live dot while the route has a ping from the
+ * last [LIVE_PING_WINDOW_MS]; otherwise the last ping and its time, or that
+ * none has landed.
  */
 class GpsLineTest {
     private val chicago = TimeZone.of("America/Chicago")
@@ -19,36 +20,63 @@ class GpsLineTest {
     // 2026-11-17 20:05 UTC is 14:05 in Chicago.
     private val at = 1_794_945_900_000L
 
+    private val crumbs = listOf(
+        Breadcrumb(timestamp = (at - 60_000).toString()),
+        Breadcrumb(timestamp = at.toString()),
+        Breadcrumb(timestamp = "2026-11-17T20:00:00Z"),
+    )
+
     @Test
-    fun namesTheLastPingInTwentyFourHoursWithNoLiveDot() {
-        val crumbs = listOf(
-            Breadcrumb(timestamp = (at - 60_000).toString()),
-            Breadcrumb(timestamp = at.toString()),
-            Breadcrumb(timestamp = "2026-11-17T20:00:00Z"),
-        )
-        val line = gpsLineFor(trackingHere = false, crumbs = crumbs, zone = chicago)!!
+    fun aPingInsideTheWindowReadsAsALiveRouteWithTheDot() {
+        val line = gpsLineFor(trackingHere = false, crumbs = crumbs, zone = chicago, nowMs = at + LIVE_PING_WINDOW_MS)!!
+        assertEquals("GPS tracking · live route", line.text)
+        assertTrue(line.live)
+    }
+
+    @Test
+    fun aPingJustOutsideTheWindowNamesTheLastPingInTwentyFourHoursWithNoDot() {
+        val line = gpsLineFor(trackingHere = false, crumbs = crumbs, zone = chicago, nowMs = at + LIVE_PING_WINDOW_MS + 1)!!
         assertEquals("GPS route · last ping 14:05", line.text)
         assertFalse(line.live)
     }
 
     @Test
+    fun theSameCrumbsFlipToTheLastPingAsTimePassesWithNoNewOne() {
+        assertTrue(gpsLineFor(false, crumbs, chicago, nowMs = at + 30_000)!!.live)
+        assertFalse(gpsLineFor(false, crumbs, chicago, nowMs = at + 10 * 60_000)!!.live)
+    }
+
+    @Test
+    fun anIsoPingCountsAsRecentToo() {
+        val iso = listOf(Breadcrumb(timestamp = "2026-11-17T20:05:00Z"))
+        assertTrue(gpsLineFor(false, iso, chicago, nowMs = at + 60_000)!!.live)
+    }
+
+    @Test
+    fun aPingStampedALittleAheadOfThisClockStillCountsAsRecent() {
+        assertTrue(gpsLineFor(false, listOf(Breadcrumb(timestamp = (at + 20_000).toString())), chicago, nowMs = at)!!.live)
+    }
+
+    @Test
     fun saysNoPingsYetRatherThanALiveRoute() {
-        assertEquals("No GPS pings yet", gpsLineFor(false, emptyList(), chicago)?.text)
+        assertEquals("No GPS pings yet", gpsLineFor(false, emptyList(), chicago, at)?.text)
     }
 
     @Test
     fun saysNothingWhileLoadingOrWhenTheReadFailed() {
-        assertNull(gpsLineFor(false, null, chicago))
+        assertNull(gpsLineFor(false, null, chicago, at))
     }
 
     @Test
     fun anUndatedRouteIsStillARecordedRoute() {
-        assertEquals("GPS route recorded", gpsLineFor(false, listOf(Breadcrumb(timestamp = "")), chicago)?.text)
+        val line = gpsLineFor(false, listOf(Breadcrumb(timestamp = "")), chicago, at)!!
+        assertEquals("GPS route recorded", line.text)
+        assertFalse(line.live)
     }
 
     @Test
-    fun liveOnlyWhenThisDeviceIsTheTracker() {
-        val line = gpsLineFor(trackingHere = true, crumbs = null, zone = chicago)!!
+    fun liveWhenThisDeviceIsTheTracker() {
+        val line = gpsLineFor(trackingHere = true, crumbs = null, zone = chicago, nowMs = at)!!
         assertEquals("GPS tracking · live route", line.text)
         assertTrue(line.live)
     }

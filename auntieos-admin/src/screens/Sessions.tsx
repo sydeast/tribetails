@@ -742,8 +742,8 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           finished route on the detail sheet, and claiming a live one here would
           be a claim about a phone that has stopped pinging. When THIS browser
           clocked the visit in (#772) the line says so, and says when it could
-          not track. Otherwise (#2338) it says when the route last pinged: a
-          visit put back to Arrived by Undo departed may have no device tracking it. */}
+          not track. Otherwise (#2338, #2386) it reads the visit's route: the
+          mock's live line while a phone is pinging, else when it last pinged. */}
       {state === 'arrived' && (
         <VisitRouteIndicator sessionId={entry._id} />
       )}

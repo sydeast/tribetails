@@ -116,24 +116,24 @@ class UndoneDepartureTrackingTest {
     private val chicago = ZoneId.of("America/Chicago")
 
     @Test
-    fun `the card says live only when this phone is the tracker`() {
-        val line = gpsLineFor(trackingHere = true, crumbs = null, zone = chicago)!!
+    fun `the card says live when this phone is the tracker`() {
+        val line = gpsLineFor(trackingHere = true, crumbs = null, zone = chicago, nowMs = now)!!
         assertEquals("GPS tracking · live route", line.text)
         assertTrue(line.live)
     }
 
     @Test
-    fun `otherwise it says when the route last pinged, in 24 hours, with no live dot`() {
+    fun `an undone visit nothing tracks says when the route last pinged, in 24 hours, with no live dot`() {
         val crumbs = listOf(LocationPoint(timestamp = now - 60_000), LocationPoint(timestamp = now))
-        val line = gpsLineFor(trackingHere = false, crumbs = crumbs, zone = chicago)!!
+        val line = gpsLineFor(trackingHere = false, crumbs = crumbs, zone = chicago, nowMs = now + 10 * 60_000)!!
         assertEquals("GPS route · last ping 14:05", line.text)
         assertFalse(line.live)
     }
 
     @Test
     fun `no pings yet, and nothing while loading`() {
-        assertEquals("No GPS pings yet", gpsLineFor(false, emptyList(), chicago)?.text)
-        assertNull(gpsLineFor(false, null, chicago))
+        assertEquals("No GPS pings yet", gpsLineFor(false, emptyList(), chicago, now)?.text)
+        assertNull(gpsLineFor(false, null, chicago, now))
     }
 
     @Test

@@ -62,9 +62,11 @@ vi.mock('../lib/sessionSeat', async (orig) => ({
   currentSessionSeat,
 }));
 vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
+// #2386: the card's GPS line reads the route. No ping by default.
+const { crumbPoints } = vi.hoisted(() => ({ crumbPoints: { current: [] as Array<{ lat: number; lng: number; t?: number }> } }));
 vi.mock('../lib/breadcrumbs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/breadcrumbs')>();
-  return { ...actual, useBreadcrumbs: () => ({ points: [], error: null, ready: true }) };
+  return { ...actual, useBreadcrumbs: () => ({ points: crumbPoints.current, error: null, ready: true }) };
 });
 
 // The browser tracker (#772) is mocked whole: `useVisitTracking` feeds the
@@ -518,6 +520,31 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(within(card).getByText('Tracking on from this browser · 4 pings saved')).toBeInTheDocument();
     expect(within(card).queryByText(/GPS tracking · live route/)).toBeNull();
     useVisitTracking.mockReturnValue({ phase: 'idle' });
+  });
+  // #2386 ruling: while a phone is tracking (a ping in the last two minutes),
+  // the mock's live line and dot; once the pings stop, the last ping.
+  it('reads the live route with its dot while the route has a recent ping', () => {
+    crumbPoints.current = [{ lat: 30, lng: -97, t: Date.now() - 20_000 }];
+    try {
+      const card = mount();
+      const line = within(card).getByTestId('visit-tracking');
+      expect(line).toHaveTextContent('GPS tracking · live route');
+      expect(line.querySelector('.vtrack__dot')).not.toBeNull();
+    } finally {
+      crumbPoints.current = [];
+    }
+  });
+  it('names the last ping with no dot once the route has gone quiet', () => {
+    crumbPoints.current = [{ lat: 30, lng: -97, t: Date.now() - 10 * 60_000 }];
+    try {
+      const card = mount();
+      const line = within(card).getByTestId('visit-tracking');
+      expect(line).toHaveTextContent(/^GPS route · last ping \d\d:\d\d$/);
+      expect(line.querySelector('.vtrack__dot')).toBeNull();
+      expect(within(card).queryByText(/live route/)).toBeNull();
+    } finally {
+      crumbPoints.current = [];
+    }
   });
   it('says tracking is off for the visit, and why, when this browser was denied location', () => {
     useVisitTracking.mockReturnValue({

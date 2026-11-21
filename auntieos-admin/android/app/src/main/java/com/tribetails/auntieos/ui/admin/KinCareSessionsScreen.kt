@@ -909,15 +909,25 @@ private fun KinCareCard(
                 null
             }
 
-            // ---- GPS line while ARRIVED (#2338: says only what this phone knows) ----
+            // ---- GPS line while ARRIVED (#2338, #2386): live while this phone tracks
+            // or the route has a recent ping; otherwise the last ping. ----
             if (isArrived) {
                 val trackingAny by LocationTrackingService.isTracking.collectAsState()
                 val route by LocationTrackingService.currentRoute.collectAsState()
+                // The clock, read again on a tick so "live" ages out when pings stop.
+                var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+                LaunchedEffect(session.id) {
+                    while (true) {
+                        kotlinx.coroutines.delay(com.tribetails.auntieos.domain.GPS_LINE_TICK_MS)
+                        nowMs = System.currentTimeMillis()
+                    }
+                }
                 GpsLiveRow(
                     gpsLineFor(
                         trackingHere = trackingAny && route?.kinCareSessionId == session.id,
                         crumbs = crumbsResult?.getOrNull(),
                         zone = LocalBusinessZone.current,
+                        nowMs = nowMs,
                     ),
                 )
             }
@@ -1331,7 +1341,7 @@ private fun GpsLiveRow(line: GpsLine?) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // The pulsing dot only when this phone is the tracker: nothing else here knows it is live.
+        // The pulsing dot only on the live line (`domain/GpsLine.kt` says when that is).
         if (line.live) {
             AuntieStatusPill(
                 label = "",

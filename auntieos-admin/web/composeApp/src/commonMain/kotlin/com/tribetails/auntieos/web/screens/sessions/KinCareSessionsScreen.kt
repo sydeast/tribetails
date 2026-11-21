@@ -630,6 +630,7 @@ private fun PhaseGroup(
     }
 }
 
+@OptIn(ExperimentalTime::class)
 @Composable
 private fun KinCareCard(
     session: KinCareSession,
@@ -755,10 +756,25 @@ private fun KinCareCard(
                 null
             }
 
-            // ---- GPS line while ARRIVED (#2338). The console never tracks a visit
-            // itself, so it says when the route last pinged, never "live". ----
+            // ---- GPS line while ARRIVED (#2338, #2386). The console never tracks a
+            // visit itself: live while the route has a recent ping, else the last ping. ----
             if (isArrived) {
-                GpsLiveRow(gpsLineFor(trackingHere = false, crumbs = (crumbsState as? FirestoreResult.Data)?.value, zone = LocalAuntieTimeZone.current))
+                // The clock, read again on a tick so "live" ages out when pings stop.
+                var nowMs by remember { mutableStateOf(Clock.System.now().toEpochMilliseconds()) }
+                androidx.compose.runtime.LaunchedEffect(session._id) {
+                    while (true) {
+                        kotlinx.coroutines.delay(GPS_LINE_TICK_MS)
+                        nowMs = Clock.System.now().toEpochMilliseconds()
+                    }
+                }
+                GpsLiveRow(
+                    gpsLineFor(
+                        trackingHere = false,
+                        crumbs = (crumbsState as? FirestoreResult.Data)?.value,
+                        zone = LocalAuntieTimeZone.current,
+                        nowMs = nowMs,
+                    ),
+                )
             }
 
             // ---- Today's-route map (§A.10): render the live/replay RouteMap inline for
@@ -1042,7 +1058,7 @@ private fun GpsLiveRow(line: GpsLine?) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // Reuse the Den status LED in glow mode for the pulsing "live" dot,
-        // only when the line is about a live tracker.
+        // only on the live line (`GpsLine.kt` says when that is).
         if (line.live) {
             AuntieStatusPill(
                 label   = "",
