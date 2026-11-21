@@ -153,7 +153,61 @@ class InvoiceArchiveViewModelTest {
         advanceUntilIdle()
         assertTrue(viewModel.uiState.value.toastIsError)
         assertTrue(viewModel.uiState.value.toastMessage.contains("now \$15.00"))
+        // #2435: the confirm reopens at the server's figure, not the stored one
+        // it just refused, so the next press is one that can succeed.
+        assertEquals(1500L, viewModel.uiState.value.writeOffPromptCents)
+        coVerify(exactly = 1) { invoiceRepository.writeOffInvoice("i1", 4000L) }
+    }
+    @Test
+    fun `#2435 the reopened confirm writes off the server's figure`() = runTest {
+        loadInvoice(openInvoice())
+        coEvery { invoiceRepository.writeOffInvoice("i1", 4000L) } returns Result.failure(
+            RuntimeException("The balance on this invoice is now \$25.00, not \$40.00. Check it and try again."),
+        )
+        coEvery { invoiceRepository.writeOffInvoice("i1", 2500L) } returns Result.success(2500L)
+        viewModel.promptWriteOff(4000L)
+        viewModel.confirmWriteOff()
+        advanceUntilIdle()
+        assertEquals(2500L, viewModel.uiState.value.writeOffPromptCents)
+        viewModel.confirmWriteOff()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { invoiceRepository.writeOffInvoice("i1", 2500L) }
         assertNull(viewModel.uiState.value.writeOffPromptCents)
+        assertFalse(viewModel.uiState.value.toastIsError)
+    }
+    @Test
+    fun `#2435 any other write-off failure closes the confirm`() = runTest {
+        loadInvoice(openInvoice())
+        coEvery { invoiceRepository.writeOffInvoice("i1", 4000L) } returns Result.failure(
+            RuntimeException("This invoice is archived. Restore it before writing off its balance."),
+        )
+        viewModel.promptWriteOff(4000L)
+        viewModel.confirmWriteOff()
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.toastIsError)
+        assertNull(viewModel.uiState.value.writeOffPromptCents)
+    }
+    @Test
+    fun `#2435 the write-off refusal's figure is read off the server's sentence`() {
+        assertEquals(
+            2500L,
+            com.tribetails.auntieos.domain.writeOffRefusedOwedCents(
+                "The balance on this invoice is now \$25.00, not \$40.00. Check it and try again.",
+            ),
+        )
+        assertEquals(
+            123456L,
+            com.tribetails.auntieos.domain.writeOffRefusedOwedCents(
+                "The balance on this invoice is now \$1,234.56, not \$1,300.00. Check it and try again.",
+            ),
+        )
+        assertNull(
+            com.tribetails.auntieos.domain.writeOffRefusedOwedCents(
+                "The balance on this invoice is now \$0.00, not \$40.00. Check it and try again.",
+            ),
+        )
+        assertNull(com.tribetails.auntieos.domain.writeOffRefusedOwedCents("Couldn't write off the balance."))
+        assertNull(com.tribetails.auntieos.domain.writeOffRefusedOwedCents(""))
     }
     @Test
     fun `#2090 cancelling the write-off sends nothing`() = runTest {

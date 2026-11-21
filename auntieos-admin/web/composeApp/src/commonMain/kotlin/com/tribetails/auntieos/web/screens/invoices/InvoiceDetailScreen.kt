@@ -317,12 +317,19 @@ private fun InvoiceDetailBody(
         if (writingOff) return
         writingOff = true
         scope.launch {
+            // #2435: a moved balance reopens the confirm at the server's figure.
+            // The stored one can stay above what the payments leave owing, and
+            // offering it again would be refused again.
+            var reopenAt: Long? = null
             when (val r = client.writeOffInvoice(invoice._id, cents)) {
                 // The server's sentence as it is: a moved balance names the new figure.
-                is WriteResult.Err -> showToast(r.message, true)
+                is WriteResult.Err -> {
+                    showToast(r.message, true)
+                    reopenAt = writeOffRefusedOwedCents(r.message)?.takeIf { it != cents }
+                }
                 is WriteResult.Ok  -> showToast(writeOffNoticeText(if (r.value > 0L) r.value else cents), false)
             }
-            writeOffCents = null
+            writeOffCents = reopenAt
             writingOff = false
         }
     }

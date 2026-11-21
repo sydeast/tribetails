@@ -66,4 +66,21 @@ class InvoiceWriteOffTest {
         assertEquals(900L, decodeWrittenOffCents("""{"ok":true,"invoiceId":"i1","writeOffId":"w1","writtenOffCents":900}"""))
         assertEquals(0L, decodeWrittenOffCents("not json"))
     }
+
+    @Test
+    fun aMovedBalanceReopensTheConfirmAtTheServersFigure() {
+        // #2435: the stored figure can stay above what the payments leave
+        // owing; the server names the real one and the confirm reopens at it.
+        assertEquals(
+            2500L,
+            writeOffRefusedOwedCents("The balance on this invoice is now \$25.00, not \$40.00. Check it and try again."),
+        )
+        assertEquals(
+            123456L,
+            writeOffRefusedOwedCents("The balance on this invoice is now \$1,234.56, not \$1,300.00. Check it and try again."),
+        )
+        assertNull(writeOffRefusedOwedCents("The balance on this invoice is now \$0.00, not \$40.00. Check it and try again."))
+        assertNull(writeOffRefusedOwedCents("Couldn't write off the balance."))
+        assertNull(writeOffRefusedOwedCents(""))
+    }
 }
