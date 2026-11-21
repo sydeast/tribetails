@@ -1153,16 +1153,19 @@ describe('KinTales screen: migrated rows with free-text dates (#1599)', () => {
       .filter((s) => s.path === 'kin_care_reports');
     expect(legacySpecs.at(-1)?.filters).toEqual([['createdAt', '>=', 'A']]);
   });
+  // #1856: no visit date, so each row's label reads its createdAt, the field
+  // this test orders on. With the fixture's shared visit date the three rows
+  // would all read Jul 16 and the order would rest on a field nobody sees.
   it('places a free-text row between the ISO rows by its date', () => {
     usePagedCollection.mockReturnValue(
       paged([
-        entry({ _id: 'new', kinfolkName: 'Newest Home', createdAt: isoAgo(1) }),
-        entry({ _id: 'old', kinfolkName: 'Oldest Home', createdAt: isoAgo(6) }),
+        entry({ _id: 'new', kinfolkName: 'Newest Home', createdAt: isoAgo(1), visitDate: '' }),
+        entry({ _id: 'old', kinfolkName: 'Oldest Home', createdAt: isoAgo(6), visitDate: '' }),
       ]),
     );
     legacyState = {
       status: 'ready',
-      data: [entry({ _id: 'legacy', kinfolkName: 'Migrated Home', createdAt: legacyStamp(3) })],
+      data: [entry({ _id: 'legacy', kinfolkName: 'Migrated Home', createdAt: legacyStamp(3), visitDate: '' })],
     };
     render(<KinTales />);
     const text = document.body.textContent ?? '';

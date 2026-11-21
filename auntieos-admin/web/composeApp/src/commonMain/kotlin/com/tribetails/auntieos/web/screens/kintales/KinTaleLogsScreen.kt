@@ -1034,7 +1034,10 @@ private fun bucketFor(r: KinCareReport): Bucket = when (r.status.uppercase()) {
  * above every ISO row, so this is epoch milliseconds, null when unreadable.
  */
 internal fun sortMillis(r: KinCareReport): Long? = kinTaleSortMillis(
-    sequenceOf(r.sentAt, r.updatedAt, r.visitDate, r.createdAt).firstOrNull { it.isNotBlank() },
+    // #1856: the same fields, in the same order, as the row's date label.
+    // Sorting on sentAt / updatedAt first put rows out of the order their
+    // labels read.
+    sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt).firstOrNull { it.isNotBlank() },
 )
 
 // KT1: operator-chosen ordering for the KinTales list (organizes the Sent bucket).

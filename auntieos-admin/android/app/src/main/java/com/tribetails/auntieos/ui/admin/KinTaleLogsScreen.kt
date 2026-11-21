@@ -1019,7 +1019,10 @@ private fun SortChipRow(selected: ReportSort, onSelect: (ReportSort) -> Unit) {
  * above every ISO row, so this is epoch milliseconds, null when unreadable.
  */
 internal fun sortMillis(r: KinCareReport): Long? =
-    kinTaleSortMillis(sequenceOf(r.sentAt, r.visitDate, r.arrivedAt, r.createdAt).firstOrNull { !it.isNullOrBlank() })
+    // #1856: the same fields, in the same order, as the row's date label
+    // (`reportWhen`). Sorting on sentAt first put rows out of the order their
+    // labels read, so a list ran "newest first" by a date nobody could see.
+    kinTaleSortMillis(sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt).firstOrNull { !it.isNullOrBlank() })
 
 /** KT1 (A8): operator-chosen ordering for the KinTales list. Mirror of web ReportSort. */
 internal enum class ReportSort(val label: String) {
