@@ -197,7 +197,9 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'kin.removal.archived': ['Business', 'kinfolkName', 'kinName', 'link', 'note'],
   'kin.removal.declined': ['Business', 'kinfolkName', 'kinName', 'link', 'note'],
   'kin.removal.requested': ['Business', 'kinfolkName', 'kinName', 'link', 'reason'],
-  'kincare.note.auntie': ['Business', 'kinName', 'link'],
+  // #2277: {{actorName}} is emitter-supplied (onBookingNoteCreate names the
+  // writer from her staff record), like quote.accepted's below.
+  'kincare.note.auntie': ['actorName', 'Business', 'kinName', 'link'],
   'kincare.note.kinfolk': ['Business', 'kinName', 'link'],
   'kincare.report.sent': ['kinfolkName', 'kinName'],
   'kincare.requested': ['bookingDates', 'Business', 'kinfolkName', 'kinName', 'link', 'serviceType'],

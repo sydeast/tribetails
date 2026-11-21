@@ -435,7 +435,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.note.auntie': [
     {
-      trigger: 'An Auntie posts a note on a visit.',
+      trigger: 'The office or an Auntie posts a note on a visit. The writer is not sent it.',
       source: 'src/triggers/onBookingNoteCreate.ts',
       dataKeys: [
         'kinfolkId',
@@ -444,6 +444,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'visitId',
         'noteId',
         'authorUid',
+        'actorName',
         'preview',
       ],
     },

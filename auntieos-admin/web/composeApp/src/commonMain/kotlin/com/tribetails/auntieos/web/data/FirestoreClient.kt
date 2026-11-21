@@ -4985,6 +4985,9 @@ data class NotificationEntry(
     val category: String = "",
     val recipientUid: String = "",
     val actorUid: String? = null,
+    // AO-28: who caused it, resolved by the dispatcher. Absent on rows with no
+    // actor. #2277: the row's meta line names her, as web and Android do.
+    val actorName: String? = null,
     val status: String = "",         // pending | dispatched
     val mode: String = "",           // trigger | debounced | batched | scheduled
     val channels: List<String> = emptyList(),

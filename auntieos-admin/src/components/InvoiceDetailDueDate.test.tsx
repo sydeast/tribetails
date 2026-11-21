@@ -56,7 +56,7 @@ vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
 }));
 
-import { InvoiceDetail, editDueOrderProblem } from './InvoiceDetail';
+import { InvoiceDetail, editDueOrderProblem, withPickedTerms, withTypedDueDate } from './InvoiceDetail';
 import { DUE_BEFORE_INVOICE_DATE } from '../lib/invoiceDueOrder';
 
 function fakeTs(iso: string): Timestamp {
@@ -192,6 +192,86 @@ describe('Edit invoice: due date before the invoice date', () => {
     fireEvent.change(screen.getByLabelText('Invoice due date'), { target: { value: '2026-11-12' } });
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     expect(await screen.findByText(`Could not save: ${DUE_BEFORE_INVOICE_DATE}`)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #2509: a due date typed beside rule terms is a date picked by hand. The
+ * picker shows "A date I pick myself" before Save, and the patch says so.
+ */
+describe('withTypedDueDate / withPickedTerms (pure)', () => {
+  const rule = { dueDate: '2026-11-05', termsCode: 'due_on_receipt' };
+  const draft = { dueDate: '2026-11-05', termsChoice: 'due_on_receipt' as string };
+
+  it('a new date beside the stored rule moves the picker to custom', () => {
+    expect(withTypedDueDate(draft, '2026-11-19', rule)).toEqual({ dueDate: '2026-11-19', termsChoice: 'custom' });
+  });
+  it('typed back to the stored date, the picker returns to the rule', () => {
+    const typed = withTypedDueDate(draft, '2026-11-19', rule);
+    expect(withTypedDueDate(typed, '2026-11-05', rule)).toEqual(draft);
+  });
+  it('terms with no code, or already custom, are left as they are', () => {
+    const kept = { dueDate: '2026-11-05', termsChoice: 'kept' };
+    expect(withTypedDueDate(kept, '2026-11-19', { dueDate: '2026-11-05' })).toEqual({
+      dueDate: '2026-11-19',
+      termsChoice: 'kept',
+    });
+    const custom = { dueDate: '2026-11-05', termsChoice: 'custom' };
+    expect(withTypedDueDate(custom, '2026-11-19', { ...rule, termsCode: 'custom' })).toEqual({
+      dueDate: '2026-11-19',
+      termsChoice: 'custom',
+    });
+  });
+  it('picking a rule again hands the due date back to it', () => {
+    const typed = withTypedDueDate(draft, '2026-11-19', rule);
+    expect(withPickedTerms(typed, 'due_on_receipt', rule)).toEqual(draft);
+    expect(withPickedTerms(typed, 'custom', rule)).toEqual(typed);
+  });
+});
+
+describe('Edit invoice: a due date typed beside rule terms (#2509)', () => {
+  const onReceipt = { dueDate: '2026-11-05', termsCode: 'due_on_receipt', terms: 'Due on receipt' };
+
+  it('shows "A date I pick myself" and sends the custom terms with the date', async () => {
+    await openEdit(onReceipt);
+    fireEvent.change(screen.getByLabelText('Invoice due date'), { target: { value: '2026-11-19' } });
+    const terms = screen.getByLabelText('Invoice terms');
+    expect(terms).toHaveValue('custom');
+    expect(within(terms).getByRole('option', { selected: true })).toHaveTextContent('A date I pick myself');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateInvoice).toHaveBeenCalledWith('inv1', { termsCode: 'custom', dueDate: '2026-11-19' }),
+    );
+  });
+
+  it('a typed date before the invoice date is refused beside the field', async () => {
+    await openEdit(onReceipt);
+    const due = screen.getByLabelText('Invoice due date');
+    fireEvent.change(due, { target: { value: '2026-11-01' } });
+    expect(due).toHaveAttribute('aria-invalid', 'true');
+    expect(describedText(due)).toBe(DUE_BEFORE_INVOICE_DATE);
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
+  });
+
+  it('putting the stored date back leaves the terms alone', async () => {
+    await openEdit(onReceipt);
+    const due = screen.getByLabelText('Invoice due date');
+    fireEvent.change(due, { target: { value: '2026-11-19' } });
+    fireEvent.change(due, { target: { value: '2026-11-05' } });
+    expect(screen.getByLabelText('Invoice terms')).toHaveValue('due_on_receipt');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(await screen.findByText('Nothing has changed yet.')).toBeInTheDocument();
+    expect(updateInvoice).not.toHaveBeenCalled();
+  });
+
+  it('picking the rule again after typing sends no due date and no terms change', async () => {
+    await openEdit(onReceipt);
+    fireEvent.change(screen.getByLabelText('Invoice due date'), { target: { value: '2026-11-19' } });
+    await userEvent.selectOptions(screen.getByLabelText('Invoice terms'), 'due_on_receipt');
+    expect(screen.getByLabelText('Invoice due date')).toHaveValue('2026-11-05');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    expect(await screen.findByText('Nothing has changed yet.')).toBeInTheDocument();
+    expect(updateInvoice).not.toHaveBeenCalled();
   });
 });
 
