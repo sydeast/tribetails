@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { buildDbMock } from './_helpers/mockDb';
 import { installOptimisticTransactions } from './_helpers/optimisticTransaction';
 
@@ -536,6 +538,27 @@ describe('#2437: a portal build from before this change is given the sentence', 
     expect(err.code).toBe('failed-precondition');
     expect(err.message).toBe('A payment on this invoice is still being recorded. Check again in a minute.');
     expect(err.message).not.toMatch(/[—_{}]|stripe|webhook|session/i);
+  });
+});
+
+describe('#2437: the portals know the refusal the server sends', () => {
+  // The MyTribe app knows this refusal by its sentence, and the web portal
+  // falls back to the sentence when the code is lost on the way. Each keeps
+  // its own copy, in another package, so nothing but this test fails when the
+  // server's words change and a portal's copy does not.
+  const portalFile = (path: string) => readFileSync(resolve(__dirname, '../../..', path), 'utf8');
+
+  it.each([
+    'mytribe/src/commonMain/kotlin/com/kinfolk/portal/screens/invoices/InvoicesScreen.kt',
+    'mytribe/web/src/lib/checkoutReturn.ts',
+  ])('%s carries the sentence word for word', (path) => {
+    expect(portalFile(path)).toContain(PAYMENT_BEING_RECORDED);
+  });
+
+  it('the web portal reads the same code', () => {
+    expect(portalFile('mytribe/web/src/lib/checkoutReturn.ts')).toContain(
+      `PAYMENT_BEING_RECORDED_CODE = '${PAYMENT_BEING_RECORDED_CODE}'`,
+    );
   });
 });
 
