@@ -888,6 +888,43 @@ describe('Notifications quick actions (issue #20)', () => {
     expect(onNavigate).toHaveBeenCalledWith(route);
   });
 
+  // #1829: the Unread tile counts notices not opened yet, and Open left them unread.
+  it('Open marks an unread notice read and opens it without waiting on the mark', async () => {
+    markNotificationRead.mockReset();
+    // A mark that never answers: the Open must not wait on it.
+    markNotificationRead.mockReturnValue(new Promise(() => {}));
+    const onNavigate = vi.fn();
+    mockStreams({ status: 'ready', data: [entry({ _id: 'n7', targetType: 'invoice', targetId: 'inv1' })] });
+    render(<Notifications onNavigate={onNavigate} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(markNotificationRead).toHaveBeenCalledWith('n7');
+    expect(onNavigate).toHaveBeenCalledWith({ to: '/invoices', search: { invoiceId: 'inv1' } });
+  });
+
+  it('Open on a notice already read writes nothing', async () => {
+    markNotificationRead.mockReset();
+    const onNavigate = vi.fn();
+    mockStreams({
+      status: 'ready',
+      data: [entry({ targetType: 'invoice', targetId: 'inv1', readAt: fakeTs('2026-07-16T10:00:00Z') })],
+    });
+    render(<Notifications onNavigate={onNavigate} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(markNotificationRead).not.toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed mark on Open is said on the screen, and the Open still happened', async () => {
+    markNotificationRead.mockReset();
+    markNotificationRead.mockRejectedValue(new Error('The server did not answer.'));
+    const onNavigate = vi.fn();
+    mockStreams({ status: 'ready', data: [entry({ targetType: 'invoice', targetId: 'inv1' })] });
+    render(<Notifications onNavigate={onNavigate} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('The server did not answer.')).toBeInTheDocument();
+  });
+
   it('renders NO Open button for an unknown targetType (negative case)', () => {
     mockStreams({ status: 'ready', data: [entry({ targetType: 'payout', targetId: 'p1' })] });
     render(<Notifications />);

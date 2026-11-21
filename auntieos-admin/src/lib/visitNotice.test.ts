@@ -9,6 +9,8 @@ import {
   visitNoticeOutcomeSentence,
   visitNoticePreview,
   visitRoutingSkip,
+  visitAlreadySentence,
+  visitMovedSentence,
   type VisitNoticeReach,
 } from './visitNotice';
 import {
@@ -384,5 +386,46 @@ describe('#2185 the switch-off lines under an Auntie sign-in', () => {
     expect(visitNoticeConfirmLine({ kind: 'will_notify' }, 'ARRIVED', 'Dre East', true)).toBe(
       'Dre East will be told their Auntie has arrived.',
     );
+  });
+});
+
+describe('visitMovedSentence: the clock line in words (#1814)', () => {
+  it('says each step forward in words', () => {
+    expect(visitMovedSentence('SCHEDULED', 'ON_MY_WAY')).toBe('Marked on the way.');
+    expect(visitMovedSentence('ON_MY_WAY', 'ARRIVED')).toBe('Marked arrived.');
+    expect(visitMovedSentence('ARRIVED', 'DEPARTED')).toBe('Marked departed.');
+    expect(visitMovedSentence('DEPARTED', 'COMPLETED')).toBe('Marked completed.');
+  });
+
+  it('says an undo as a step back', () => {
+    expect(visitMovedSentence('ARRIVED', 'ON_MY_WAY')).toBe('Back to on the way.');
+    expect(visitMovedSentence('DEPARTED', 'ON_MY_WAY')).toBe('Back to on the way.');
+    expect(visitMovedSentence('ARRIVED', 'SCHEDULED')).toBe('Back to scheduled.');
+  });
+
+  it('never prints a stored key or an arrow, whatever the server sends', () => {
+    for (const [from, to] of [
+      ['SCHEDULED', 'ON_MY_WAY'],
+      ['ARRIVED', 'SCHEDULED'],
+      ['', 'ARRIVED'],
+      ['SOME_NEW_STATE', 'ANOTHER_NEW_STATE'],
+    ] as const) {
+      const line = visitMovedSentence(from, to);
+      expect(line).not.toMatch(/[A-Z]{2,}_|→|_/);
+      expect(line).not.toMatch(/\b[A-Z]{3,}\b/);
+    }
+    expect(visitMovedSentence('SOME_NEW_STATE', 'ANOTHER_NEW_STATE')).toBe('Marked another new state.');
+  });
+
+  it('says a tap that changed nothing in words', () => {
+    expect(visitAlreadySentence('ARRIVED')).toBe(
+      'Already arrived. Nothing was changed, and the time already on file is unchanged.',
+    );
+    expect(visitAlreadySentence('ON_MY_WAY')).toMatch(/^Already on the way\./);
+  });
+
+  it('never reads "Already ." when the server names no status', () => {
+    expect(visitAlreadySentence('')).toBe('Nothing was changed, and the time already on file is unchanged.');
+    expect(visitAlreadySentence('  ')).not.toMatch(/Already \./);
   });
 });

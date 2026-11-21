@@ -65,6 +65,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { reportError } from '../lib/sentry';
 
 /** A row with no write in flight gets this, rather than a fresh empty Set each render. */
 const NO_PENDING: ReadonlySet<NotificationPendingKind> = new Set();
@@ -275,6 +276,31 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
     );
   }
 
+  /**
+   * #1829: Open marks an unread notice read. The Unread tile counts notices
+   * "not opened yet", and Open used to leave the notice unread. The mark is
+   * started and never waited on, so the Open goes ahead at once; the router
+   * takes the operator off this screen, so a failure is reported rather than
+   * left on a banner nobody is looking at (the banner still shows it when the
+   * screen stays up).
+   */
+  function openOne(entry: NotificationEntry) {
+    if (isRead(entry) || entry._id.trim() === '') return;
+    void runRowAction(
+      entry._id,
+      'read',
+      async () => {
+        try {
+          await markNotificationRead(entry._id);
+        } catch (err) {
+          reportError(err, 'markNotificationRead on Open');
+          throw err;
+        }
+        return null;
+      },
+      'Marking the notification read failed.',
+    );
+  }
   function archiveOne(entry: NotificationEntry) {
     void runRowAction(
       entry._id,
@@ -620,6 +646,7 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
                               onToggleRead={() => toggleOne(entry)}
                               onArchive={() => archiveOne(entry)}
                               onRestore={() => restoreOne(entry)}
+                              onOpen={() => openOne(entry)}
                               onBookingAction={(bookingId, action) =>
                                 bookingAction(entry, bookingId, action)
                               }
@@ -710,6 +737,8 @@ interface NotificationRowProps {
   onArchive: () => void;
   /** The undo. Offered instead of Archive on a row that is already archived. */
   onRestore: () => void;
+  /** #1829: Open was pressed; marks an unread notice read. */
+  onOpen: () => void;
   onNavigate?: (route: NotificationRoute) => void;
   onBookingAction: (bookingId: string, action: BatchBookingAction) => void;
   isAuntie: boolean;
@@ -727,6 +756,7 @@ function NotificationRow({
   onToggleRead,
   onArchive,
   onRestore,
+  onOpen,
   onNavigate,
   onBookingAction,
   isAuntie,
@@ -856,6 +886,7 @@ function NotificationRow({
           onArchive={onArchive}
           onRestore={onRestore}
           onNavigate={(route) => onNavigate?.(route)}
+          onOpen={onOpen}
           onBookingAction={onBookingAction}
           isAuntie={isAuntie}
           pendingRequests={pendingRequests}
