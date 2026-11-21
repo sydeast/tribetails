@@ -103,6 +103,8 @@ class AddEnhancedBookingDialogKinTest {
         rule.onNodeWithText("Save Draft").performClick()
         // Empty is every Kin: the server stores the whole roster for it.
         assertEquals(emptyList<String>(), saved?.kinIds)
+        // #2347: saved with choosing off, so approval books every Kin.
+        assertEquals(false, saved?.kinChosenWithFlagOn)
     }
 
     @Test
@@ -113,6 +115,7 @@ class AddEnhancedBookingDialogKinTest {
         rule.onNodeWithText("Gravy").assertIsDisplayed()
         rule.onNodeWithText("Save Draft").performClick()
         assertEquals(emptyList<String>(), saved?.kinIds)
+        assertEquals(true, saved?.kinChosenWithFlagOn)
     }
 
     @Test
@@ -122,6 +125,9 @@ class AddEnhancedBookingDialogKinTest {
         rule.onNodeWithText("Biscuit").performClick()
         rule.onNodeWithText("Save Draft").performClick()
         assertEquals(listOf("k2"), saved?.kinIds)
+        // #2347: the draft says its Kin were chosen with choosing on, so
+        // approval keeps them even if choosing is switched off before then.
+        assertEquals(true, saved?.kinChosenWithFlagOn)
     }
 
     @Test
