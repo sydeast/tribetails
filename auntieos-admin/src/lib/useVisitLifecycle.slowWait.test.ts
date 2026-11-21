@@ -103,7 +103,7 @@ describe('useVisitLifecycle: pessimistic, and re-sendable while in flight', () =
     // that, rather than being given a second arrival with a moved timestamp.
     await waitFor(() => expect(result.current.write.status).toBe('done'));
     expect(result.current.write.status === 'done' && result.current.write.message).toContain(
-      'Already ARRIVED',
+      'Already arrived',
     );
     settle({
       changed: true,
