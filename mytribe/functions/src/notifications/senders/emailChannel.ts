@@ -90,7 +90,8 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
 
   const sendGeneric = async (event: string, action: string, reason?: string): Promise<ChannelSendResult> => {
     const businessName = await loadBusinessName('emailChannel');
-    const generic = fallbackEmail(def, businessName);
+    const link = (renderData as Record<string, unknown>)['link'];
+    const generic = fallbackEmail(def, businessName, { hasLink: typeof link === 'string' && link.trim() !== '' });
     logEvent({
       severity: 'error',
       function: 'emailChannel',

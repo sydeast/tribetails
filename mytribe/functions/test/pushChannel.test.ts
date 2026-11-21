@@ -322,6 +322,20 @@ describe('sendPushChannel', () => {
       // The wording and the short line are untouched.
       expect(sent().notification).toEqual({ title: 'Auntie has arrived', body: 'Tap for details.' });
     });
+    it('#2251, #2487: the generic wording for broken stored copy still opens the notice item', async () => {
+      const ctx = buildPushDbMock({ template: { title: '{{#if isQuote}}Quote', body: 'Ready' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: {},
+        stream: 'kinfolk',
+        open: { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1', visitId: 'v1' } },
+      });
+      expect(sent().notification).toEqual({ title: 'An update about your care', body: 'Tap to see it.' });
+      expect(sent().data).toMatchObject({ route: '/schedule/v1', targetType: 'booking', targetId: 'v1' });
+    });
     it('#2259: a notice with nothing to open still lands on the notifications list', async () => {
       const ctx = buildPushDbMock({ template: { title: 'A', body: 'B' }, tokens: ['t1'] });
       mocks.dbFn.mockReturnValue(ctx.db);

@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import Handlebars from 'handlebars';
 import {
   emailMarkupErrors,
   emailTemplateIssues,
   pushTemplateIssues,
+  scanTemplate,
   smsTemplateIssues,
   templateMarkupIssue,
   visualEmailTemplateIssues,
@@ -55,6 +57,32 @@ describe('templateMarkupIssue', () => {
     expect(templateMarkupIssue('The subject', '{{upper kinName}}')).toMatch(/A field is not written correctly/);
     expect(templateMarkupIssue('The subject', '{{> footer}}')).toMatch(/A field is not written correctly/);
     expect(templateMarkupIssue('The subject', '{{#shout x}}y{{/shout}}')).toMatch(/is not something a notification can use/);
+  });
+
+  // Review of #2251: nothing that renders today is refused.
+  it('HAPPY: nested blocks, else-if chains, loop extras and plain sections all send', () => {
+    for (const ok of [
+      '{{#if a}}x{{else if b}}y{{else}}z{{/if}}',
+      '{{#if a}}{{#unless b}}{{#if c}}x{{/if}}{{/unless}}{{/if}}',
+      '{{#each items}}{{name}} {{../kinName}} {{@index}}{{else}}none{{/each}}',
+      '{{#each items as |item i|}}{{item.name}}{{/each}}',
+      '{{#with booking}}{{date}}{{/with}}',
+      '{{~#if a~}} x {{~/if~}}',
+      '{{!-- a note --}}<a href="{{link}}">Open</a>',
+      '{{#kinNames}}{{this}} {{/kinNames}}',
+      '{{^note}}No note{{/note}}',
+    ]) {
+      expect(templateMarkupIssue('The body', ok)).toBeNull();
+      expect(() => Handlebars.compile(ok, { noEscape: true })({ items: [{ name: 'x' }], kinNames: ['Rex'] })).not.toThrow();
+    }
+    expect(scanTemplate('{{#kinNames}}{{name}}{{/kinNames}}').fields).toEqual(['kinNames']);
+  });
+
+  it('NEGATIVE: a section with no close, or a helper block that is not one, is still refused', () => {
+    expect(templateMarkupIssue('The body', '{{#kinNames}}{{this}}')).toMatch(/\{\{#kinNames\}\} is never closed/);
+    expect(templateMarkupIssue('The body', '{{#each}}x{{/each}}')).toMatch(/is not something a notification can use/);
+    expect(templateMarkupIssue('The body', '{{#each items}}{{> row}}{{/each}}')).toMatch(/A field is not written correctly/);
+    expect(templateMarkupIssue('The body', '{{#if a}}{{upper kinName}}{{/if}}')).toMatch(/A field is not written correctly/);
   });
 
   it('NEGATIVE: a triple stash is left to its own sentence, never reported twice', () => {

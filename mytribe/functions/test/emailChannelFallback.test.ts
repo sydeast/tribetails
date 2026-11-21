@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import Handlebars from 'handlebars';
 
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
@@ -228,6 +229,33 @@ describe('sendEmailChannel: a stored template the renderer cannot fill in', () =
     const logged = mocks.logEvent.mock.calls.map((c) => c[0]).find((e) => e.event === 'notification.template.broken');
     expect(logged).toMatchObject({ severity: 'error', extra: { channel: 'email', templateId: 'kincare.request.declined' } });
     expect(logged.extra.reason).toMatch(/Parse error/);
+  });
+
+  // #2487 order: every notice links to its item, the generic wording included.
+  it('the generic wording opens the notice item, and no raw field reaches the reader', async () => {
+    const link = 'https://kinfolk.tribetails.com/kintales?tale=t1';
+    for (const [d, tpl] of [
+      [def(), { subject: '{{#if isQuote}}Your quote is ready', body: 'Hi', html: null }],
+      [def(), null],
+      [def({ audience: 'business', audiences: { business: true }, kinfolkFacing: false }), null],
+    ] as const) {
+      mocks.sendTemplatedEmail.mockClear();
+      mocks.loadEmailTemplate.mockResolvedValue(tpl);
+      await sendEmailChannel({ def: d, recipientUid: 'u1', data: { link } });
+      const sent = mocks.sendTemplatedEmail.mock.calls[0]![0];
+      const body = Handlebars.compile(sent.bodyTemplate, { noEscape: true })(sent.data);
+      const subject = Handlebars.compile(sent.subjectTemplate, { noEscape: true })(sent.data);
+      expect(body).toContain(`Sign in to see it: ${link}`);
+      expect(body + subject).not.toContain('{{');
+    }
+  });
+
+  it('with no link in the data the generic wording still names the site', async () => {
+    mocks.loadEmailTemplate.mockResolvedValue({ subject: '{{/if}}', body: 'Hi', html: null });
+    await sendEmailChannel({ def: def(), recipientUid: 'u1', data: {} });
+    const sent = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(sent.bodyTemplate).toContain('Sign in to see it: kinfolk.tribetails.com');
+    expect(sent.bodyTemplate).not.toContain('{{link}}');
   });
 
   it('a broken html part alone also falls back', async () => {

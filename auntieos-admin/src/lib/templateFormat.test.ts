@@ -344,6 +344,20 @@ describe('templateMarkupError (#2251)', () => {
       expect(templateMarkupError('The body', ok)).toBeNull();
     }
   });
+  // #2251 review: a comment or an escaped tag is never filled in, so it never holds Save back.
+  it('passes sections, else-if, block params, and tags inside a comment or escaped', () => {
+    for (const ok of [
+      '{{#if a}}x{{else if b}}y{{else}}z{{/if}}',
+      '{{#each items as |item i|}}{{item.name}}{{/each}}',
+      '{{#kinNames}}{{this}}{{/kinNames}}',
+      '{{!-- {{#if x}} kept for later --}}Hi {{kinName}}',
+      '{{! {{/if}} }}Hi',
+      'Type \\{{#if x}} to show a part',
+    ]) {
+      expect(templateMarkupError('The body', ok)).toBeNull();
+    }
+    expect(templateMarkupError('The body', '{{!-- note --}}{{#if a}}x')).toMatch(/\{\{#if\}\} is never closed/);
+  });
   it('refuses nothing in the shipped seed corpus (no false alarm on a good template)', () => {
     const refused = SEED_CORPUS.flatMap((e) =>
       [e.emailSubject, e.emailHeadline, e.emailContent]

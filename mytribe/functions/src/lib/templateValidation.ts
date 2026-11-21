@@ -19,6 +19,8 @@ import { contentToText, frameHtml } from './emailFrame';
 
 /** The block helpers the seed corpus uses and Handlebars ships. Anything else throws at send. */
 const BLOCK_HELPERS = new Set(['if', 'unless', 'each', 'with']);
+/** Handlebars' other built-ins: a paramless block of one of these is a helper call, not a section. */
+const BUILT_IN_HELPERS = new Set(['lookup', 'log', 'helperMissing', 'blockHelperMissing']);
 
 export interface TemplateScan {
   /** Context fields the text asks for, in order of first appearance. */
@@ -74,6 +76,23 @@ export function scanTemplate(text: string): TemplateScan {
         const node = raw as hbs.AST.BlockStatement;
         const helper = pathName(node.path);
         const subject = pathName(node.params[0]);
+        // `{{#kinNames}}...{{/kinNames}}` and `{{^note}}...{{/note}}` with no
+        // argument are plain sections: Handlebars walks or tests the field
+        // itself, and they render. Refusing them would lock out a template
+        // that sends today (#2251 review). Their own field is noted; the names
+        // inside belong to the item, as in an `each`.
+        if (
+          helper !== null &&
+          !BLOCK_HELPERS.has(helper) &&
+          !BUILT_IN_HELPERS.has(helper) &&
+          node.params.length === 0 &&
+          !node.hash
+        ) {
+          if (!local && helper !== 'this' && !helper.startsWith('this.') && !helper.startsWith('@')) note(helper);
+          walk(node.program, true);
+          walk(node.inverse, true);
+          continue;
+        }
         if (helper === null || !BLOCK_HELPERS.has(helper) || subject === null || node.params.length !== 1) {
           problem ??= `{{#${helper ?? ''}}} is not something a notification can use here.`;
           continue;

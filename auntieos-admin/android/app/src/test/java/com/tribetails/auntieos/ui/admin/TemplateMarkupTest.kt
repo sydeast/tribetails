@@ -27,6 +27,18 @@ class TemplateMarkupTest {
         assertTrue(templateMarkupError("The subject", "Hi {{kinName and more")!!.contains("A field is not written correctly"))
     }
 
+    /** #2251 review: a comment or an escaped tag is never filled in, so it never holds Save back. */
+    @Test
+    fun tagsInsideACommentOrEscapedPairWithNothing() {
+        listOf(
+            "{{#if a}}x{{else if b}}y{{else}}z{{/if}}",
+            "{{#each items as |item i|}}{{item.name}}{{/each}}",
+            "{{!-- {{#if x}} kept for later --}}Hi {{kinName}}",
+            "{{! {{/if}} }}Hi",
+            "Type \\{{#if x}} to show a part",
+        ).forEach { assertNull(it, templateMarkupError("The body", it)) }
+        assertTrue(templateMarkupError("The body", "{{!-- note --}}{{#if a}}x")!!.contains("{{#if}} is never closed"))
+    }
     @Test
     fun goodTemplatesPass() {
         listOf(

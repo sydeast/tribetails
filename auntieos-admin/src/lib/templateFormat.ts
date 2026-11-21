@@ -372,6 +372,9 @@ export interface TemplateFieldError {
   message: string;
 }
 
+/** `{{!-- note --}}`, `{{! note}}` and an escaped `\{{field}}`: text the sender prints or drops, never fills. */
+const NOT_MARKUP = /\{\{!--[\s\S]*?--\}\}|\{\{![\s\S]*?\}\}|\\\{\{[\s\S]*?\}\}/g;
+
 /** `{{#if x}}`, `{{^if x}}`, `{{else}}`, `{{/if}}`, read for pairing only. */
 const BLOCK_TAG = /\{\{~?\s*(?:([#^])\s*([A-Za-z_][\w-]*)|\/\s*([A-Za-z_][\w-]*)|(else))\b[^}]*?~?\}\}/g;
 
@@ -389,8 +392,11 @@ const BLOCK_TAG = /\{\{~?\s*(?:([#^])\s*([A-Za-z_][\w-]*)|\/\s*([A-Za-z_][\w-]*)
 export function templateMarkupError(label: string, value: string): string | null {
   if (!value.includes('{{') && !value.includes('}}')) return null;
   const fail = (detail: string) => `${label} cannot be sent as written. ${detail}`;
+  // A comment or an escaped `\{{` is never filled in, so a tag written inside
+  // one pairs with nothing and still sends (#2251 review).
+  const read = value.replace(NOT_MARKUP, '');
   const open: string[] = [];
-  for (const m of value.matchAll(BLOCK_TAG)) {
+  for (const m of read.matchAll(BLOCK_TAG)) {
     const opener = m[2];
     const closer = m[3];
     if (opener) {
@@ -408,7 +414,7 @@ export function templateMarkupError(label: string, value: string): string | null
   const last = open.pop();
   if (last !== undefined) return fail(`{{#${last}}} is never closed. Add {{/${last}}} where that part ends.`);
   // Half a field: `{{kinName` with no closing brackets before the next field.
-  const opens = value.split('{{').slice(1);
+  const opens = read.split('{{').slice(1);
   if (opens.some((rest) => !rest.includes('}}'))) {
     return fail('A field is not written correctly. Each field needs two curly brackets on both sides, like {{kinName}}.');
   }

@@ -18,8 +18,11 @@ package com.tribetails.auntieos.web.screens.admin
 fun templateMarkupError(label: String, value: String): String? {
     if (!value.contains("{{") && !value.contains("}}")) return null
     fun fail(detail: String) = "$label cannot be sent as written. $detail"
+    // A comment or an escaped `\{{` is never filled in, so a tag written inside
+    // one pairs with nothing and still sends (#2251 review).
+    val read = NOT_MARKUP.replace(value, "")
     val open = ArrayDeque<String>()
-    for (m in BLOCK_TAG.findAll(value)) {
+    for (m in BLOCK_TAG.findAll(read)) {
         val opener = m.groups[2]?.value
         val closer = m.groups[3]?.value
         when {
@@ -35,11 +38,14 @@ fun templateMarkupError(label: String, value: String): String? {
     }
     open.removeLastOrNull()?.let { return fail("{{#$it}} is never closed. Add {{/$it}} where that part ends.") }
     // Half a field: `{{kinName` with no closing brackets before the next field.
-    if (value.split("{{").drop(1).any { !it.contains("}}") }) {
+    if (read.split("{{").drop(1).any { !it.contains("}}") }) {
         return fail("A field is not written correctly. Each field needs two curly brackets on both sides, like {{kinName}}.")
     }
     return null
 }
+
+/** `{{!-- note --}}`, `{{! note}}` and an escaped `\{{field}}`: text the sender prints or drops, never fills. */
+private val NOT_MARKUP = Regex("""\{\{!--[\s\S]*?--\}\}|\{\{![\s\S]*?\}\}|\\\{\{[\s\S]*?\}\}""")
 
 /** `{{#if x}}`, `{{^if x}}`, `{{else}}`, `{{/if}}`, read for pairing only. */
 private val BLOCK_TAG =
