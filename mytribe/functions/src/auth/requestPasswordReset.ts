@@ -258,7 +258,8 @@ export async function processPasswordResetRequest(request: PasswordResetRequest)
       data: {
         link,
         email: user.email,
-        displayName: user.displayName || user.email,
+        // #2487: greeted by name, or plainly; never by the address.
+        displayName: (user.displayName && !user.displayName.includes('@') ? user.displayName : '') || 'there',
         ...businessTokens(await loadBusinessName('requestPasswordReset')),
       },
       ...sendPartsFor(loaded.template, frame),

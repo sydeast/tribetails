@@ -4,6 +4,7 @@ import { sendPartsFor } from './emailFrame';
 import { loadEmailFrame } from './emailFrameStore';
 import type { EmailFrame } from './emailFrameConfig';
 import { assertNotHardBounced } from './suppressions';
+import { businessTokens, loadBusinessName } from './businessName';
 
 /**
  * Whether a `notificationTemplateBindings` doc is live, given its `active`
@@ -146,6 +147,31 @@ export async function sendFromTemplate(
   const tpl = await loadEmailTemplate(key);
   if (!tpl) throw new Error(`email template missing: resolved from ${key}`);
   const resolvedFrame = frame ?? (await loadEmailFrame('sendFromTemplate'));
-  return sendTemplatedEmail({ to, data, templateKey: key, ...sendPartsFor(tpl, resolvedFrame) });
+  const parts = sendPartsFor(tpl, resolvedFrame);
+  return sendTemplatedEmail({ to, data: await withBusinessName(data, parts), templateKey: key, ...parts });
+}
+/**
+ * #2487: `{{business}}` / `{{Business}}` on a direct send. The template editor
+ * offers the business name to every template, and the catalog's senders fill it
+ * (`enrichTemplateData`), but a direct send never runs the enricher, so an
+ * invite written with it read "Welcome to ". Filled here the same way: the
+ * settings name, or the neutral wording when it is unset. A caller's own value
+ * wins, and the settings document is read only when the template uses one.
+ */
+async function withBusinessName(
+  data: Record<string, unknown>,
+  parts: { subjectTemplate: string; bodyTemplate: string; htmlTemplate?: string | undefined },
+): Promise<Record<string, unknown>> {
+  const uses = [parts.subjectTemplate, parts.bodyTemplate, parts.htmlTemplate ?? ''].some((t) =>
+    /\{\{\s*business\s*\}\}/i.test(t),
+  );
+  const blank = (v: unknown) => typeof v !== 'string' || v.trim() === '';
+  if (!uses || (!blank(data.business) && !blank(data.Business))) return data;
+  const tokens = businessTokens(await loadBusinessName('sendFromTemplate'));
+  return {
+    ...data,
+    ...(blank(data.business) ? { business: tokens.business } : {}),
+    ...(blank(data.Business) ? { Business: tokens.Business } : {}),
+  };
 }
 

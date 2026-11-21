@@ -196,7 +196,7 @@ describe('addSecondaryContactHandler', () => {
 // mintInviteFromPrimary sends, through the shared lib/inviteEmails.ts helper.
 describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
   it('sends invite.secondary to the invited address with the claim link, and marks the invite EMAIL_SENT', async () => {
-    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'families/3': { displayName: 'The Rivera Home' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
     const res = await addSecondaryContactHandler({
@@ -205,9 +205,10 @@ describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
     } as any);
     expect(mocks.sendMock).toHaveBeenCalledWith('invite.secondary', 'partner@x.com', {
       primaryDisplayName: 'Dana Primary',
-      secondaryDisplayName: 'partner@x.com',
+      // #2487: greeted plainly and the household named, never the address or the record id.
+      secondaryDisplayName: 'there',
       secondaryLabel: 'CoParent',
-      tribeName: '3',
+      tribeName: 'The Rivera Home',
       claimUrl: `https://claim.tribetails.com?invite=${res.inviteId}`,
       expiresInDays: 14,
     }, FRAME);
