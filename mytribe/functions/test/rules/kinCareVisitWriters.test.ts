@@ -127,6 +127,46 @@ describe('rules: each app writes only the fields it owns on a KinCare visit', ()
     });
   }
 
+  for (const w of WRITERS) {
+    it(`${w.name} cannot move the visit to another household or change what it is for`, async () => {
+      const env = await getEnv();
+      await seedVisit({ targetId: 'biscuit', kinfolkId: 'f1' });
+      const db = w.db(env);
+      await assertFails(db.doc(VISIT).update({ ...w.realWrite(), familyId: 'f2' }));
+      await assertFails(db.doc(VISIT).update({ ...w.realWrite(), kinfolkId: 'f2' }));
+      await assertFails(db.doc(VISIT).update({ ...w.realWrite(), kinfolkId: '' }));
+      await assertFails(db.doc(VISIT).update({ ...w.realWrite(), targetType: 'KINFOLK' }));
+      await assertFails(db.doc(VISIT).update({ ...w.realWrite(), targetId: 'mochi' }));
+      await assertFails(db.doc(VISIT).update({ ...w.realWrite(), kinIds: ['mochi'] }));
+      await assertSucceeds(db.doc(VISIT).update(w.realWrite()));
+    });
+  }
+
+  for (const staff of WRITERS.slice(0, 2)) {
+    describe(`${staff.name}: the booking and session links are set once`, () => {
+      it('fills them on a request that has none, and may repeat the stored value', async () => {
+        const env = await getEnv();
+        await seedVisit({ sessionId: null, sourceBookingId: '' });
+        const db = staff.db(env);
+        await assertSucceeds(db.doc(VISIT).update(androidWriteBack()));
+        await assertSucceeds(db.doc(VISIT).update(androidWriteBack()));
+      });
+
+      for (const key of ['sessionId', 'sourceBookingId']) {
+        it(`cannot change or blank ${key} once it is set`, async () => {
+          const env = await getEnv();
+          await seedVisit({ sessionId: 'sess-1', sourceBookingId: 'eb-1' });
+          const db = staff.db(env);
+          await assertFails(db.doc(VISIT).update({ ...androidWriteBack(), [key]: 'other-1' }));
+          await assertFails(db.doc(VISIT).update({ ...androidWriteBack(), [key]: '' }));
+          await assertFails(db.doc(VISIT).update({ ...androidWriteBack(), [key]: null }));
+          await assertSucceeds(db.doc(VISIT).update(androidWriteBack()));
+          await assertSucceeds(db.doc(VISIT).update({ status: 'active', visitProgress: 'active' }));
+        });
+      }
+    });
+  }
+
   it('the owner and an Auntie can still write visitProgress, as older installed builds may', async () => {
     const env = await getEnv();
     await seedVisit();

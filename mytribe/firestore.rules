@@ -1323,6 +1323,20 @@ service cloud.firestore {
           function householdVisitWriteKeys() {
             return ['status', 'notes', 'title', 'window', 'updatedAt'];
           }
+ // The visit's links to its booking and its session are set once. The admin
+ // Android write-back sets both when it approves a request, and a request is
+ // made with both empty (portal/requestBooking.ts); the server reads
+ // `sessionId` to find the session a visit change applies to. A staff write
+ // may fill an empty link or repeat the stored value, never change or blank
+ // one that is set.
+          function visitLinkSetOnce(k) {
+            return request.resource.data.get(k, null) == resource.data.get(k, null)
+              || resource.data.get(k, null) == null
+              || resource.data.get(k, null) == '';
+          }
+          function visitLinksSetOnce() {
+            return visitLinkSetOnce('sessionId') && visitLinkSetOnce('sourceBookingId');
+          }
 
           allow create: if activeMember(fid)
             && request.resource.data.familyId == fid
@@ -1343,8 +1357,9 @@ service cloud.firestore {
           // A member with billing access keeps the invoice keys it could write
           // before on top of the household list.
           allow update: if visitServerOnlyKeysUntouched() && (
-            (isOwner() && diffOnly(staffVisitWriteKeys()))
-            || (isCaretaker() && caretakerMoneyUnchanged() && diffOnly(staffVisitWriteKeys()))
+            (isOwner() && diffOnly(staffVisitWriteKeys()) && visitLinksSetOnce())
+            || (isCaretaker() && caretakerMoneyUnchanged() && diffOnly(staffVisitWriteKeys())
+                && visitLinksSetOnce())
             || (hasPerm(fid,'billing_full') && diffOnly(householdVisitWriteKeys().concat(invoiceKeys())))
             || (activeMember(fid) && invoiceFieldsUnchanged() && sitterFieldsUnchanged()
                 && diffOnly(householdVisitWriteKeys())));
