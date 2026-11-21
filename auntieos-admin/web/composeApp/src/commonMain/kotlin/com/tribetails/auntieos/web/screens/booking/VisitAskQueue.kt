@@ -70,6 +70,8 @@ import kotlinx.datetime.TimeZone
 
 /** Web's poll floor for the request queues (`VISIT_REQUESTS_REFRESH_MS`). */
 const val VISIT_ASK_REFRESH_MS = 60_000L
+/** After a failed read, the next try comes this soon. */
+const val VISIT_ASK_RETRY_MS = 10_000L
 
 /** Test tag on each ask's card. */
 const val VISIT_ASK_ROW_TAG = "visit-ask-row"
@@ -157,7 +159,8 @@ fun rememberVisitAskQueue(enabled: Boolean, refreshMs: Long = VISIT_ASK_REFRESH_
         if (!enabled) return@LaunchedEffect
         while (true) {
             readVisitAsks(state)
-            delay(refreshMs)
+            // A failed read tries again soon, as the Retry tip says; a good one waits the floor.
+            delay(if (state.failures.isNotEmpty()) VISIT_ASK_RETRY_MS else refreshMs)
         }
     }
     return state
