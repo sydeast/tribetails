@@ -80,6 +80,7 @@ import { loadVisitExtras } from '../src/lib/portalVisitLinks';
 import { hiddenFromHousehold } from '../src/lib/quoteDecision';
 import { isSessionBillable } from '../src/lib/sessionInvoicing';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
+import { INVOICE_TERMS_CODES } from '../src/lib/invoiceTerms';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -837,10 +838,15 @@ describe('#2258 convertedQuoteTermsSource (the rule each Turn into invoice confi
     });
   });
   it('carries the quote own code, the invoice-date counts included', () => {
-    for (const code of ['due_on_receipt', 'net_30', 'net_7_after_last_visit', 'net_3_before_first_visit'] as const) {
+    // Every code but custom, so a code added to the table later is covered too.
+    const coded = INVOICE_TERMS_CODES.filter((code) => code !== 'custom');
+    expect(coded).toHaveLength(INVOICE_TERMS_CODES.length - 1);
+    for (const code of coded) {
       expect(convertedQuoteTermsSource({ termsCode: ` ${code} `, dueDate: '2026-07-04' }, 'net_14_after_last_visit')).toEqual(
         { kind: 'quote', code },
       );
+      // With no due date stored, the code still decides.
+      expect(convertedQuoteTermsSource({ termsCode: code }, 'due_on_last_visit')).toEqual({ kind: 'quote', code });
     }
   });
   it('takes the business setting when the quote has no terms, or a code that is not one of ours', () => {
