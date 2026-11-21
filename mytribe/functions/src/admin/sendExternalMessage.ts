@@ -140,11 +140,15 @@ export interface ProviderSend {
 /**
  * The consent gate and the provider send, with nothing recorded yet.
  *
- * THROWING MEANS NOTHING WENT OUT. Every refusal here (a recipient that cannot
- * be normalized, a hard bounce, an opt-out, the provider saying no) happens
- * before or instead of the send, so a caller holding a claim on something, as
- * `admin/sendGeneratedDraft.ts` does on a draft, may let go of it on a throw.
  * Returning means the provider took the message.
+ *
+ * A THROW DOES NOT ALWAYS MEAN NOTHING WENT OUT. A refusal made here (a
+ * recipient that cannot be normalized, a hard bounce, an opt-out) and the
+ * provider saying no both happen before or instead of the send. A timeout or a
+ * dropped connection is thrown as `unavailable` too, and that can follow a
+ * request the provider accepted. A caller holding a claim on something, as
+ * `admin/sendGeneratedDraft.ts` does on a draft, lets go of it only when
+ * `nothingWentOut` there says so, never on a throw alone.
  */
 export async function sendThroughProvider(args: ParsedArgs): Promise<ProviderSend> {
   let normalized: string;

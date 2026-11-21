@@ -5,6 +5,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { draftMessageChannel, draftSendState, type DraftMessageChannel } from '../lib/generatedDraftType';
+import { SMTP2GO_NO_VERDICT_MESSAGE } from '../lib/providerFailure';
 import {
   Args as ExternalArgs,
   recordExternalSend,
@@ -147,17 +148,30 @@ const NEVER_CONNECTED: ReadonlySet<string> = new Set([
  *                          opt-out, an address that cannot be normalized)
  *   an HTTP status         the provider answered, and the answer was no
  *   no transport code      the provider answered no in its body (smtp2go's
- *                          "no sends succeeded", its HTTP errors), or the call
+ *                          list of failures, its HTTP errors), or the call
  *                          was never dialled (a missing secret)
  *   never connected        see `NEVER_CONNECTED`
  *
- * What is left is a transport failure after the request may have gone: not
- * known, so not this. `sendThroughProvider` puts the provider's status and code
- * on `details` (`lib/providerFailure.ts`).
+ * What is left is not known, so not this:
+ *
+ *   a transport failure    after the request may have gone. `sendThroughProvider`
+ *                          puts the provider's status and code on `details`
+ *                          (`lib/providerFailure.ts`).
+ *   a 2xx with no verdict  smtp2go took the request and answered 2xx, and the
+ *                          answer could not be read or said neither yes nor
+ *                          no. `lib/email.ts` throws that with no status and no
+ *                          code, so it is told by its one fixed line
+ *                          (`SMTP2GO_NO_VERDICT_MESSAGE`). A 2xx is what a send
+ *                          that was taken looks like.
  */
 export function nothingWentOut(err: unknown): boolean {
-  const e = err as { code?: unknown; details?: { providerStatus?: unknown; providerCode?: unknown } } | null;
+  const e = err as {
+    code?: unknown;
+    message?: unknown;
+    details?: { providerStatus?: unknown; providerCode?: unknown };
+  } | null;
   if (e?.code !== 'unavailable') return true;
+  if (e.message === SMTP2GO_NO_VERDICT_MESSAGE) return false;
   if (typeof e.details?.providerStatus === 'number') return true;
   const code = e.details?.providerCode;
   if (typeof code !== 'string') return true;

@@ -46,6 +46,7 @@ import { deleteGeneratedDraftHandler } from '../src/admin/kinTaleDrafts';
 import { draftSendState, draftWentOut, draftMessageChannel } from '../src/lib/generatedDraftType';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { wrapAdminCallable } from '../src/lib/wrapAdminCallable';
+import { SMTP2GO_NO_VERDICT_MESSAGE } from '../src/lib/providerFailure';
 
 const auditMock = writeAuditEntry as unknown as ReturnType<typeof vi.fn>;
 
@@ -432,6 +433,40 @@ describe('sendGeneratedDraft: when the send gets no answer', () => {
     for (const code of ['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'UND_ERR_SOCKET']) {
       expect(nothingWentOut(unavailable({ providerCode: code })), code).toBe(false);
     }
+    // smtp2go answered 2xx with no verdict in it: not known either. The same
+    // codeless error with a refusal in words is still a no.
+    expect(nothingWentOut({ code: 'unavailable', message: SMTP2GO_NO_VERDICT_MESSAGE, details: { channel: 'email' } })).toBe(false);
+    expect(
+      nothingWentOut({ code: 'unavailable', message: 'smtp2go send failed: Recipient address rejected', details: { channel: 'email' } }),
+    ).toBe(true);
+  });
+
+  it('a 2xx from smtp2go that could not be read keeps the claim: it is not sent again', async () => {
+    const { docs } = db({ 'generated_drafts/d1': { ...EMAIL_DRAFT }, ...HOUSEHOLD });
+    // What `lib/email.ts` throws for a 2xx whose body is not JSON: no status, no code.
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error(SMTP2GO_NO_VERDICT_MESSAGE));
+
+    await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: DRAFT_SEND_UNCONFIRMED_MESSAGE,
+      details: { code: DRAFT_SEND_UNCONFIRMED },
+    });
+    const after = docs['generated_drafts/d1']!;
+    expect(after['status']).toBe('approved');
+    expect(String(after['sendUnconfirmedAt']) > '').toBe(true);
+    expect(draftSendState(after)).toBe('sending');
+
+    await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({ details: { code: DRAFT_SEND_UNCONFIRMED } });
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('a 2xx from smtp2go that names its failures is a no: the draft is unsent again', async () => {
+    const { docs } = db({ 'generated_drafts/d1': { ...EMAIL_DRAFT }, ...HOUSEHOLD });
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('smtp2go send failed: Recipient address rejected'));
+
+    await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({ code: 'unavailable' });
+    expect(draftSendState(docs['generated_drafts/d1']!)).toBe('unsent');
+    expect(docs['generated_drafts/d1']).not.toHaveProperty('sendUnconfirmedAt');
   });
 });
 
