@@ -988,3 +988,32 @@ describe('Inbox on the glass ground (#755)', () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * The business line's voicemails, calls, texts and emails are the owner's.
+ * The rules give an Auntie none of the four reads, so the Channels panel
+ * showed her four failed loads, and a reply from it is refused too. The panel
+ * is not mounted for her and its listeners are never opened. Her household
+ * conversations stay.
+ */
+describe('Inbox for an Auntie', () => {
+  it('draws her conversations and no Channels panel, and opens none of its four reads', async () => {
+    listConversations.mockResolvedValue([thread({})]);
+    render(<Inbox isAuntie />);
+    expect(await screen.findByText('The Alvarez Household')).toBeInTheDocument();
+    expect(screen.queryByText('Channels')).toBeNull();
+    expect(screen.queryByRole('tablist', { name: 'Filter channels' })).toBeNull();
+    const paths = useCollection.mock.calls.map(([spec]) => (spec as { path: string }).path);
+    for (const path of ['voicemails', 'calls_log', 'sms_messages', 'emails']) {
+      expect(paths).not.toContain(path);
+    }
+  });
+
+  it('keeps the Channels panel for the owner', async () => {
+    listConversations.mockResolvedValue([thread({})]);
+    render(<Inbox />);
+    expect(await screen.findByText('Channels')).toBeInTheDocument();
+    const paths = useCollection.mock.calls.map(([spec]) => (spec as { path: string }).path);
+    expect(paths).toEqual(expect.arrayContaining(['voicemails', 'calls_log', 'sms_messages', 'emails']));
+  });
+});

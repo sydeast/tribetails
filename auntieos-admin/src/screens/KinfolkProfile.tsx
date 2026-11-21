@@ -461,7 +461,10 @@ export function KinfolkProfile({
             </Link>
             {/* #1603: the admin's portal invite lives here, on the profile
                 (operator ruling: no button on the Invites screen). */}
-            {loaded !== null && (
+            {/* An invite grants a person portal access, which is the owner's
+                to give: `inviteKinfolkToPortal` refuses an Auntie, so the
+                button is not drawn for her. */}
+            {loaded !== null && !isAuntie && (
               <PortalInviteButton kinfolkId={kinfolkId} householdName={heroName} email={loaded.email} />
             )}
             <GhostButton label="Edit" onClick={() => setView('edit')} />

@@ -342,6 +342,14 @@ interface OpenKin {
 }
 
 interface DirectoryProps {
+  /**
+   * An Auntie is signed in, from the access the admin layout resolved before
+   * the screen drew. Adding a household is the owner's (`createKinfolk` is not
+   * in `AUNTIE_ALLOWED_CALLABLES`, and the rules give a staff account no
+   * `kinfolk` create), so she gets no Add kinfolk button and the dialog is
+   * never mounted for her. Add kin stays: the rules let her create a Kin.
+   */
+  isAuntie?: boolean;
   /** The tab the screen opens on. Home's "Kin in care" card opens `kin` (#1601). */
   initialTab?: DirectoryTab;
   /** Open the Kin tab narrowed to pets in care (not inactive, not archived). */
@@ -394,6 +402,7 @@ interface DirectoryProps {
  * KinEditScreen), same pattern as FormSchemas' onSelect/onNew.
  */
 export function Directory({
+  isAuntie = false,
   onSelectKinfolk,
   onSelectKin,
   initialKinfolkId,
@@ -622,11 +631,13 @@ export function Directory({
           subtitle="Every household and kin on file."
           trailing={
             <div className="directory__header-actions">
-              <PrimaryButton
-                label="Add kinfolk"
-                onClick={() => setShowAddKinfolk(true)}
-                leading={<PlusGlyph />}
-              />
+              {!isAuntie && (
+                <PrimaryButton
+                  label="Add kinfolk"
+                  onClick={() => setShowAddKinfolk(true)}
+                  leading={<PlusGlyph />}
+                />
+              )}
               <GhostButton
                 label="Add kin"
                 onClick={() => setShowAddKin(true)}
@@ -863,7 +874,7 @@ export function Directory({
         </AsyncRegion>
       )}
 
-      {showAddKinfolk && (
+      {showAddKinfolk && !isAuntie && (
         <AddKinfolkDialog
           onClose={() => setShowAddKinfolk(false)}
           onCreated={() => {

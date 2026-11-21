@@ -486,7 +486,7 @@ const inboxRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'inbox',
   staticData: { title: navTitle('inbox') },
-  component: lazyRouteComponent(() => import('./screens/Inbox'), 'Inbox'),
+  component: lazyRouteComponent(() => import('./routes/InboxView'), 'InboxView'),
 });
 
 const settingsRoute = createRoute({
@@ -560,7 +560,7 @@ const vetClinicsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'vet-clinics',
   staticData: { title: navTitle('vetClinics') },
-  component: lazyRouteComponent(() => import('./screens/VetClinics'), 'VetClinics'),
+  component: lazyRouteComponent(() => import('./routes/VetClinicsView'), 'VetClinicsView'),
 });
 
 const mediaRoute = createRoute({

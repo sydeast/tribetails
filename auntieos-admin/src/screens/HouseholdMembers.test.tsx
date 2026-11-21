@@ -1154,3 +1154,91 @@ describe('HouseholdMembers secondary kinfolk with no portal access (Q3)', () => 
     expect(await screen.findByText(/Could not load: permission-denied/)).toBeInTheDocument();
   });
 });
+
+/**
+ * An Auntie reads who is in a household and works its secondary kinfolk. The
+ * rest of this screen is the owner's and the server refuses her each one:
+ * Invite to portal, Swap primary, Remove, the permission switches, the invite
+ * list and Revoke, and removing a secondary kinfolk. None is drawn for her and
+ * the invite list is never asked for.
+ */
+describe('HouseholdMembers for an Auntie', () => {
+  const primary = () => member({ uid: 'p1', role: 'PRIMARY', secondaryLabel: null, invitedEmail: 'dre@example.com' });
+
+  function mountAuntie(members: HouseholdMember[] = [primary(), member()]) {
+    api.listHouseholdMembers.mockResolvedValue(members);
+    api.listHouseholdInvites.mockResolvedValue([invite()]);
+    return render(
+      <HouseholdMembers
+        kinfolkId="fam1"
+        kinfolkName="the Walls"
+        kinfolkEmail="catch@hanasamku.com"
+        onBack={() => {}}
+        isAuntie
+      />,
+    );
+  }
+
+  it('lists the members and draws none of the owner controls', async () => {
+    mountAuntie();
+    expect(await screen.findByText('marcus@example.com')).toBeInTheDocument();
+    expect(screen.getByText('dre@example.com')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Invite to portal' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Swap primary' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(api.setMemberPermissions).not.toHaveBeenCalled();
+    expect(api.removeMember).not.toHaveBeenCalled();
+  });
+
+  it('reads each permission as On or Off instead of a switch', async () => {
+    mountAuntie([member()]);
+    const row = (await screen.findByText('marcus@example.com')).closest('li') as HTMLElement;
+    const direct = within(row).getByText('Direct messaging').closest('li') as HTMLElement;
+    const billing = within(row).getByText('Full billing').closest('li') as HTMLElement;
+    expect(within(direct).getByText('On')).toBeInTheDocument();
+    expect(within(billing).getByText('Off')).toBeInTheDocument();
+  });
+
+  it('draws no Invites panel and never asks for the invite list', async () => {
+    mountAuntie();
+    await screen.findByText('marcus@example.com');
+    expect(screen.queryByRole('heading', { name: 'Invites' })).toBeNull();
+    expect(screen.queryByText('jane@example.com')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Revoke/ })).toBeNull();
+    expect(api.listHouseholdInvites).not.toHaveBeenCalled();
+  });
+
+  it('keeps Add and Edit on a secondary kinfolk, and no Remove', async () => {
+    api.listSecondaryKinfolk.mockResolvedValue([
+      { personId: 'p9', name: 'Rae East', phone: null, email: null, access: 'NONE', memberUid: null },
+    ]);
+    mountAuntie([primary()]);
+    const row = (await screen.findByText('Rae East')).closest('[data-testid="secondary-kinfolk-row"]') as HTMLElement;
+    expect(within(row).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add secondary kinfolk' })).toBeInTheDocument();
+    expect(api.removeSecondaryKinfolk).not.toHaveBeenCalled();
+  });
+
+  it('does not point her at the invite when nobody has claimed the household', async () => {
+    mountAuntie([]);
+    expect(await screen.findByText('Nobody has claimed this household yet.')).toBeInTheDocument();
+    expect(screen.queryByText(/Invite to portal sends the claim link/)).toBeNull();
+  });
+
+  it('keeps every control for the owner', async () => {
+    api.listSecondaryKinfolk.mockResolvedValue([
+      { personId: 'p9', name: 'Rae East', phone: null, email: null, access: 'NONE', memberUid: null },
+    ]);
+    mount({ members: [primary(), member()] });
+    await screen.findByText('marcus@example.com');
+    expect(screen.getByRole('button', { name: 'Invite to portal' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Swap primary' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Direct messaging for marcus@example.com' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Invites' })).toBeInTheDocument();
+    await waitFor(() => expect(api.listHouseholdInvites).toHaveBeenCalledWith('fam1'));
+    const row = (await screen.findByText('Rae East')).closest('[data-testid="secondary-kinfolk-row"]') as HTMLElement;
+    expect(within(row).getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+  });
+});

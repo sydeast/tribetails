@@ -168,6 +168,12 @@ interface InboxProps {
    * selection instead; when it does, the in-screen thread view never opens.
    */
   onSelectThread?: (kinfolkId: string) => void;
+  /**
+   * An Auntie is signed in, from the access the admin layout resolved before
+   * the screen drew (`routes/InboxView.tsx`). She gets the household
+   * conversations and no Channels panel.
+   */
+  isAuntie?: boolean;
 }
 
 /**
@@ -226,7 +232,7 @@ interface InboxProps {
  * reads the thread and sends the reply (unless a caller overrides selection
  * via `InboxProps.onSelectThread`).
  */
-export function Inbox({ onSelectThread }: InboxProps) {
+export function Inbox({ onSelectThread, isAuntie = false }: InboxProps) {
   const [threads, setThreads] = useState<Async<ConversationSummary[]>>({ status: 'loading' });
   const [filter, setFilter] = useState<FilterKey>('all');
   // The thread/detail view: a sibling VIEW of this list (the Communicate.tsx /
@@ -538,7 +544,13 @@ export function Inbox({ onSelectThread }: InboxProps) {
         </AsyncRegion>
       </DenPanel>
 
-      <ChannelsPanel />
+      {/* The business line's voicemails, calls, texts and emails are the
+          owner's: the rules give an Auntie none of the four reads, so the panel
+          showed her four failed loads, and a reply from it goes through
+          `sendExternalMessage`, which refuses her. Not mounted for her, so the
+          four listeners are never opened. Her household conversations above
+          are hers. */}
+      {!isAuntie && <ChannelsPanel />}
     </div>
   );
 }

@@ -43,8 +43,16 @@ export function SecondaryKinfolkList({
   kinfolkId,
   reloadKey,
   onCountChange,
+  canRemove = true,
 }: {
   kinfolkId: string;
+  /**
+   * False for an Auntie. She lists, adds and edits a secondary kinfolk
+   * (`listSecondaryKinfolk`, `saveSecondaryKinfolk`); removing one is
+   * destructive and the owner's (`removeSecondaryKinfolk`), so the button is
+   * not drawn for her.
+   */
+  canRemove?: boolean;
   /**
    * #1602: how many people this list shows once it has read them, or null
    * while unknown. The panel's "N secondary" count and its empty sentence
@@ -170,7 +178,9 @@ export function SecondaryKinfolkList({
               </div>
               <div className="skin__actions">
                 <GhostButton label="Edit" onClick={() => open(p)} />
-                <GhostButton label="Remove" onClick={() => { setRemoveError(null); setRemoveTarget(p); }} className="hmembers__danger" />
+                {canRemove && (
+                  <GhostButton label="Remove" onClick={() => { setRemoveError(null); setRemoveTarget(p); }} className="hmembers__danger" />
+                )}
               </div>
             </li>
           ))}
