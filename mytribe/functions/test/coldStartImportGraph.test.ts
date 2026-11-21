@@ -322,8 +322,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * 464 (on top of #2323's 463): `lib/generatedDraftType.ts`, the reading of a
  * generated draft's type, used by `admin/kinTaleDrafts.ts` at file scope and by
  * `admin/sendHouseholdPush.ts`. It is three pure functions and imports nothing.
+ *
+ * 465 (on top of 464): `lib/caretakerMedia.ts`, which media files an Auntie
+ * works with, used by `admin/setMediaProfilePhoto.ts` and
+ * `admin/saveMediaTags.ts`. It is one list and one pure function and imports
+ * nothing.
  */
-const MAX_OWN_EAGER_MODULES = 464;
+const MAX_OWN_EAGER_MODULES = 465;
 
 interface Edge {
   spec: string;
