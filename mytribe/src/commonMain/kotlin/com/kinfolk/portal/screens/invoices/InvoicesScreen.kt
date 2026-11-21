@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
+import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.KinCalendarBadge
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinTintPill
@@ -48,6 +50,7 @@ import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.calendarBadgeFromLabel
 import com.kinfolk.portal.util.formatUsd
+import kotlinx.coroutines.launch
 
 /**
  * Invoices list, styled per ui-ideas/mytribe-invoices-2026-05-31.html: serif
@@ -81,6 +84,7 @@ fun InvoicesScreen(
     val data = controller.data
     val error = controller.error
     val statusBanner = controller.statusBanner
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(kinfolkId) { controller.reload() }
 
@@ -118,6 +122,8 @@ fun InvoicesScreen(
                     notCheckedId = controller.paymentNotChecked,
                     beingRecordedId = controller.paymentBeingRecorded,
                     payErrorFor = controller::payErrorFor,
+                    refreshing = controller.refreshing,
+                    onRetry = { if (!controller.refreshing) scope.launch { controller.reload() } },
                     onPay = { controller.startPay(it) },
                     onCheckAgain = { controller.checkPaymentAgain(it.id) },
                     onOpenInvoice = onOpenInvoice,
@@ -220,6 +226,8 @@ private fun OpenInvoicesCard(
     notCheckedId: String?,
     beingRecordedId: String?,
     payErrorFor: (String) -> String?,
+    refreshing: Boolean,
+    onRetry: () -> Unit,
     onPay: (Invoice) -> Unit,
     onCheckAgain: (Invoice) -> Unit,
     onOpenInvoice: (String) -> Unit,
@@ -228,6 +236,12 @@ private fun OpenInvoicesCard(
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             SectLabel("Open Invoices")
+            // #2442: a list in hand whose later read failed keeps its rows
+            // (the last copy read) and says the read failed, with a way to
+            // read again, as the web portal does.
+            if (data != null && error != null) {
+                RefreshFailedLine(refreshing = refreshing, onRetry = onRetry)
+            }
             when {
                 // #2442: only a list with nothing to show is a list that
                 // failed to load. A Pay that was refused prints its sentence
@@ -729,6 +743,31 @@ private fun CardEmpty(title: String, message: String) {
             style = type.sansBody.copy(color = KinfolkBrand.NavyMuted),
             modifier = Modifier.padding(horizontal = KinfolkSpacing.m),
         )
+    }
+}
+
+/**
+ * #2442: a later read of a list already on screen did not get through. The
+ * rows stay; this says so and reads again. The spinner shows while that read
+ * is out.
+ */
+@Composable
+private fun RefreshFailedLine(refreshing: Boolean, onRetry: () -> Unit) {
+    val type = LocalKinfolkTypography.current
+    Column(
+        modifier = Modifier.fillMaxWidth().testTag("invoices-refresh-failed"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+    ) {
+        Text(
+            "Couldn't refresh your invoices.",
+            style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+        )
+        if (refreshing) {
+            KinSpinner(size = 24.dp)
+        } else {
+            KinGhostButton(label = "Try again", onClick = onRetry)
+        }
     }
 }
 

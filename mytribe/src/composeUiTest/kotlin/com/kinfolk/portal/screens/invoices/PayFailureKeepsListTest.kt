@@ -112,9 +112,10 @@ class PayFailureKeepsListTest {
     }
 
     /**
-     * A list already in hand stays drawn when a later read of it fails, with
-     * no message over it: the title is for a list with nothing to show
-     * (#2442). The rows are the last copy that was read.
+     * A list already in hand stays drawn when a later read of it fails. The
+     * "Couldn't load invoices" title is for a list with nothing to show
+     * (#2442), but the failed read is still said, with a way to read again,
+     * as the web portal does. The rows are the last copy that was read.
      */
     @Test
     fun list_aLaterReadThatFails_keepsTheRowsItHas() = runComposeUiTest {
@@ -136,6 +137,46 @@ class PayFailureKeepsListTest {
         onNodeWithText("Couldn't load invoices").assertDoesNotExist()
         onNodeWithText("Invoice #1001").assertIsDisplayed()
         onNodeWithText("Invoice #1002").assertIsDisplayed()
+        // The failed read is not hidden: it is said over the rows it kept.
+        onNodeWithTag("invoices-refresh-failed").assertIsDisplayed()
+        onNodeWithText("Couldn't refresh your invoices.").assertIsDisplayed()
+
+        // Try again reads the list again; once a read gets through, the line goes.
+        val readsBefore = fake.calls.count { it.first == "getMyInvoices" }
+        stubTwoOpen(fake)
+        onNodeWithText("Try again").performClick()
+        waitForIdle()
+        kotlin.test.assertTrue(fake.calls.count { it.first == "getMyInvoices" } > readsBefore, "Try again read the list")
+        onNodeWithTag("invoices-refresh-failed").assertDoesNotExist()
+        onNodeWithText("Invoice #1001").assertIsDisplayed()
+    }
+
+    /** A first read that fails has nothing to keep: the title says so, and no refresh line is drawn over it. */
+    @Test
+    fun list_aFirstReadThatFails_drawsNoRefreshLine() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubError("getMyInvoices", IllegalStateException("network down"))
+        setThemedContent {
+            InvoicesScreen("The Foster", "3", PortalApi(fake))
+        }
+        waitForIdle()
+        onNodeWithText("Couldn't load invoices").assertIsDisplayed()
+        onNodeWithTag("invoices-refresh-failed").assertDoesNotExist()
+    }
+
+    /** A refused Pay is about one bill, not the list: no refresh line. */
+    @Test
+    fun list_aRefusedPay_drawsNoRefreshLine() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubTwoOpen(fake)
+        fake.stubError("payInvoice", IllegalStateException(refusal))
+        setThemedContent {
+            InvoicesScreen("The Foster", "3", PortalApi(fake))
+        }
+        waitForIdle()
+        onNodeWithText("Pay \$40.00").performClick()
+        waitForIdle()
+        onNodeWithTag("invoices-refresh-failed").assertDoesNotExist()
     }
     private fun invoice(payBlockedReason: String? = null) = Invoice(
         id = "inv-1",

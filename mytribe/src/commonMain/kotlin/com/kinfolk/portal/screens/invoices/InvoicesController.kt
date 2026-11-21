@@ -252,8 +252,19 @@ class InvoicesController internal constructor(
         // #2442: a fresh read of the list is a fresh look at every bill, so a
         // sentence about a tap made on the copy before it is dropped.
         clearActionErrors()
-        read(quietFailure = false)
+        refreshing = true
+        try {
+            read(quietFailure = false)
+        } finally {
+            refreshing = false
+        }
     }
+    /**
+     * #2442: a full read of the list is out. "Try again" on a list whose later
+     * read failed shows its spinner from this, so the wait is seen.
+     */
+    var refreshing by mutableStateOf(false)
+        private set
 
     /**
      * One read of the invoices, the pay methods and the credit history.
