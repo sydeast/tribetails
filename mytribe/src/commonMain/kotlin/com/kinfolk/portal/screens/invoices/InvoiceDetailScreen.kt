@@ -35,6 +35,7 @@ import com.kinfolk.portal.portal.InvoiceStatus
 import com.kinfolk.portal.portal.PayMethod
 import com.kinfolk.portal.portal.PayMethodKind
 import com.kinfolk.portal.portal.QuoteDecision
+import com.kinfolk.portal.portal.paymentRowMethodLabel
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
@@ -170,10 +171,26 @@ fun InvoiceDetailScreen(
                 DetailRow("Discount", invoice.discount)
                 DetailRow("Terms", invoice.terms)
                 DetailRow("Address", invoice.address)
-                if (!invoice.paymentsHistory.isNullOrBlank()) {
+                // #2334: each payment on this bill, how it was paid, the day and
+                // the amount; then the old system's free text on a migrated bill.
+                if (invoice.payments.isNotEmpty() || !invoice.paymentsHistory.isNullOrBlank()) {
                     Spacer(Modifier.height(KinfolkSpacing.s))
                     Text("Payment History", style = type.sansLabel)
-                    Text(invoice.paymentsHistory, style = type.sansBody)
+                    invoice.payments.forEach { p ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().testTag("payment-history-row"),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(paymentRowMethodLabel(p), style = type.sansBody)
+                                val day = invoiceDayLabel(p.paidDay)
+                                if (day.isNotEmpty()) Text(day, style = type.sansLabel)
+                            }
+                            Text(formatUsd(p.amountCents / 100.0), style = type.sansBody)
+                        }
+                    }
+                    invoice.paymentsHistory?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.sansBody) }
                 }
             }
         }
