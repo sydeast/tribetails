@@ -664,6 +664,34 @@ describe('#2290: a link to a household copy that is not there finds the Kin the 
   });
 });
 
+describe('#2350: tying an office record to a household card logs the visits that named the card, and writes none', () => {
+  it('a visit booked under the card id is listed for the script, left as it is, and moved by the script', async () => {
+    const FLAT = { kinfolkId: 'kf1', name: 'Biscuit', species: 'Dog', status: 'active', familyKinPath: '' };
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'kin/flat1': { ...FLAT },
+      'families/kf1/kin/k2': { name: 'Biscuit', status: 'active' },
+      // Booked while Biscuit was only a household card, so it stored the card id.
+      'kin_care_sessions/s1': { kinfolkId: 'kf1', kinIds: ['k2'], kinNames: ['Biscuit'], status: 'SCHEDULED' },
+      'kin_care_sessions/s2': { kinfolkId: 'kf2', kinIds: ['k2'] },
+    };
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs, writeThrough: true }).db);
+
+    expect(await adoptFlatKin('flat1', FLAT as any)).toEqual({ action: 'linked', familyKinPath: 'families/kf1/kin/k2' });
+    expect(docs['kin_care_sessions/s1']).toEqual({ kinfolkId: 'kf1', kinIds: ['k2'], kinNames: ['Biscuit'], status: 'SCHEDULED' });
+    const { logEvent } = await import('../src/lib/logger');
+    expect(logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'kin.visitIds.planned',
+        extra: expect.objectContaining({ kinfolkId: 'kf1', toWrite: 1, docs: ['kin_care_sessions/s1'] }),
+      }),
+    );
+    const { planHouseholdVisitKinIds, applyHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
+    expect(await applyHouseholdVisitKinIds(await planHouseholdVisitKinIds('kf1'))).toEqual({ written: 1, skippedOnRecheck: 0 });
+    expect(docs['kin_care_sessions/s1']).toEqual({ kinfolkId: 'kf1', kinIds: ['flat1'], kinNames: ['Biscuit'], status: 'SCHEDULED' });
+    expect(docs['kin_care_sessions/s2']?.['kinIds']).toEqual(['k2']);
+  });
+});
+
 describe('kinMirror field-ownership contract', () => {
   it('declares status parent-owned, so no reverse mirror can ever carry it', () => {
     expect(PARENT_OWNED_FIELDS).toContain('status');

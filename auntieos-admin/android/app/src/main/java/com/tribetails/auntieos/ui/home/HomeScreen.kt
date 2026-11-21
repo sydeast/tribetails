@@ -1035,7 +1035,7 @@ private fun TodayVisitCardView(
     onDepartureUndone: () -> Unit = {},
 ) {
     val session = card.session
-    val status = runCatching { VisitStatus.valueOf(session.status) }.getOrDefault(VisitStatus.SCHEDULED)
+    val status = VisitStatus.fromStored(session.status) ?: VisitStatus.SCHEDULED
     val kinName = card.kinfolk?.displayName ?: session.kinfolkName.ifBlank { "Unknown kinfolk" }
     val serviceName = catalog.nameOf(session.serviceType)
     val tone = bookingServiceTone(session.serviceType, catalog)

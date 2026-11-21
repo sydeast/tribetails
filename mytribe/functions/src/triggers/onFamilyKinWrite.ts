@@ -306,6 +306,20 @@ async function ensureFamilyLink(
 }
 
 /**
+ * #2350: whether the mirror tied this Kin to an admin record other than the
+ * one the write carried: a record minted for a new card, one taken by name, or
+ * one of its own after a crossed link. The Kin's stored id moves with it.
+ */
+export function linkWasWritten(
+  after: KinDoc,
+  mirrored: { action: string; flatDocId: string | null },
+): boolean {
+  if (mirrored.flatDocId === null) return false;
+  if (mirrored.action === 'created') return true;
+  return mirrored.flatDocId !== (typeof after.legacyKinId === 'string' ? after.legacyKinId : null);
+}
+
+/**
  * Watches `families/{kinfolkId}/kin/{kinId}`.
  *   - any write              -> `pets.updated` (debounced 30min)
  *   - status -> inactive set -> `pet.marked.inactive` (trigger, business)
@@ -327,7 +341,15 @@ export const onFamilyKinWrite = onDocumentWritten(
     // Mirror to the flat AuntieOS kin/ collection. Best-effort: a mirror fault
     // must not block the kinfolk-facing notification below.
     try {
-      await mirrorFamilyKinToFlat(kinfolkId, kinId, before, after);
+      const mirrored = await mirrorFamilyKinToFlat(kinfolkId, kinId, before, after);
+      if (linkWasWritten(after, mirrored)) {
+        // #2350: this Kin now has an admin record it did not have when this
+        // write was made, so its stored id moved off the card. A visit booked
+        // in between named the card. Logged for the operator's
+        // `backfill:visit-kin-ids`; nothing is written here.
+        const { recordVisitKinIdsAfterLink } = await import('../lib/visitKinIds.js');
+        await recordVisitKinIdsAfterLink(kinfolkId, 'onFamilyKinWrite');
+      }
     } catch (err) {
       logEvent({
         severity: 'warn',

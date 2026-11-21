@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tribetails.auntieos.data.model.visitStatusCode
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.ui.theme.KinfolkOrange
 import java.time.LocalTime
@@ -631,7 +632,7 @@ fun serviceTone(serviceType: String): AuntieStatusTone {
 }
 
 /** Human label for a KinCare session status. */
-fun statusLabel(status: String): String = when (status.uppercase()) {
+fun statusLabel(status: String): String = when (visitStatusCode(status)) {
     "COMPLETED" -> "done"
     "ON_MY_WAY" -> "on the way"
     "ARRIVED" -> "arrived"

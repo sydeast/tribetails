@@ -17,7 +17,15 @@ import com.tribetails.auntieos.data.contracts.ListVisitInternalNotesResult
 import com.tribetails.auntieos.data.contracts.ListVisitInternalNotesResultNote
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollToNode
+import com.tribetails.auntieos.data.model.KinCareReport
+import com.tribetails.auntieos.data.repository.StaffMember
 import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.verify
+import org.junit.Assert.assertEquals
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +71,12 @@ class KinCareDetailScreenTest {
     @After fun tearDown() = Dispatchers.resetMain()
     /** #1580: what `listVisitInternalNotes` answers in [mount]; a test sets it first. */
     private var internalNotes = ListVisitInternalNotesResult(notes = emptyList(), canMarkAdminOnly = false, hasBookingRecord = true)
+    /** #2227: what each subscription to the kinfolk-facing thread answers, in order; the last one repeats. */
+    private var kinfolkNoteAnswers: List<Result<List<BookingNotesRepository.BookingNote>>> = listOf(Result.success(emptyList()))
+    private var kinfolkNoteSubscriptions = 0
+    private lateinit var notesRepoRef: BookingNotesRepository
+    /** #2227: the roster that names staff writers. */
+    private var staff: List<StaffMember> = emptyList()
 
     private fun mount(
         kinCareRepo: KinCareRepository,
@@ -77,7 +91,11 @@ class KinCareDetailScreenTest {
         coEvery { repo.getKinByIds(any()) } returns Result.success(emptyMap())
         coEvery { repo.get411ByKinIds(any()) } returns Result.success(emptyMap())
         coEvery { repo.getBusinessSettings() } returns Result.success(settings)
-        coEvery { kinCareRepo.getReportsForSession(any()) } returns Result.success(emptyList())
+        // #2265: the KinTales read is the equality-only one. Left unmocked on
+        // purpose when a test sets its own answer first.
+        if (!stubbedVisitTales) coEvery { kinCareRepo.getReportsForVisit(any()) } returns Result.success(emptyList())
+        coEvery { kinCareRepo.listStaff() } returns Result.success(staff)
+        coEvery { kinCareRepo.getKinCareAssignment(any(), any(), any()) } returns Result.success(com.tribetails.auntieos.data.model.KinCareAssignment())
         // #760's route panel reads the breadcrumb subcollection, so this joins
         // the list above for the reason stated above rather than as
         // boilerplate: left to the relaxed default, `onSuccess` on the returned
@@ -85,7 +103,12 @@ class KinCareDetailScreenTest {
         // resolves, which is every test below that renders a visit.
         coEvery { kinCareRepo.getBreadcrumbs(any()) } returns Result.success(emptyList())
         val notesRepo = mockk<BookingNotesRepository>(relaxed = true)
-        every { notesRepo.streamKinfolkFacingNotes(any(), any()) } returns flowOf(emptyList())
+        notesRepoRef = notesRepo
+        every { notesRepo.streamVisitKinfolkNotes(any(), any(), any()) } answers {
+            val answer = kinfolkNoteAnswers[minOf(kinfolkNoteSubscriptions, kinfolkNoteAnswers.lastIndex)]
+            kinfolkNoteSubscriptions += 1
+            flowOf(answer)
+        }
         // #1580: the internal list is read through the callable, by session.
         coEvery { notesRepo.listVisitInternalNotes(any()) } returns Result.success(internalNotes)
         rule.setContent {
@@ -102,10 +125,133 @@ class KinCareDetailScreenTest {
                     repo = repo,
                     kinCareRepo = kinCareRepo,
                     notesRepo = notesRepo,
+                    currentUid = { "u-owner" },
                 )
             }
         }
         rule.waitForIdle()
+    }
+    private var stubbedVisitTales = false
+    /** Brings a row of the lazy list into view before it is asserted on. */
+    private fun scrollTo(text: String) {
+        rule.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText(text))
+    }
+    private val envelopeVisit = KinCareSession(
+        id = "vis_ses1",
+        kinfolkId = "fam1",
+        kinfolkName = "The Wrens",
+        serviceType = "Dog walk",
+        kinCareBatchId = "batch1",
+        kinCareVisitId = "visit1",
+    )
+    // --- #2265: the visit's KinTales -------------------------------------------------
+    @Test
+    fun `#2265 the KinTales panel reads by visit without an index and lists the sent ones only`() {
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(envelopeVisit)
+        stubbedVisitTales = true
+        coEvery { kinCareRepo.getReportsForVisit("vis_ses1") } returns Result.success(
+            listOf(
+                KinCareReport(id = "r1", sessionId = "vis_ses1", status = "SENT", bodyCopy = "Biscuit had a grand walk", sentAt = "2026-08-19T15:00:00Z"),
+                KinCareReport(id = "r2", sessionId = "vis_ses1", status = "DRAFT", bodyCopy = "Half-written draft"),
+            ),
+        )
+        coEvery { kinCareRepo.getReportsForSession(any()) } throws AssertionError("needs an index that does not exist")
+        mount(kinCareRepo)
+        scrollTo("Biscuit had a grand walk")
+        rule.onNodeWithText("Biscuit had a grand walk").assertIsDisplayed()
+        rule.onAllNodesWithText("Half-written draft").assertCountEquals(0)
+        // #1828: the sent time reads as a date with the month as a word, never the stored ISO text.
+        rule.onAllNodesWithText("2026-08-19T15:00:00Z").assertCountEquals(0)
+        rule.onNodeWithText("Aug 19", substring = true).assertIsDisplayed()
+        coVerify(exactly = 0) { kinCareRepo.getReportsForSession(any()) }
+    }
+    @Test
+    fun `#2265 a visit with no sent KinTale says none were sent`() {
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(envelopeVisit)
+        mount(kinCareRepo)
+        scrollTo("No KinTales sent yet during this KinCare.")
+        rule.onNodeWithText("No KinTales sent yet during this KinCare.").assertIsDisplayed()
+    }
+    @Test
+    fun `#2265 a failed KinTales read says so with Try again, and Try again reads again`() {
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(envelopeVisit)
+        stubbedVisitTales = true
+        var reads = 0
+        coEvery { kinCareRepo.getReportsForVisit("vis_ses1") } answers {
+            reads += 1
+            if (reads == 1) Result.failure(RuntimeException("FAILED_PRECONDITION: The query requires an index"))
+            else Result.success(listOf(KinCareReport(id = "r1", status = "SENT", bodyCopy = "Second read landed")))
+        }
+        mount(kinCareRepo)
+        scrollTo(VISIT_TALES_FAILED)
+        rule.onNodeWithText(VISIT_TALES_FAILED).assertIsDisplayed()
+        rule.onAllNodesWithText("No KinTales sent yet during this KinCare.").assertCountEquals(0)
+        // Plain words, never the raw Firestore message.
+        rule.onAllNodesWithText("FAILED_PRECONDITION: The query requires an index", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("Try again").assertCountEquals(1)
+        rule.onNodeWithText("Try again").performClick()
+        rule.waitForIdle()
+        scrollTo("Second read landed")
+        rule.onNodeWithText("Second read landed").assertIsDisplayed()
+        rule.onAllNodesWithText(VISIT_TALES_FAILED).assertCountEquals(0)
+    }
+    // --- #2227: the visit's kinfolk-facing notes -------------------------------------
+    @Test
+    fun `#2227 the kinfolk-facing panel lists the household's and the office's notes, by writer`() {
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(envelopeVisit)
+        staff = listOf(StaffMember(uid = "u-owner", displayName = "Syd", email = null))
+        kinfolkNoteAnswers = listOf(
+            Result.success(
+                listOf(
+                    BookingNotesRepository.BookingNote(id = "n1", authorRole = "kinfolk", body = "Side gate code changed", createdAtMs = 1_000L),
+                    BookingNotesRepository.BookingNote(id = "request-accepted", authorUid = "u-owner", authorRole = "admin", body = "See you Tuesday", createdAtMs = 2_000L),
+                ),
+            ),
+        )
+        mount(kinCareRepo)
+        scrollTo("Side gate code changed")
+        rule.onNodeWithText("Side gate code changed").assertIsDisplayed()
+        rule.onNodeWithText("See you Tuesday").assertIsDisplayed()
+        rule.onAllNodesWithText("Kinfolk").onFirst().assertIsDisplayed()
+        rule.onNodeWithText("Syd").assertIsDisplayed()
+        rule.onAllNodesWithText("No kinfolk-facing notes yet.").assertCountEquals(0)
+        verify { notesRepoRef.streamVisitKinfolkNotes("fam1", "batch1", "visit1") }
+    }
+    @Test
+    fun `#2227 a failed notes read says so with Try again, and Try again listens again`() {
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(envelopeVisit)
+        kinfolkNoteAnswers = listOf(
+            Result.failure(RuntimeException("PERMISSION_DENIED")),
+            Result.success(listOf(BookingNotesRepository.BookingNote(id = "n1", authorRole = "kinfolk", body = "Back again"))),
+        )
+        mount(kinCareRepo)
+        scrollTo(KINFOLK_NOTES_FAILED)
+        rule.onNodeWithText(KINFOLK_NOTES_FAILED).assertIsDisplayed()
+        rule.onAllNodesWithText("No kinfolk-facing notes yet.").assertCountEquals(0)
+        rule.onAllNodesWithText("PERMISSION_DENIED", substring = true).assertCountEquals(0)
+        rule.onNodeWithText("Try again").performClick()
+        rule.waitForIdle()
+        scrollTo("Back again")
+        rule.onNodeWithText("Back again").assertIsDisplayed()
+        rule.onAllNodesWithText(KINFOLK_NOTES_FAILED).assertCountEquals(0)
+        assertEquals(2, kinfolkNoteSubscriptions)
+    }
+    @Test
+    fun `#2227 a visit with no booking request says it has no notes to show, and reads nothing`() {
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(
+            envelopeVisit.copy(kinCareBatchId = null, kinCareVisitId = null),
+        )
+        mount(kinCareRepo)
+        scrollTo(KINFOLK_NOTES_NO_RECORD)
+        rule.onNodeWithText(KINFOLK_NOTES_NO_RECORD).assertIsDisplayed()
+        rule.onAllNodesWithText("No kinfolk-facing notes yet.").assertCountEquals(0)
+        assertEquals(0, kinfolkNoteSubscriptions)
     }
 
     /**
