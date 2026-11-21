@@ -419,6 +419,22 @@ describe('#2088 turning a quote into an invoice keeps its visits', () => {
     expect(inv['dueDate']).toBe('2026-06-20');
   });
 
+  it('#2509: a due date typed in Edit on "Due on receipt" survives Turn into invoice', async () => {
+    const ctx = settingWorld();
+    const invoiceId = await quoteWithTerms('17000000030', { termsCode: 'due_on_receipt' });
+    expect((await docOf(ctx, `invoices/${invoiceId}`))['dueDate']).toBe('2026-06-10');
+    // Edit: the terms are left alone, only the due date is typed.
+    await updateInvoiceHandler(admin({ invoiceId, patch: { dueDate: '2026-06-24' } }));
+    const edited = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(edited['termsCode']).toBe('custom');
+    expect(edited['terms']).toBe('Due by the date shown on this invoice');
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('custom');
+    expect(inv['terms']).toBe('Due by the date shown on this invoice');
+    expect(inv['dueDate']).toBe('2026-06-24');
+  });
+
   it('#1966: a due date the office picked by hand survives the change', async () => {
     const ctx = world({
       'business_settings/business_settings': { invoicePaymentTerms: 'net_30_after_last_visit' },

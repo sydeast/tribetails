@@ -206,6 +206,54 @@ class InvoiceEditTest {
         assertEquals("custom", patch["termsCode"]!!.jsonPrimitive.content)
         assertEquals("2026-12-01", patch["dueDate"]!!.jsonPrimitive.content)
     }
+
+    // ── #2509: a due date typed beside rule terms is picked by hand ────────────
+    private fun onReceipt() = invoiceFromJson(
+        """{"_id":"inv3","invoiceNumber":"1044","date":"2026-10-01","dueDate":"2026-10-01","terms":"Due on receipt",
+           "termsCode":"due_on_receipt","total":40.0,"amountDue":40.0,"status":"open","editScope":"metadataOnly"}""",
+    )
+
+    @Test
+    fun aDueDateTypedBesideRuleTermsMovesThePickerToCustomAndSendsIt() {
+        val inv = onReceipt()
+        val draft = invoiceEditDraftOf(inv)!!.withTypedDueDate("2026-10-15")
+        assertEquals(InvoiceTermsCode.CUSTOM, draft.termsCode)
+        val patch = patchOf(inv, draft)
+        assertEquals("custom", patch["termsCode"]!!.jsonPrimitive.content)
+        assertEquals("2026-10-15", patch["dueDate"]!!.jsonPrimitive.content)
+        assertFalse(patch.containsKey("terms"))
+    }
+    @Test
+    fun typedBackToTheStoredDateTheRuleReturnsAndNothingIsSent() {
+        val inv = onReceipt()
+        val draft = invoiceEditDraftOf(inv)!!.withTypedDueDate("2026-10-15").withTypedDueDate("2026-10-01")
+        assertEquals(InvoiceTermsCode.DUE_ON_RECEIPT, draft.termsCode)
+        assertEquals("Nothing has changed yet.", invoiceEditPatchOf(inv, draft).error)
+    }
+    @Test
+    fun pickingTheRuleAgainAfterTypingHandsTheDueDateBack() {
+        val inv = onReceipt()
+        val draft = invoiceEditDraftOf(inv)!!
+            .withTypedDueDate("2026-10-15")
+            .withPickedTerms(InvoiceTermsCode.DUE_ON_RECEIPT)
+        assertEquals("2026-10-01", draft.dueDate)
+        assertEquals("Nothing has changed yet.", invoiceEditPatchOf(inv, draft).error)
+    }
+    @Test
+    fun aTypedDateBeforeTheInvoiceDateIsRefusedOnceItIsPickedByHand() {
+        val inv = onReceipt()
+        val draft = invoiceEditDraftOf(inv)!!.withTypedDueDate("2026-09-20")
+        assertEquals(DUE_BEFORE_INVOICE_DATE, invoiceEditDueOrderProblem(draft))
+    }
+    @Test
+    fun termsWithNoCodeKeepTheirWordsWhenADueDateIsTyped() {
+        val inv = itemized(scope = "metadataOnly")
+        val draft = invoiceEditDraftOf(inv)!!.withTypedDueDate("2026-10-20")
+        assertNull(draft.termsCode)
+        val patch = patchOf(inv, draft)
+        assertEquals("2026-10-20", patch["dueDate"]!!.jsonPrimitive.content)
+        assertFalse(patch.containsKey("termsCode"))
+    }
     @Test
     fun billedTotalLeavesOutDraftsAndQuotes() {
         val open = itemized().copy(status = "open", total = 40.0)
