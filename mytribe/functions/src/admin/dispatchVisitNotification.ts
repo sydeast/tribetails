@@ -346,6 +346,9 @@ export async function dispatchVisitNotificationCore(
   };
   if (args.etaMinutes !== undefined) data.etaMinutes = args.etaMinutes;
   if (args.reportPreviewUrl) data.reportPreviewUrl = args.reportPreviewUrl;
+  // #2487: the KinTale a `report_sent` announces, so the notice opens that
+  // KinTale (the dispatcher targets a `taleId` before a visit) and names its Kin.
+  if (args.event === 'report_sent' && args.reportId) data.taleId = args.reportId;
 
   const enqueued = await enqueueNotificationDetailed({
     key,

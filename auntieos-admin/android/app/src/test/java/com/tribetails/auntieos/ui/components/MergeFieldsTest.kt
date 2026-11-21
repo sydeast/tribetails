@@ -108,8 +108,8 @@ class MergeFieldsTest {
     @Test
     fun `substitution fills a bound token and leaves an unbound one in braces`() {
         assertEquals(
-            "Hi Sandy Wren, see {{link}}.",
-            substituteMergeFields("Hi {{kinfolkName}}, see {{link}}.", ENRICHABLE_SAMPLE),
+            "Hi Sandy Wren, see {{score}}.",
+            substituteMergeFields("Hi {{kinfolkName}}, see {{score}}.", ENRICHABLE_SAMPLE),
         )
     }
 
@@ -140,6 +140,7 @@ class MergeFieldsTest {
                 "kinName",
                 "kinfolkEmail",
                 "kinfolkName",
+                "link",
                 "notes",
                 "serviceType",
             ),
@@ -155,8 +156,9 @@ class MergeFieldsTest {
     }
 
     @Test
-    fun `leaves an emitter-supplied token such as link unbound`() {
-        assertNull(ENRICHABLE_SAMPLE["link"])
+    fun `leaves an emitter-supplied token such as score unbound`() {
+        // #2487: `link` is filled for every notice at send, so it is bound.
+        assertNull(ENRICHABLE_SAMPLE["score"])
     }
 
     @Test

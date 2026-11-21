@@ -1,3 +1,4 @@
+import { DIRECT_SEND_KEYS } from '../../src/notifications/catalogKeys';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -42,10 +43,15 @@ describe('notification seed templates: no dead link placeholders', () => {
     expect(contentToText(entry.emailHeadline, entry.emailContent)).toMatch(/\{\{link\}\}/);
   });
 
-  it('{{link}} appears nowhere outside auth.password.reset (no other key claims a link it never gets)', () => {
+  // #2487: `{{link}}` is filled for every catalog notice by the channel trigger
+  // (notifications/noticeLink.ts). A direct send (`sendFromTemplate`) never
+  // gets one, so only those seeds must not print it; their links are their
+  // own (`claimUrl`, `verifyUrl`, `auntieReviewUrl`).
+  it('{{link}} appears in no direct-send seed (no key claims a link it never gets)', () => {
+    const direct = new Set(DIRECT_SEND_KEYS.map((d) => d.key));
     const offenders: string[] = [];
     for (const key of keys) {
-      if (key === 'auth.password.reset') continue;
+      if (!direct.has(key)) continue;
       const dir = join(seedsDir, key);
       for (const file of readdirSync(dir)) {
         const raw = readFileSync(join(dir, file), 'utf8');

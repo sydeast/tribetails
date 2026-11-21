@@ -217,7 +217,7 @@ describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
     expect(updated?.data).toMatchObject({ status: 'EMAIL_SENT' });
   });
 
-  it('falls back to "Your Kin Parent" when the caller has no name on their token', async () => {
+  it('falls back to "Your household" when the caller has no name on their token', async () => {
     const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { addSecondaryContactHandler } = await import('../src/portal/addSecondaryContact');
@@ -226,7 +226,8 @@ describe('addSecondaryContactHandler — invite emails (#1018 item 3)', () => {
       auth: { uid: 'u1' },
     } as any);
     const call = mocks.sendMock.mock.calls.find((c) => c[0] === 'invite.secondary')!;
-    expect((call[2] as Record<string, unknown>).primaryDisplayName).toBe('Your Kin Parent');
+    // #2487: a person is Kinfolk, never Kin.
+    expect((call[2] as Record<string, unknown>).primaryDisplayName).toBe('Your household');
   });
 
   it('sends invite.primary-receipt to the caller\'s own token email', async () => {

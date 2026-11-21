@@ -54,6 +54,27 @@ describe('sendFromTemplate', () => {
     expect(sendMock.mock.calls[0][0].data).toEqual({ Business: 'Given', business: 'given' });
   });
 
+  it('#2487: fills {{link}} on a direct send with the send\'s own link, and keeps a caller value', async () => {
+    tplGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ subject: 'Your invite', body: 'Accept it: {{link}}', html: null }),
+    });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.primary', 'a@b.com', { claimUrl: 'https://kinfolk.tribetails.com/claim?invite=i1' });
+    expect(sendMock.mock.calls[0][0].data.link).toBe('https://kinfolk.tribetails.com/claim?invite=i1');
+
+    sendMock.mockClear();
+    await sendFromTemplate('invite.primary', 'a@b.com', { link: 'https://given', claimUrl: 'https://other' });
+    expect(sendMock.mock.calls[0][0].data.link).toBe('https://given');
+  });
+
+  it('#2487: leaves the data alone when the template prints no link', async () => {
+    tplGet.mockResolvedValue({ exists: true, data: () => ({ subject: 'Hi', body: 'Plain', html: null }) });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.primary', 'a@b.com', { claimUrl: 'https://x' });
+    expect(sendMock.mock.calls[0][0].data).toEqual({ claimUrl: 'https://x' });
+  });
+
   it('throws fail-loud when template missing', async () => {
     tplGet.mockResolvedValue({ exists: false });
     const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');

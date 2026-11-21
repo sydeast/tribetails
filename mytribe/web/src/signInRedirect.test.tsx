@@ -67,6 +67,9 @@ vi.mock('./screens/InvoiceDetail', () => ({ InvoiceDetail: () => <div>THE INVOIC
 vi.mock('./screens/KinDetail', () => ({ KinDetail: () => <div>THE KIN</div> }));
 vi.mock('./screens/Messages', () => ({ Messages: () => <div>THE MESSAGES</div> }));
 vi.mock('./screens/NotificationsList', () => ({ NotificationsList: () => <div>THE NOTIFICATIONS</div> }));
+// #2487: a notice about a whole request links to the schedule, one about the household to its page.
+vi.mock('./screens/Schedule', () => ({ Schedule: () => <div>THE SCHEDULE</div> }));
+vi.mock('./screens/TribeHub', () => ({ TribeHub: () => <div>THE TRIBE</div> }));
 
 /** jsdom reports a live connection by default; these two say otherwise. */
 function setOnline(online: boolean): void {
@@ -198,6 +201,9 @@ describe('#1384 portal sign-in keeps the deep link', () => {
     ['Messages', '/messages', 'THE MESSAGES'],
     // #2371: a cut text message links to its own notice entry.
     ['a notice entry', '/notifications?entry=n1', 'THE NOTIFICATIONS'],
+    // #2487: the email button and text of a whole request, and of a household notice.
+    ['a whole request', '/schedule', 'THE SCHEDULE'],
+    ['the household', '/tribe', 'THE TRIBE'],
   ])('#2259: a push about %s tapped while signed out opens it after sign-in', async (_label, route, landed) => {
     window.history.replaceState(null, '', route);
     await boot();
