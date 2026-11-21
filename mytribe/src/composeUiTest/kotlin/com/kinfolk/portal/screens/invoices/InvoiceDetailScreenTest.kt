@@ -2,14 +2,17 @@
 
 package com.kinfolk.portal.screens.invoices
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
+import com.kinfolk.portal.portal.HouseholdPayment
 import com.kinfolk.portal.portal.Invoice
 import com.kinfolk.portal.portal.InvoiceLineItem
 import com.kinfolk.portal.portal.InvoiceStatus
@@ -107,6 +110,79 @@ class InvoiceDetailScreenTest {
         // Same mapping as the list chips: Open reads as "Pending", never "Open".
         onNodeWithText("Pending").assertIsDisplayed()
         onNodeWithText("Open").assertDoesNotExist()
+    }
+
+    // #2334: each payment on the bill, by what it was paid with, the day and the amount.
+    @Test
+    fun paymentHistory_listsEachPaymentByMethodDayAndAmount() = runComposeUiTest {
+        val paid = openInvoice().copy(
+            status = InvoiceStatus.Paid,
+            isPaid = true,
+            amountDue = 0.0,
+            payments = listOf(
+                HouseholdPayment("p1", "Klarna", "2026-11-20", 2500L),
+                HouseholdPayment("p2", "Online payment", "2026-11-01", 1000L),
+                HouseholdPayment("p3", "Account credit", null, 500L),
+            ),
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", paid, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Payment History").assertExists()
+        onNodeWithText("Klarna").assertExists()
+        onNodeWithText("Nov 20, 2026").assertExists()
+        onNodeWithText("\$25.00").assertExists()
+        onNodeWithText("Online payment").assertExists()
+        onNodeWithText("Account credit").assertExists()
+        onNodeWithText("stripe", substring = true, ignoreCase = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun paymentHistory_aStoredStripeThatSlippedThroughReadsOnlinePayment() = runComposeUiTest {
+        val paid = openInvoice().copy(
+            status = InvoiceStatus.Paid,
+            payments = listOf(HouseholdPayment("x", "stripe", "2026-11-20", 4000L)),
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", paid, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Online payment").assertExists()
+        onNodeWithText("stripe", substring = true, ignoreCase = true).assertDoesNotExist()
+    }
+
+    // #2334 / #2470: what was paid before the bill was brought over is one
+    // more line, "Paid before", with its amount and no day.
+    @Test
+    fun paymentHistory_broughtOverPaid_showsPaidBeforeWithAmountAndNoDay() = runComposeUiTest {
+        val paid = openInvoice().copy(
+            status = InvoiceStatus.Paid,
+            isPaid = true,
+            amountDue = 0.0,
+            payments = listOf(
+                HouseholdPayment("p1", "Cash", "2026-11-05", 1500L),
+                HouseholdPayment("paid-before", "Paid before", null, 2500L),
+            ),
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", paid, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Payment History").assertExists()
+        onNodeWithText("Cash").assertExists()
+        onNodeWithText("Nov 05, 2026").assertExists()
+        onNodeWithText("Paid before").assertExists()
+        onNodeWithText("\$25.00").assertExists()
+        onAllNodesWithTag("payment-history-row").assertCountEquals(2)
+    }
+    @Test
+    fun paymentHistory_noPaymentsAndNoLegacyText_drawsNoSection() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", openInvoice(), onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Payment History").assertDoesNotExist()
     }
 
     @Test

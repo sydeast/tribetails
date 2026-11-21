@@ -108,6 +108,7 @@ const LEGACY_INVOICE: GetMyInvoicesResult['open'][number] = {
   invoiceDiscountCents: null,
   // #2410: null on an invoice that can be paid.
   payBlockedReason: null,
+  payments: [],
   payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 

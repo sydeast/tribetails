@@ -241,6 +241,20 @@ describe('resolveUnappliedPayment: apply to another open invoice', () => {
     });
   });
 
+  it('#2334: the held row\'s actual method rides to the invoice row, and an old held row adds none', async () => {
+    const withMethod = seed({ payment: { ...unappliedRow, onlineMethod: 'klarna' } });
+    mocks.dbFn.mockReturnValue(withMethod.db);
+    await resolveUnappliedPaymentHandler(req(applyOnly));
+    const sub = withMethod.writes.find((w) => w.path.startsWith('invoices/inv_open/payments/'));
+    expect(sub?.data).toMatchObject({ method: 'stripe', onlineMethod: 'klarna' });
+
+    const old = seed();
+    mocks.dbFn.mockReturnValue(old.db);
+    await resolveUnappliedPaymentHandler(req(applyOnly));
+    const oldSub = old.writes.find((w) => w.path.startsWith('invoices/inv_open/payments/'));
+    expect(oldSub?.data).not.toHaveProperty('onlineMethod');
+  });
+
   it('a partial apply leaves the invoice open with what is still due', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);

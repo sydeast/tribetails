@@ -163,7 +163,7 @@ function PaymentsPanel({
           <tbody>
             {payments.map((p) => (
               <tr key={p.paymentId}>
-                <td>{paymentMethodLabel(p.method)}</td>
+                <td>{paymentMethodLabel(p.method, p.methodLabel)}</td>
                 <td>{paymentDayLabel(p.paidAt)}</td>
                 <td>
                   {p.reference === null || p.reference.trim() === '' ? (
@@ -338,7 +338,7 @@ function PaymentsPanel({
                         <span className="invoice-ledger__note">held as credit</span>
                       )}
                     </td>
-                    <td>{paymentMethodLabel(row.method)}</td>
+                    <td>{paymentMethodLabel(row.method, row.methodLabel)}</td>
                     <td>
                       {row.reference.trim() === '' ? (
                         <span className="invoice-ledger__missing">none</span>

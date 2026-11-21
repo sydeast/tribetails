@@ -129,6 +129,7 @@ object AndroidDemoFixtures {
                 appliedInvoiceId = "",
                 appliedInvoiceNumber = "",
                 method = "stripe",
+                methodLabel = "Card",
                 reference = "pi_3Ov1029",
                 date = "2026-05-28",
                 notes = "",

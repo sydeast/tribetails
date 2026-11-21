@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   offersPayment,
+  paymentHistoryOf,
+  paymentRowDayLabel,
+  paymentRowIsCredit,
+  paymentRowMethodLabel,
   calTileFor,
   creditTargetLabel,
   declinedRowLabel,
@@ -315,5 +319,24 @@ describe('#1848: how the portal names an invoice', () => {
     expect(invoiceNumberOrWords(null)).toBe('an invoice with no number');
     expect(invoiceNumberOrWords('')).toBe('an invoice with no number');
     expect(invoiceNumberOrWords(undefined)).toBe('an invoice with no number');
+  });
+});
+describe('Payment History rows (#2334)', () => {
+  it('reads the server words, and never a stored stripe or a blank', () => {
+    expect(paymentRowMethodLabel({ methodLabel: 'Klarna' })).toBe('Klarna');
+    expect(paymentRowMethodLabel({ methodLabel: 'stripe' })).toBe('Online payment');
+    expect(paymentRowMethodLabel({ methodLabel: '  ' })).toBe('Payment');
+  });
+  it('spells the day out, and says nothing for a row with none', () => {
+    expect(paymentRowDayLabel({ paidDay: '2026-11-20' })).toBe('Nov 20, 2026');
+    expect(paymentRowDayLabel({ paidDay: null })).toBeNull();
+  });
+  it('an older server with no payments key reads as no rows', () => {
+    expect(paymentHistoryOf({})).toEqual([]);
+    expect(paymentHistoryOf({ payments: null })).toEqual([]);
+  });
+  it('account credit is the credit tile', () => {
+    expect(paymentRowIsCredit({ methodLabel: 'Account credit' })).toBe(true);
+    expect(paymentRowIsCredit({ methodLabel: 'Card' })).toBe(false);
   });
 });

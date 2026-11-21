@@ -18,6 +18,7 @@ import { sendIdempotencyKeyRe } from '../lib/sendIdempotency';
 import { ACCOUNT_BALANCE_FIELD, readAccountBalanceCents } from '../lib/accountCredit';
 import { MAX_CREDIT_REASON_LENGTH, stageGivenCredit } from '../lib/creditLedger';
 import { planApply, stageApply, type ApplyOutcome } from '../lib/paymentApply';
+import { ONLINE_METHOD_FIELD } from '../lib/onlinePaymentMethod';
 import { invoiceLeadName } from '../lib/invoiceNaming';
 import { invoiceCancelled, invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
 import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
@@ -379,6 +380,11 @@ export async function resolveUnappliedPaymentHandler(
         paidAtIso: new Date(atMs).toISOString(),
         uid: actor.uid,
         noticeOwner: null,
+        // #2334: the actual online method rides from the held row to the
+        // invoice's own row, so the settlement names it too.
+        ...(typeof row[ONLINE_METHOD_FIELD] === 'string'
+          ? { rowExtras: { [ONLINE_METHOD_FIELD]: row[ONLINE_METHOD_FIELD] } }
+          : {}),
       });
     }
 

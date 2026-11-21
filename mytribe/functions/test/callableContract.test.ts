@@ -1211,6 +1211,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'ledgerPayments[].date',
       'ledgerPayments[].feeCents',
       'ledgerPayments[].method',
+      // #2334: the Method cell in plain words, never the stored 'stripe'.
+      'ledgerPayments[].methodLabel',
       'ledgerPayments[].notes',
       'ledgerPayments[].paymentId',
       'ledgerPayments[].proceedsCents',
@@ -1225,6 +1227,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'paidCents',
       'payments[].amountCents',
       'payments[].method',
+      // #2334: the Method cell in plain words, never the stored 'stripe'.
+      'payments[].methodLabel',
       'payments[].paidAt',
       'payments[].paymentId',
       'payments[].recordedBy',
@@ -1261,6 +1265,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'unlinkedKinfolkPayments[].date',
       'unlinkedKinfolkPayments[].feeCents',
       'unlinkedKinfolkPayments[].method',
+      // #2334: the Method cell in plain words, never the stored 'stripe'.
+      'unlinkedKinfolkPayments[].methodLabel',
       'unlinkedKinfolkPayments[].notes',
       'unlinkedKinfolkPayments[].paymentId',
       'unlinkedKinfolkPayments[].proceedsCents',
@@ -1299,6 +1305,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'payments[].kinfolkId',
       'payments[].kinfolkName',
       'payments[].method',
+      // #2334: the Method cell in plain words, never the stored 'stripe'.
+      'payments[].methodLabel',
       'payments[].notes',
       'payments[].paymentId',
       'payments[].proceedsCents',
@@ -1444,6 +1452,12 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     'payMethods[].label',
     'payMethods[].url',
     'paymentsHistory',
+    // #2334: the bill's Payment History, as the household may see it: how it
+    // was paid, the day and the amount. No reference, fee, notes or recorder.
+    'payments[].amountCents',
+    'payments[].methodLabel',
+    'payments[].paidDay',
+    'payments[].paymentId',
     // The household's answer to a quote (issue #385). Both halves ship: the
     // decision is what tells an accepted quote (status 'open') from an ordinary
     // invoice, and a declined one (status still 'quote') from one nobody has

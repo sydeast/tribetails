@@ -40,6 +40,16 @@ export interface InvoiceDtoPayMethod {
 }
 
 /**
+ * `InvoiceDtoPayment`, shared across callables.
+ */
+export interface InvoiceDtoPayment {
+  paymentId: string;
+  methodLabel: string;
+  paidDay: string | null;
+  amountCents: number;
+}
+
+/**
  * `InvoiceDto`, shared across callables.
  */
 export interface InvoiceDto {
@@ -75,6 +85,7 @@ export interface InvoiceDto {
   invoiceDiscountCents: number | null;
   payMethods: InvoiceDtoPayMethod[];
   payBlockedReason: string | null;
+  payments: InvoiceDtoPayment[];
 }
 
 // ---------- acceptQuote ----------
@@ -299,6 +310,7 @@ export interface GetInvoiceLedgerResultPayment {
   paidAt: string | null;
   recordedBy: string | null;
   sourcePaymentId: string | null;
+  methodLabel: string;
 }
 
 /**
@@ -329,6 +341,7 @@ export interface GetInvoiceLedgerResultLedgerPayment {
   appliedInvoiceId: string;
   appliedInvoiceNumber: string;
   method: string;
+  methodLabel: string;
   reference: string;
   date: string;
   notes: string;
@@ -459,6 +472,7 @@ export interface ListPaymentsResultPayment {
   appliedInvoiceId: string;
   appliedInvoiceNumber: string;
   method: string;
+  methodLabel: string;
   reference: string;
   date: string;
   notes: string;

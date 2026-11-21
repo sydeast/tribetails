@@ -69,6 +69,12 @@ data class InvoiceLedgerPayment(
     /** Which invoice the payment was applied to; blank when it touched no balance. */
     val appliedInvoiceId: String,
     val appliedInvoiceNumber: String,
+    /**
+     * #2334: the Method cell in the server's plain words (Card, Klarna, Affirm,
+     * "Online payment" for an old checkout payment). Blank from a server older
+     * than the field; [ledgerRowMethodLabel] then reads [method] itself.
+     */
+    val methodLabel: String = "",
 )
 
 /** The two payment lists the Payments panel draws. */
@@ -100,6 +106,7 @@ private fun JsonObject.toLedgerPayment(): InvoiceLedgerPayment = InvoiceLedgerPa
     tipBasis = s("tipBasis"),
     appliedCents = l("appliedCents"),
     method = s("method"),
+    methodLabel = s("methodLabel"),
     reference = s("reference"),
     date = s("date"),
     // Absent reads as false, like amountResolved: a row is not claimed to balance unchecked.
@@ -132,8 +139,24 @@ fun ledgerPaymentAmountLabel(p: InvoiceLedgerPayment): String =
 
 private fun usd(cents: Long): String = com.tribetails.auntieos.web.util.formatUsdCents(cents)
 
-/** The method, or a plain stand-in when none was recorded. */
-fun ledgerRowMethodLabel(p: InvoiceLedgerPayment): String = p.method.trim().ifEmpty { "no method recorded" }
+/** #2334: what a checkout payment with no stored method reads as, the server's own words. */
+const val ONLINE_PAYMENT_LABEL = "Online payment"
+
+/**
+ * The method in plain words, or a plain stand-in when none was recorded.
+ *
+ * #2334: the server's words win (Card, Klarna, Affirm). A server older than the
+ * field sends none, and the stored word for a checkout payment, `stripe`, is
+ * never shown: it reads "Online payment". The same words as Android's
+ * `paymentMethodLabel` and the web's.
+ */
+fun ledgerRowMethodLabel(p: InvoiceLedgerPayment): String {
+    val label = p.methodLabel.trim()
+    if (label.isNotEmpty()) return label
+    val stored = p.method.trim()
+    if (stored.equals("stripe", ignoreCase = true)) return ONLINE_PAYMENT_LABEL
+    return stored.ifEmpty { "no method recorded" }
+}
 
 private val LEDGER_MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 

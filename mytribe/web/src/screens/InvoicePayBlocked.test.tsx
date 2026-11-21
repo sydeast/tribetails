@@ -99,6 +99,7 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   subtotalCents: null,
   invoiceDiscountCents: null,
   payBlockedReason: null,
+  payments: [],
   payMethods: [CARD],
 };
 
