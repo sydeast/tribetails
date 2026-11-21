@@ -72,7 +72,7 @@ vi.mock('firebase-admin/firestore', async () => {
   };
 });
 
-import { stripeWebhookHandler, notPayableDetailOf } from '../src/billing/stripeWebhook';
+import { stripeWebhookHandler, notPayableDetailOf, declineAfterPayment, declineReasonOf } from '../src/billing/stripeWebhook';
 import { listUnappliedPaymentsHandler } from '../src/admin/listUnappliedPayments';
 import { resolveUnappliedPaymentHandler } from '../src/admin/resolveUnappliedPayment';
 import type { InvoiceDoc } from '../src/admin/markInvoicePaid';
@@ -239,6 +239,167 @@ describe('#2361: a declined card on an invoice that was cancelled or written off
     expect(await deliver('declined-1')).toBe(200);
     expect(notices('invoice.charge.failed')).toHaveLength(1);
     expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(0);
+  });
+
+  /**
+   * #2416 (lead decision 2026-11-21): a card payment on an invoice that cannot
+   * take one is the owner's alone to handle (#2345: held, the household told
+   * nothing), so a decline on one tells only the owner too. A draft is hidden
+   * from the household, a quote they have not accepted is not a bill yet, and
+   * there is nothing to pay on a credit. Asked in `cardHoldReason`'s order.
+   */
+  describe('#2416: a declined card on a draft, a quote or a credit', () => {
+    const NOT_SENT_LINE = 'A card was declined on invoice 1029, which was a draft or a quote, not a bill. No notice was sent to the household.';
+    const CREDIT_LINE = 'A card was declined on invoice 1029, which was a credit, not a bill. No notice was sent to the household.';
+
+    it.each([
+      ['a draft', { ...OPEN, status: 'draft' }, 'invoice-not-sent', NOT_SENT_LINE],
+      ['a quote saved unsent', { ...OPEN, status: 'draft', invoiceStatus: 'draft', quoteDraft: true }, 'invoice-not-sent', NOT_SENT_LINE],
+      ['a quote', { ...OPEN, status: 'quote' }, 'invoice-not-sent', NOT_SENT_LINE],
+      [
+        'a draft in the older status field only',
+        { kinfolkId: 'fam1', invoiceNumber: '1029', invoiceStatus: 'draft', total: 40, totalCents: 4000, amountDue: 40, amountDueCents: 4000 },
+        'invoice-not-sent',
+        NOT_SENT_LINE,
+      ],
+      ['a credit by its label', { ...OPEN, status: 'credit' }, 'invoice-credit', CREDIT_LINE],
+      [
+        'a credit with a negative balance',
+        { ...OPEN, status: 'credit', total: -25, totalCents: -2500, amountDue: -25, amountDueCents: -2500 },
+        'invoice-credit',
+        CREDIT_LINE,
+      ],
+      [
+        'a negative total and no balance stated',
+        { kinfolkId: 'fam1', invoiceNumber: '1029', status: 'open', total: -25 },
+        'invoice-credit',
+        CREDIT_LINE,
+      ],
+      [
+        'a credit already redeemed',
+        { ...OPEN, status: 'redeemed', total: -25, totalCents: -2500, amountDue: 0, amountDueCents: 0, creditRedeemedAt: 'ts' },
+        'invoice-credit',
+        CREDIT_LINE,
+      ],
+    ])('%s: the household is told nothing, and the owner gets one line', async (_label, invoice, reason, line) => {
+      docs[INVOICE] = { ...invoice };
+      declined(1);
+
+      expect(await deliver('declined-1')).toBe(200);
+      // Stripe's own retry of the same event writes nothing more.
+      expect(await deliver('declined-1')).toBe(200);
+
+      expect(notices('invoice.charge.failed')).toHaveLength(0);
+      expect(hooks.enqueue).not.toHaveBeenCalled();
+      expect(audits('BILLING_INVOICE_FAILED')).toHaveLength(0);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')[0]![0]).toMatchObject({
+        severity: 'info',
+        familyId: 'fam1',
+        description: line,
+        payload: { invoiceId: 'inv1', stripeEventId: 'evt_fail_1', reason },
+      });
+      expect(docs['stripeEvents/evt_fail_1']).toMatchObject({
+        appliedOutcome: 'FAILED_AFTER_PAYMENT',
+        declineAfterPaymentReason: reason,
+        noticeSkippedReason: 'declined-after-payment',
+      });
+      // Nothing written to the invoice, not even the order stamp.
+      expect(docs[INVOICE]).toEqual(invoice);
+    });
+
+    it('a retry after the line failed writes it with the same reason, not "already paid"', async () => {
+      docs[INVOICE] = { ...OPEN, status: 'draft' };
+      declined(1);
+      hooks.audit.mockRejectedValueOnce(new Error('activity log unavailable'));
+
+      expect(await deliver('declined-1')).toBe(500);
+      expect(await deliver('declined-1')).toBe(200);
+
+      const lines = audits('BILLING_CARD_DECLINED_AFTER_PAYMENT');
+      expect(lines).toHaveLength(2);
+      expect(lines[1]![0]).toMatchObject({ description: NOT_SENT_LINE, payload: { reason: 'invoice-not-sent' } });
+      expect(hooks.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('a credit line retried keeps its own reason too', async () => {
+      docs[INVOICE] = { ...OPEN, status: 'credit' };
+      declined(1);
+      hooks.audit.mockRejectedValueOnce(new Error('activity log unavailable'));
+
+      expect(await deliver('declined-1')).toBe(500);
+      expect(await deliver('declined-1')).toBe(200);
+
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')[1]![0]).toMatchObject({
+        description: CREDIT_LINE,
+        payload: { reason: 'invoice-credit' },
+      });
+    });
+
+    it.each([
+      ['put back to a draft', { status: 'draft' }, 'invoice-not-sent'],
+      ['made a credit', { status: 'credit' }, 'invoice-credit'],
+    ])('a decline whose notice never went out, retried after the invoice was %s, is closed as the owner line', async (_label, change, reason) => {
+      declined(1);
+      hooks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
+
+      expect(await deliver('declined-1')).toBe(500);
+      docs[INVOICE] = { ...docs[INVOICE]!, ...change };
+      expect(await deliver('declined-1')).toBe(200);
+
+      // The one try at the notice is the failed one; nothing after the change.
+      expect(notices('invoice.charge.failed')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')[0]![0].payload.reason).toBe(reason);
+      // The notice is closed as skipped, so a later retry, even with the
+      // invoice open again, sends nothing and writes no second line.
+      expect(docs['stripeEvents/evt_fail_1']).toMatchObject({ noticeSkippedReason: 'declined-after-payment' });
+      docs[INVOICE] = { ...docs[INVOICE]!, status: 'open' };
+      expect(await deliver('declined-1')).toBe(200);
+      expect(notices('invoice.charge.failed')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(1);
+    });
+
+    it('a quote the household accepted is an open invoice, and a decline on it still tells them', async () => {
+      docs[INVOICE] = { ...OPEN, status: 'open', quoteDecision: { decision: 'accepted', atMs: 1 } };
+      declined(1);
+      expect(await deliver('declined-1')).toBe(200);
+      expect(notices('invoice.charge.failed')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(0);
+    });
+
+    it('the line reads plainly with and without an invoice number', () => {
+      expect(cardDeclinedAfterPaymentWords('1029', 'invoice-not-sent')).toBe(NOT_SENT_LINE);
+      expect(cardDeclinedAfterPaymentWords('1029', 'invoice-credit')).toBe(CREDIT_LINE);
+      expect(cardDeclinedAfterPaymentWords('', 'invoice-not-sent')).toBe(
+        'A card was declined on an invoice with no number that was a draft or a quote, not a bill. No notice was sent to the household.',
+      );
+      expect(cardDeclinedAfterPaymentWords('', 'invoice-credit')).toBe(
+        'A card was declined on an invoice with no number that was a credit, not a bill. No notice was sent to the household.',
+      );
+    });
+
+    it('the decision, on its own: asked in the order cardHoldReason asks', () => {
+      const draft = { ...OPEN, status: 'draft' };
+      expect(declineAfterPayment(draft, false, 'fam1')).toEqual({ reason: 'invoice-not-sent', invoiceNumber: '1029' });
+      // A payment from the same checkout that landed is said first, as before.
+      expect(declineAfterPayment(draft, true, 'fam1')?.reason).toBe('payment-landed');
+      // Whose the invoice is comes ahead of what it says about itself.
+      expect(declineAfterPayment(draft, false, 'fam2')?.reason).toBe('invoice-other-household');
+      // Cancelled and written off ahead of draft, quote and credit.
+      expect(declineAfterPayment({ ...OPEN, status: 'cancelled', total: -25 }, false, 'fam1')?.reason).toBe('invoice-cancelled');
+      // A draft or a quote ahead of the paid label it may still carry.
+      expect(declineAfterPayment({ ...OPEN, status: 'quote', paymentStatus: 'paid' }, false, 'fam1')?.reason).toBe(
+        'invoice-not-sent',
+      );
+      expect(declineAfterPayment({ ...OPEN }, false, 'fam1')).toBeNull();
+    });
+
+    it('both reasons read back off the event record unchanged', () => {
+      expect(declineReasonOf('invoice-not-sent')).toBe('invoice-not-sent');
+      expect(declineReasonOf('invoice-credit')).toBe('invoice-credit');
+      expect(declineReasonOf('something-else')).toBe('invoice-paid');
+    });
   });
 
   describe("a declined checkout touches only its own household's invoice", () => {
