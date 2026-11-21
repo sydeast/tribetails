@@ -127,6 +127,9 @@ class KinTaleReportDeliveryTest {
         compose.onNodeWithText("Delivery").assertExists()
         compose.onNodeWithText("SENT VIA").assertExists()
         compose.onAllNodesWithText("RECEIPT").assertCountEquals0()
+        // #1817: the stored "catalog" marker reads as where the tale went.
+        compose.onNodeWithText("MyTribe").assertExists()
+        compose.onAllNodesWithText("catalog").assertCountEquals0()
     }
 }
 

@@ -973,7 +973,8 @@ private fun DeliveryPanel(report: KinCareReport) {
                 AuntieKeyValueRow(label = "Sent at", value = report.sentAt, valueMono = true)
             }
             if (report.sentVia.isNotBlank()) {
-                AuntieKeyValueRow(label = "Sent via", value = report.sentVia, valueMono = true)
+                // #1817: in words. "pending" and "catalog" are markers, not channels.
+                AuntieKeyValueRow(label = "Sent via", value = sentViaWords(report.sentVia) ?: "Not recorded")
             }
             if (report.deliveryReceiptId.isNotBlank()) {
                 AuntieKeyValueRow(
