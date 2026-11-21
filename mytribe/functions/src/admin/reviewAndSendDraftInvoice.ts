@@ -20,6 +20,7 @@ import { householdAppOnly } from '../notifications/appOnly';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { invoiceStateOf } from '../lib/invoiceEditPolicy';
 import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
@@ -143,10 +144,16 @@ function sendableDraft(snap: DocumentSnapshot): InvoiceDoc {
   // takes its visits back and says which it could not.
   refuseIfArchived(data);
 
-  if (normalizedStatus(data) !== 'draft') {
+  // #2527: draft and quote by the state classifier, which reads `status` and
+  // falls back to the older `invoiceStatus` only when `status` is absent, as
+  // the payment refusals do (#2517). Reading `status` alone refused to send a
+  // draft marked only in the older field, while Record payment told the office
+  // to send it first. `status` wins when both are stored.
+  const state = invoiceStateOf(data);
+  if (state !== 'draft') {
     // #2087: a quote that has gone out is not a draft any more; say so in its
     // own words rather than calling it an invoice.
-    if (normalizedStatus(data) === 'quote') {
+    if (state === 'quote') {
       throw new HttpsError('failed-precondition', 'This quote has already been sent to the household.', {
         code: 'quote_already_sent',
       });

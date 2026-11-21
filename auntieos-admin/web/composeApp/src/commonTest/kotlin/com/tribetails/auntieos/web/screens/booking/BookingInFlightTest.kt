@@ -27,4 +27,12 @@ class BookingInFlightTest {
         assertEquals("DEPARTED", bookingStatusLabel("departed"))
         assertEquals("SCHEDULED", bookingStatusLabel("SCHEDULED"))
     }
+
+    // #2268: a one-L CANCELED visit is a cancelled one on the pill too.
+    @Test
+    fun thePillReadsEverySpellingOfACancellationAsCancelled() {
+        for (status in listOf("CANCELLED", "cancelled", "CANCELED", " canceled ")) {
+            assertEquals("CANCELLED", bookingStatusLabel(status), status)
+        }
+    }
 }

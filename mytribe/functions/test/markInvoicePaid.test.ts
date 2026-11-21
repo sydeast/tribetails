@@ -190,6 +190,40 @@ describe('markInvoicePaid validation + sad paths', () => {
     await expect(markInvoicePaidHandler(req({ invoiceId: 'inv1' }))).rejects.toMatchObject({ code: 'failed-precondition' });
   });
 
+  it('#2517: rejects a draft or a quote marked only in the older invoiceStatus field, and writes nothing', async () => {
+    for (const invoiceStatus of ['draft', 'quote', ' Quote ']) {
+      const ctx = seed({ kinfolkId: 'fam1', invoiceStatus, amountDue: 40, total: 40 });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const err = await markInvoicePaidHandler(req({ invoiceId: 'inv1' })).catch((e) => e);
+      expect(err, invoiceStatus).toMatchObject({
+        code: 'failed-precondition',
+        message: 'Invoice is a draft or quote; send it first before recording a payment.',
+      });
+      expect(ctx.writes, invoiceStatus).toHaveLength(0);
+    }
+  });
+
+  it('#2517: a stored status wins over the older field when the two disagree', async () => {
+    const sent = seed({ kinfolkId: 'fam1', status: 'open', invoiceStatus: 'draft', amountDue: 40, total: 40 });
+    mocks.dbFn.mockReturnValue(sent.db);
+    expect((await markInvoicePaidHandler(req({ invoiceId: 'inv1' }))).ok).toBe(true);
+    expect(invoiceWriteOf(sent)?.data.status).toBe('paid');
+
+    const draft = seed({ kinfolkId: 'fam1', status: 'draft', invoiceStatus: 'open', amountDue: 40, total: 40 });
+    mocks.dbFn.mockReturnValue(draft.db);
+    await expect(markInvoicePaidHandler(req({ invoiceId: 'inv1' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+    expect(draft.writes).toHaveLength(0);
+  });
+
+  it('#2517: an invoice sent in the older field alone still takes the payment', async () => {
+    const ctx = seed({ kinfolkId: 'fam1', invoiceStatus: 'open', amountDue: 40, total: 40 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect((await markInvoicePaidHandler(req({ invoiceId: 'inv1' }))).ok).toBe(true);
+    expect(invoiceWriteOf(ctx)?.data.status).toBe('paid');
+  });
+
   it('rejects unauthenticated caller', async () => {
     mocks.dbFn.mockReturnValue(seed().db);
     await expect(markInvoicePaidHandler(req({ invoiceId: 'inv1' }, null))).rejects.toMatchObject({ code: 'unauthenticated' });

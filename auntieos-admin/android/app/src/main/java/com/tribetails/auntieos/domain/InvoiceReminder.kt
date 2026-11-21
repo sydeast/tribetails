@@ -116,6 +116,27 @@ fun lastReminderLabel(
     zone: TimeZone = TimeZone.getDefault(),
     appOnly: Boolean? = false,
     nowMs: Long = System.currentTimeMillis(),
+    heldAtMs: Long? = null,
 ): String =
-    if (stampMs != null && stampMs > 0L) formatReminderTime(stampMs, zone, nowMs) + (if (appOnly == true) ", app only" else "")
-    else "none sent"
+    if (stampMs == null || stampMs <= 0L) "none sent"
+    else if (reminderWasHeld(stampMs, heldAtMs)) formatReminderTime(stampMs, zone, nowMs) + ", held, not sent"
+    else formatReminderTime(stampMs, zone, nowMs) + (if (appOnly == true) ", app only" else "")
+/**
+ * #2515: whether the reminder on record never went out. The sweep that holds a
+ * queued reminder at its send time, because notices to households were turned
+ * off, writes `reminderHeldAtMs` beside the sent stamp and leaves that stamp,
+ * so the reminder is not raised again. A sent stamp no later than the held one
+ * is that reminder; a reminder sent afterwards stamps a later time.
+ */
+fun reminderWasHeld(stampMs: Long?, heldAtMs: Long?): Boolean =
+    stampMs != null && stampMs > 0L && heldAtMs != null && heldAtMs >= stampMs
+/** The invoice list's reminder line: "reminded <when>", or "reminder held, not sent" (#2515). */
+fun reminderListLine(
+    stampMs: Long?,
+    appOnly: Boolean?,
+    heldAtMs: Long?,
+    zone: TimeZone = TimeZone.getDefault(),
+    nowMs: Long = System.currentTimeMillis(),
+): String =
+    if (reminderWasHeld(stampMs, heldAtMs)) "reminder held, not sent"
+    else "reminded ${lastReminderLabel(stampMs, zone, appOnly, nowMs)}"

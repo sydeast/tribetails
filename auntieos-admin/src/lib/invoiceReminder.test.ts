@@ -86,4 +86,18 @@ describe('reminder copy', () => {
     // No stamp, no time to qualify.
     expect(lastReminderLabel(null, 'UTC', true)).toBe('none sent');
   });
+  it('#2515: a reminder held at its send time reads "held, not sent", never as sent or app only', () => {
+    const heldAt = T + 5 * 60 * 1000;
+    expect(lastReminderLabel(T, 'UTC', false, heldAt)).toBe('Sep 14, 3:05 PM, held, not sent');
+    expect(lastReminderLabel(T, 'UTC', true, heldAt)).toBe('Sep 14, 3:05 PM, held, not sent');
+    // Held in the same millisecond it was stamped: still held.
+    expect(lastReminderLabel(T, 'UTC', false, T)).toBe('Sep 14, 3:05 PM, held, not sent');
+    // A reminder sent after the hold stamps a later time and reads as sent.
+    expect(lastReminderLabel(heldAt + 60 * 60 * 1000, 'UTC', false, heldAt)).toBe('Sep 14, 4:10 PM');
+    // No held stamp, or not a number: as before.
+    expect(lastReminderLabel(T, 'UTC', false, null)).toBe('Sep 14, 3:05 PM');
+    expect(lastReminderLabel(T, 'UTC', false, 'held')).toBe('Sep 14, 3:05 PM');
+    // No sent stamp, nothing on record whatever the held stamp says.
+    expect(lastReminderLabel(null, 'UTC', false, heldAt)).toBe('none sent');
+  });
 });
