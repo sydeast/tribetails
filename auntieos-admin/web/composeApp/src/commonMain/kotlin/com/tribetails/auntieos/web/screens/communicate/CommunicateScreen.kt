@@ -683,6 +683,31 @@ fun CommunicateScreen(
         )
         Spacer(Modifier.height(if (toastMsg != null) dims.space3 else 0.dp))
 
+        // #2316: a Text goes short with a link, or whole to a household with no
+        // MyTribe account. Asked of the server for the household the send
+        // names (the draft's own, else the one chosen), again each time the
+        // confirm opens, and shown as Checking until it answers.
+        val isText = messageType == MessageType.Text
+        val textHousehold = result?.let { r -> r.kinfolk_id?.ifBlank { null } ?: approveRecipient(r)?._id?.ifBlank { null } }
+            ?: selectedKinfolk?._id?.ifBlank { null }
+        var textAnswer by remember { mutableStateOf<Pair<String, HouseholdTextAccount>?>(null) }
+        LaunchedEffect(isText, textHousehold, approveConfirmOpen) {
+            val id = textHousehold
+            if (!isText || id == null) return@LaunchedEffect
+            // The confirm closing is no reason to ask again: keep the answer.
+            val kept = textAnswer
+            if (!approveConfirmOpen && kept != null && kept.first == id && kept.second != HouseholdTextAccount.Checking) return@LaunchedEffect
+            textAnswer = id to HouseholdTextAccount.Checking
+            textAnswer = id to when (val r = firestore.previewHouseholdTextAccount(id)) {
+                is WriteResult.Ok -> r.value
+                is WriteResult.Err -> HouseholdTextAccount.Unknown
+            }
+        }
+        val textAccount = when {
+            textHousehold == null -> HouseholdTextAccount.Account
+            textAnswer?.first == textHousehold -> textAnswer!!.second
+            else -> HouseholdTextAccount.Checking
+        }
         // #1625: names who gets it, the address and the channel before a send.
         val confirmChannel = approveDeliveryChannel(messageType)
         val confirmKf = result?.let { approveRecipient(it) }
@@ -720,19 +745,19 @@ fun CommunicateScreen(
                     color = c.textPrimary,
                 )
                 Text(
-                    text = "Channel: ${if (confirmChannel == ExternalChannel.Email) confirmChannel.label else "Text, kept short, with a link to MyTribe"}",
+                    text = "Channel: ${if (confirmChannel == ExternalChannel.Email) confirmChannel.label else householdTextChannelLine(textAccount)}",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
                 if (confirmChannel == ExternalChannel.Email) {
                     Text(text = "Subject: ${subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 } else {
-                    // #2408: what the household is texted, not the draft it is cut from.
-                    Text(
-                        text = "Text: ${householdTextPreviewLine(editedCopy)}",
-                        style = AuntieTheme.typography.bodySmall,
-                        color = c.textPrimary,
-                    )
+                    // #2408, #2316: what the household is texted, not the draft it is
+                    // cut from: short with a link, or whole when they have no
+                    // MyTribe account, and neither until the server has said.
+                    householdTextAsSentLines(editedCopy, textAccount).forEach { line ->
+                        Text(text = line, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                    }
                 }
             }
         }
@@ -792,6 +817,7 @@ fun CommunicateScreen(
                             subject = subject,
                             body = editedCopy,
                             textMessage = messageType == MessageType.Text,
+                            textAccount = textAccount,
                         )
                         ExternalSendPanel(
                             firestore = firestore,
@@ -842,6 +868,7 @@ fun CommunicateScreen(
                         subject = subject,
                         body = editedCopy,
                         textMessage = messageType == MessageType.Text,
+                        textAccount = textAccount,
                     )
                     ExternalSendPanel(
                         firestore = firestore,
@@ -2201,7 +2228,13 @@ private fun LastCommunicationBox(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PreviewPanel(recipientName: String, subject: String, body: String, textMessage: Boolean = false) {
+private fun PreviewPanel(
+    recipientName: String,
+    subject: String,
+    body: String,
+    textMessage: Boolean = false,
+    textAccount: HouseholdTextAccount = HouseholdTextAccount.Account,
+) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     DenPanel(
@@ -2212,14 +2245,18 @@ private fun PreviewPanel(recipientName: String, subject: String, body: String, t
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
             // #2408: a Text is sent short with a link to the whole message in
             // MyTribe, so its preview is that text and not an email card.
+            // #2316: or the whole message, for a household with no account.
             if (textMessage) {
-                Text(
-                    text = body.takeIf { it.isNotBlank() }?.let(::householdTextPreviewLine)
-                        ?: "Pull a template or generate a draft and it shows up here.",
-                    style = AuntieTheme.typography.bodyMedium,
-                    color = c.textPrimary,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                val lines = if (body.isBlank()) listOf("Pull a template or generate a draft and it shows up here.")
+                else householdTextAsSentLines(body, textAccount)
+                lines.forEach { line ->
+                    Text(
+                        text = line,
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = c.textPrimary,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             } else AuntieEmailPreviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 // Author-typed subject (spec 19 item 3); falls back to a computed

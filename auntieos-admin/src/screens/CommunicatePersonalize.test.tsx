@@ -37,6 +37,10 @@ vi.mock('../api/householdPush', async (orig) => ({
   ...(await orig<typeof import('../api/householdPush')>()),
   sendHouseholdPush,
 }));
+// #2316: the Text confirm asks the server whether the household has a MyTribe
+// account. Only the wire is stubbed; the hook and the words are the real ones.
+const { previewVisitNotification } = vi.hoisted(() => ({ previewVisitNotification: vi.fn() }));
+vi.mock('../api/visitNoticePreview', () => ({ previewVisitNotification }));
 
 // Stubbed rather than exercised: RecipientContextPanel has its own full test
 // file. This file proves only the WIRING, that the panel is mounted for the
@@ -99,6 +103,7 @@ function setup(rows: Async<Kinfolk[]> = { status: 'ready', data: ROWS }) {
   publishGeneratedDraft.mockReset().mockResolvedValue({ ok: true, reportId: 'r1', alreadyPublished: false });
   deleteGeneratedDraft.mockReset().mockResolvedValue(undefined);
   useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
+  previewVisitNotification.mockReset().mockResolvedValue({ willNotify: true, reason: null });
   useCollection.mockReturnValue(rows);
   approveGeneratedDraft.mockResolvedValue({ ok: true, auditWarning: null, providerId: null, delivered: false });
   return userEvent.setup();
@@ -420,6 +425,83 @@ describe('approve', () => {
     await waitFor(() => expect(sendGeneratedDraft).toHaveBeenCalledTimes(1));
     // The server gets the whole message: it writes it to the notifications list and cuts the text itself.
     expect(sendGeneratedDraft.mock.calls[0]![0]).toMatchObject({ draftId: 'd1', kinfolkId: 'kf1', body: long });
+    // It asked about the household the send names.
+    expect(previewVisitNotification).toHaveBeenCalledWith('kf1');
+  });
+  it('#2316: a household with no MyTribe account is shown the whole message, with no cut and no link', async () => {
+    const user = setup();
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_has_no_portal_account' });
+    const long =
+      'Nova had the best day at the park today.\nShe met two new friends by the pond, shared her ball without a fuss, ' +
+      'and slept the whole way home. Her water bowl is topped up and the back gate is latched. See you on Friday morning.';
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms', generated_copy: long }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'SMS' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText(/the whole message, because they have no MyTribe account/)).toBeInTheDocument();
+    const shown = screen.getByTestId('confirm-text-as-sent');
+    expect(shown.textContent).toBe(`Text: ${long}`);
+    expect(screen.queryByText(/More in MyTribe/)).toBeNull();
+    expect(screen.queryByText(/kept short/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(sendGeneratedDraft).toHaveBeenCalledTimes(1));
+    expect(sendGeneratedDraft.mock.calls[0]![0]).toMatchObject({ kinfolkId: 'kf1', body: long });
+  });
+  it('#2316: a whole message too long for one text is shown as the texts it goes as', async () => {
+    const user = setup();
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_has_no_portal_account' });
+    const long = `${'Nova ran and ran. '.repeat(120)}The end.`;
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms', generated_copy: long }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'SMS' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText(/Text, sent as 2 texts:/)).toBeInTheDocument();
+    const parts = screen.getAllByTestId('confirm-text-part');
+    expect(parts).toHaveLength(2);
+    expect(parts[0]!.textContent).toMatch(/^1 of 2: Nova ran and ran\./);
+    expect(parts[1]!.textContent).toMatch(/^2 of 2: .*The end\.$/);
+  });
+  it('#2316: a household whose account is switched off from notices still has one, so its text stays short', async () => {
+    const user = setup();
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_notices_off' });
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'SMS' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText(/Text, kept short, with a link to MyTribe/)).toBeInTheDocument();
+    expect(screen.getByTestId('confirm-text-as-sent').textContent).toMatch(/More in MyTribe: \(link\)$/);
+  });
+  it('#2316: while the account is being checked, and when it cannot be, the confirm claims neither text', async () => {
+    const user = setup();
+    let fail: (e: Error) => void = () => {};
+    previewVisitNotification.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms' }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'SMS' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText(/Checking whether they have a MyTribe account/)).toBeInTheDocument();
+    expect(screen.queryByText(/More in MyTribe/)).toBeNull();
+    expect(screen.queryByText(/kept short/)).toBeNull();
+    await act(async () => fail(new Error('unavailable')));
+    expect(await screen.findByText(/Their MyTribe account could not be checked/)).toBeInTheDocument();
+    expect(screen.queryByText(/More in MyTribe/)).toBeNull();
+    expect(screen.getByText('Message:')).toBeInTheDocument();
+    // The send is not held back by the check.
+    expect(screen.getByRole('button', { name: 'Send now' })).toBeEnabled();
+    warn.mockRestore();
   });
   it('#2408: the confirm for an Email still shows the whole message', async () => {
     const user = setup();

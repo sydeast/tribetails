@@ -1,4 +1,5 @@
 import { cutWhole } from './cutText';
+import { type VisitNoticeReach } from './visitNotice';
 
 /**
  * #2408, operator ruling 2026-11-14: a household's text message stays short and
@@ -10,6 +11,9 @@ import { cutWhole } from './cutText';
  * text the household will get and not the draft it was cut from. The same rule
  * as the server's `householdSms` (`notifications/templateParsers.ts`), which is
  * the one that decides what is sent.
+ *
+ * #2316: that is for a household with a MyTribe account. One with none is
+ * texted the whole message (`householdWholeTextParts`, below).
  */
 
 /** Where MyTribe lives. The server's `PORTAL_URL`. */
@@ -59,4 +63,62 @@ export function householdTextPreview(body: string): HouseholdTextPreview {
 export function householdTextPreviewLine(body: string): string {
   const p = householdTextPreview(body);
   return p.linkAdded ? `${p.line} ${HOUSEHOLD_TEXT_LINK_LABEL} (link)` : p.line;
+}
+/**
+ * #2316, operator ruling 2026-11-20: a household with no MyTribe account has
+ * no notifications list for a link to open, so it is texted the WHOLE message
+ * instead, as several texts when one cannot carry it. The server decides who
+ * that is with `resolveKinfolkUid` (`sendGeneratedDraft`), which also reads the
+ * household's member records and can say "nobody" for a household whose
+ * `kinfolk.uid` is filled in. The roster cannot see that, so the confirm asks
+ * the server the same question (`previewVisitNotification` without a key,
+ * whose `household_has_no_portal_account` is exactly a null
+ * `resolveKinfolkUid`, checked before anything else).
+ */
+export type HouseholdTextAccount = 'checking' | 'account' | 'no_account' | 'unknown';
+/** The longest body one text carries. The server's `SMS_BODY_MAX` (Twilio refuses more). */
+export const SMS_BODY_MAX = 1600;
+/** The server's answer as an account state. PURE. */
+export function householdTextAccountOf(reach: VisitNoticeReach): HouseholdTextAccount {
+  if (reach.status !== 'ready') return reach.status;
+  return reach.reason === 'household_has_no_portal_account' ? 'no_account' : 'account';
+}
+/**
+ * The whole message as the texts it goes as, for a household with no MyTribe
+ * account. PURE. The same split as the server's `householdWholeSmsParts`:
+ * trimmed, line breaks kept, no link, and a message over [max] split at the
+ * last space or line break when one is in the last fifth, else where it fits.
+ */
+export function householdWholeTextParts(body: string, max: number = SMS_BODY_MAX): string[] {
+  const parts: string[] = [];
+  let rest = body.trim();
+  while (rest.length > max) {
+    const head = cutWhole(rest, max);
+    const breakAt = Math.max(head.lastIndexOf(' '), head.lastIndexOf('\n'));
+    const part = breakAt > max * 0.8 ? head.slice(0, breakAt) : head;
+    parts.push(part.trimEnd());
+    rest = rest.slice(part.length).trimStart();
+  }
+  if (rest !== '') parts.push(rest);
+  return parts;
+}
+/** What one household is texted, once its account is known. */
+export type HouseholdTextAsSent =
+  | { kind: 'checking' }
+  | { kind: 'unknown' }
+  /** The short line and "More in MyTribe: (link)". */
+  | { kind: 'short'; line: string }
+  /** The whole message, one entry per text. */
+  | { kind: 'whole'; parts: string[] };
+/** What this household is texted for these words. PURE. */
+export function householdTextAsSent(body: string, account: HouseholdTextAccount): HouseholdTextAsSent {
+  if (account === 'checking' || account === 'unknown') return { kind: account };
+  if (account === 'no_account') return { kind: 'whole', parts: householdWholeTextParts(body) };
+  return { kind: 'short', line: householdTextPreviewLine(body) };
+}
+/** The confirm's Channel line for a Text. Says short or whole only once the server has answered. PURE. */
+export function householdTextChannelLine(account: HouseholdTextAccount): string {
+  if (account === 'account') return 'Text, kept short, with a link to MyTribe';
+  if (account === 'no_account') return 'Text, the whole message, because they have no MyTribe account';
+  return 'Text';
 }
