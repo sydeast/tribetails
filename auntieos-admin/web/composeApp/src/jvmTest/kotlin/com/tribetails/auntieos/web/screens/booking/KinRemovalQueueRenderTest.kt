@@ -43,7 +43,13 @@ class KinRemovalQueueRenderTest {
     private val pepper = """{"id":"kf2_k7","kinfolkId":"kf2","kinId":"k7","flatKinId":"flat7","kinName":"Pepper",
         "reason":null,"status":"pending","requestedAtMs":1793642400000,"resolvedAtMs":null,"resolutionNote":null}"""
 
+    // The other request queues on Bookings answer empty, so their own banners and buttons never stand in for this panel's.
+    private val otherQueuesEmpty = mapOf(
+        "listRescheduleRequests" to """{"requests":[]}""",
+        "listCancelRequests" to """{"requests":[]}""",
+    )
     private fun seed() {
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty
         JvmFirestoreFixtures.businessSettings = BusinessSettings(timeZone = "America/Chicago")
         JvmFirestoreFixtures.kinfolk = listOf(Kinfolk(_id = "kf1", firstName = "Ada", lastName = "Wren"))
         JvmFirestoreFixtures.incomingKinCares = emptyList()
@@ -70,7 +76,7 @@ class KinRemovalQueueRenderTest {
     @Test
     fun theNoticesRequestIsListedAndMarked() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf("listKinRemovalRequests" to """{"requests":[$biscuit,$pepper]}""")
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf("listKinRemovalRequests" to """{"requests":[$biscuit,$pepper]}""")
         var consumed = 0
         showBookings(focus = "kf1_k1") { consumed++ }
         waitUntil(timeoutMillis = 10_000) { tagged(KIN_REMOVAL_ROW_TAG) == 2 }
@@ -87,7 +93,7 @@ class KinRemovalQueueRenderTest {
     @Test
     fun archiveConfirmsFirstThenTheRequestLeavesTheList() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf(
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf(
             "listKinRemovalRequests" to """{"requests":[$biscuit]}""",
             "resolveKinRemovalRequest" to """{"ok":true,"decision":"archive","request":${biscuit.replace("\"pending\"", "\"archived\"")},
                 "flatArchived":true,"familyArchived":true,"householdNotified":true}""",
@@ -111,7 +117,7 @@ class KinRemovalQueueRenderTest {
     @Test
     fun aRefusedDeclineShowsTheServersSentenceAndKeepsTheRequest() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf("listKinRemovalRequests" to """{"requests":[$biscuit]}""")
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf("listKinRemovalRequests" to """{"requests":[$biscuit]}""")
         JvmFirestoreFixtures.callableErrors = mapOf("resolveKinRemovalRequest" to "This removal request has already been answered.")
         showBookings()
         waitUntil(timeoutMillis = 10_000) { tagged(KIN_REMOVAL_ROW_TAG) == 1 }
@@ -128,7 +134,7 @@ class KinRemovalQueueRenderTest {
     @Test
     fun aRequestAnsweredBeforeArrivalSaysSo() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf("listKinRemovalRequests" to """{"requests":[]}""")
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf("listKinRemovalRequests" to """{"requests":[]}""")
         showBookings(focus = "kf1_k1")
         waitUntil(timeoutMillis = 10_000) { shows(KIN_REMOVAL_ANSWERED_BODY) }
         assertTrue(shows(KIN_REMOVAL_ANSWERED_TITLE))
@@ -144,7 +150,7 @@ class KinRemovalQueueRenderTest {
         assertTrue(shows("The server could not be reached. Try again in a moment."))
         val before = sent("listKinRemovalRequests").size
         JvmFirestoreFixtures.callableErrors = emptyMap()
-        JvmFirestoreFixtures.callableResponses = mapOf("listKinRemovalRequests" to """{"requests":[$biscuit]}""")
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf("listKinRemovalRequests" to """{"requests":[$biscuit]}""")
         onNodeWithText("Retry", useUnmergedTree = true).performClick()
         waitUntil(timeoutMillis = 10_000) { tagged(KIN_REMOVAL_ROW_TAG) == 1 }
         assertTrue(sent("listKinRemovalRequests").size > before)
