@@ -46,6 +46,16 @@ import { waitForAuthReady } from './auth';
  * the platform for no more than one fix per `LOCATION_FASTEST_INTERVAL` (2 s).
  * The browser's `watchPosition` has neither limit, so both are applied here.
  *
+ * AN UNDONE DEPARTURE RESUMES HERE, AND ONLY HERE (#2338). Departed stops the
+ * watch, but for the few minutes "Undo departed" is offered (#2250) this tab
+ * keeps a quiet listener on the visit (`parkVisitTracking`). If the visit goes
+ * back to Arrived, the watch starts again in this tab, without a prompt: the
+ * permission was granted when it clocked in. The tab that taps Undo is often
+ * not the one at the house (the owner at a desk), so the undo itself starts
+ * nothing anywhere. The parked id lives in `sessionStorage` beside the tracked
+ * one, so a reload keeps it. The crumbs of both parts land in the same
+ * subcollection, which is what the route is drawn and summarised from.
+ *
  * DISTANCE AND THE PURGE ARE UNCHANGED. Nothing here writes `gpsSummary`;
  * `purgeOldVisitRoutes` folds whatever is in the subcollection into it
  * regardless of which client wrote the crumbs.
@@ -83,6 +93,17 @@ export interface BreadcrumbDoc {
 }
 
 const STORAGE_KEY = 'auntieos.visitTracking.sessionId';
+/** #2338: the visit this tab tracked until a Departed that may still be undone. */
+const PARKED_KEY = 'auntieos.visitTracking.parkedSessionId';
+/**
+ * #2338: the longest this tab waits for an undo when the visit carries no
+ * `undoDepartedUntil`. Not the undo window, which is the server's
+ * (`functions/src/lib/visitLifecycle.ts#UNDO_DEPARTED_WINDOW_MS`) and is read
+ * off the visit: only a bound on one quiet listener.
+ */
+const PARK_CAP_MS = 30 * 60_000;
+/** Past `undoDepartedUntil`, for an undo the server accepted on the last second. */
+const PARK_GRACE_MS = 60_000;
 /** `MapboxConfig.MIN_DISTANCE_FOR_UPDATE`. */
 const MIN_DISTANCE_METERS = 5;
 /** `MapboxConfig.LOCATION_FASTEST_INTERVAL`. */
@@ -104,6 +125,14 @@ interface ActiveWatch {
 }
 
 let active: ActiveWatch | null = null;
+interface ParkedWatch {
+  sessionId: string;
+  unsubscribeDoc: (() => void) | null;
+  timer: ReturnType<typeof setTimeout> | null;
+  /** The listener has read the visit as Departed or Completed at least once. */
+  seenDeparted: boolean;
+}
+let parked: ParkedWatch | null = null;
 const statuses = new Map<string, VisitTrackingStatus>();
 const listeners = new Set<() => void>();
 
@@ -164,6 +193,22 @@ function writeStored(sessionId: string | null) {
   }
 }
 
+function readParked(): string | null {
+  try {
+    const v = sessionStorage.getItem(PARKED_KEY);
+    return v !== null && v.trim() !== '' ? v : null;
+  } catch {
+    return null;
+  }
+}
+function writeParked(sessionId: string | null) {
+  try {
+    if (sessionId === null) sessionStorage.removeItem(PARKED_KEY);
+    else sessionStorage.setItem(PARKED_KEY, sessionId);
+  } catch {
+    // Storage blocked: the park still holds until the tab reloads.
+  }
+}
 function finite(v: number | null | undefined): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
@@ -274,6 +319,81 @@ function sessionStatusOf(data: unknown): string {
   const s = (data as { status?: unknown }).status;
   return typeof s === 'string' ? s.trim().toUpperCase() : '';
 }
+function isDepartedStatus(status: string): boolean {
+  return status === 'DEPARTED' || status === 'COMPLETED';
+}
+/** When the visit's undo closes, in ms, or null when the server has stamped none. */
+function undoUntilMsOf(data: unknown): number | null {
+  if (data === null || typeof data !== 'object') return null;
+  const raw = (data as { undoDepartedUntil?: unknown }).undoDepartedUntil;
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const ms = Date.parse(raw.trim());
+  return Number.isFinite(ms) ? ms : null;
+}
+/** Drop this tab's park, on `sessionId` only when given. Safe when there is none. */
+function unpark(sessionId?: string) {
+  if (parked === null || (sessionId !== undefined && parked.sessionId !== sessionId)) return;
+  if (parked.unsubscribeDoc !== null) parked.unsubscribeDoc();
+  if (parked.timer !== null) clearTimeout(parked.timer);
+  parked = null;
+  writeParked(null);
+}
+function armParkTimer(p: ParkedWatch, ms: number) {
+  if (p.timer !== null) clearTimeout(p.timer);
+  p.timer = setTimeout(() => unpark(p.sessionId), Math.max(0, ms));
+}
+/**
+ * #2338: after a Departed this tab was tracking, wait quietly for an undo. The
+ * watch starts again when the visit reads Arrived once more, and the park ends
+ * when the undo window closes, the visit goes anywhere else, or it is deleted.
+ *
+ * @param seenDeparted the caller has already read the visit as departed. A tab
+ *        that departed it itself has not: the first snapshot it gets can be the
+ *        cached Arrived from before its own write, which is not an undo.
+ */
+function parkVisitTracking(sessionId: string, seenDeparted: boolean, untilMs: number | null = null) {
+  unpark();
+  const p: ParkedWatch = { sessionId, unsubscribeDoc: null, timer: null, seenDeparted };
+  parked = p;
+  writeParked(sessionId);
+  armParkTimer(p, untilMs === null ? PARK_CAP_MS : untilMs + PARK_GRACE_MS - Date.now());
+  p.unsubscribeDoc = onSnapshot(
+    doc(db, 'kin_care_sessions', sessionId),
+    (snap) => {
+      if (parked !== p) return;
+      if (!snap.exists()) {
+        unpark(sessionId);
+        return;
+      }
+      const data = snap.data();
+      const status = sessionStatusOf(data);
+      if (isDepartedStatus(status)) {
+        p.seenDeparted = true;
+        const until = undoUntilMsOf(data);
+        if (until !== null) armParkTimer(p, until + PARK_GRACE_MS - Date.now());
+        return;
+      }
+      if (status === 'ARRIVED') {
+        const fromCache = (snap as { metadata?: { fromCache?: boolean } }).metadata?.fromCache === true;
+        // An Arrived read before any Departed, out of the local cache, is this
+        // tab's own write not landed yet. The server's Arrived is the undo.
+        if (!p.seenDeparted && fromCache) return;
+        unpark(sessionId);
+        startWatch(sessionId);
+        return;
+      }
+      unpark(sessionId);
+    },
+    () => {
+      // A dead listener cannot see an undo. Nothing resumes, which is what
+      // happened before #2338, and the park ends on its timer.
+    },
+  );
+}
+/** Test seam: is this tab waiting for an undo of this visit's departure? */
+export function isVisitTrackingParked(sessionId: string): boolean {
+  return parked !== null && parked.sessionId === sessionId;
+}
 
 /**
  * Start the watch and arm the document guard. Idempotent for the same session;
@@ -287,6 +407,8 @@ function startWatch(sessionId: string) {
   }
   if (active !== null && active.sessionId === sessionId) return;
   if (active !== null) stopVisitTracking(active.sessionId);
+  // One visit per tab: tracking any visit ends a wait for an undo (#2338).
+  unpark();
 
   const watch: ActiveWatch = {
     sessionId,
@@ -307,7 +429,16 @@ function startWatch(sessionId: string) {
   watch.unsubscribeDoc = onSnapshot(
     doc(db, 'kin_care_sessions', sessionId),
     (snap) => {
-      if (!snap.exists() || sessionStatusOf(snap.data()) !== 'ARRIVED') stopVisitTracking(sessionId);
+      if (!snap.exists()) {
+        stopVisitTracking(sessionId);
+        return;
+      }
+      const data = snap.data();
+      const status = sessionStatusOf(data);
+      if (status === 'ARRIVED') return;
+      stopVisitTracking(sessionId);
+      // #2338: departed, from here or another device. This tab waits for an undo.
+      if (isDepartedStatus(status)) parkVisitTracking(sessionId, true, undoUntilMsOf(data));
     },
     () => {
       // A dead listener says nothing about the visit. The watch keeps running;
@@ -362,6 +493,7 @@ export function beginVisitTracking(sessionId: string, arrived: Promise<boolean>)
     return;
   }
   if (active !== null && active.sessionId !== sessionId) stopVisitTracking(active.sessionId);
+  unpark();
   setStatus(sessionId, STARTING);
   const firstFix = requestFix(geo);
 
@@ -412,7 +544,10 @@ export function endVisitTracking(sessionId: string, departed: Promise<boolean>):
     .catch(() => false)
     .then(async (ok) => {
       if (!ok) return;
+      const wasTracking = active !== null && active.sessionId === sessionId;
       stopVisitTracking(sessionId);
+      // #2338: wait for an undo. Unless the guard already saw the departure and is waiting.
+      if (wasTracking && !isVisitTrackingParked(sessionId)) parkVisitTracking(sessionId, false);
       const position = await lastFix;
       if (position === null) return;
       try {
@@ -455,7 +590,11 @@ async function readGeolocationPermission(): Promise<PermissionRead> {
  */
 export async function resumeVisitTracking(): Promise<void> {
   const sessionId = readStored();
-  if (sessionId === null) return;
+  if (sessionId === null) {
+    await resumeParked();
+    return;
+  }
+  writeParked(null);
   if (geolocation() === null) {
     writeStored(null);
     setStatus(sessionId, off('unsupported'));
@@ -475,6 +614,30 @@ export async function resumeVisitTracking(): Promise<void> {
   startWatch(sessionId);
 }
 
+/**
+ * #2338: a reload while this tab waited for an undo keeps waiting, under the
+ * same rule as a reload while tracking: only with location already allowed,
+ * so the restart needs no prompt.
+ */
+async function resumeParked(): Promise<void> {
+  const sessionId = readParked();
+  if (sessionId === null) return;
+  if (geolocation() === null) {
+    writeParked(null);
+    return;
+  }
+  const auth = await waitForAuthReady();
+  if (auth.status !== 'signedIn') {
+    writeParked(null);
+    return;
+  }
+  const permission = await readGeolocationPermission();
+  if (permission === 'prompt' || permission === 'denied') {
+    writeParked(null);
+    return;
+  }
+  parkVisitTracking(sessionId, false);
+}
 /** Test seam: forget every watch and status without touching the browser. */
 export function resetVisitTrackingForTests() {
   if (active !== null) {
@@ -483,6 +646,7 @@ export function resetVisitTrackingForTests() {
     if (active.unsubscribeDoc !== null) active.unsubscribeDoc();
     active = null;
   }
+  unpark();
   statuses.clear();
   writeStored(null);
   notify();

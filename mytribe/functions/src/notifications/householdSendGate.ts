@@ -155,3 +155,61 @@ export async function loadHouseholdSendGate(firestore: Firestore): Promise<House
   }
   return { live: state === 'live', state };
 }
+
+/**
+ * #1834 (operator ruling, 2026-11-20): WHAT THE HOUSEHOLD SEND SWITCH HOLDS.
+ *
+ * "Send notices to households" (`householdNotificationsLive`) holds every
+ * automatic notice to a household (`householdSendGate.ts`). The ruling settles
+ * the two kinds of send a person presses by hand:
+ *
+ *   - BROADCASTS ARE HELD. A Communicate broadcast and a marketing blast, the
+ *     two one-to-many sends, are held as a whole while the switch is off, or
+ *     while that notification is turned off in Settings. Nothing is queued to
+ *     go later: the owner is told on screen, the Activity Log gets one line,
+ *     and the owner sends again once notices are back on.
+ *
+ *   - SINGLE MESSAGES PASS. A message the owner writes to one household goes
+ *     with the switch off: a Communicate email or text (`sendExternalMessage`,
+ *     `sendGeneratedDraft`), and a Communicate push or an inbox reply (both
+ *     `message.reply`). A household's own channel choices and the operator's
+ *     per-notice switch still apply to them.
+ *
+ * NOT THE KINTALE NOTICE, ON PURPOSE. `kintale.published` is sent by the
+ * KinTale document triggers, and those fire for every report the production
+ * re-upload writes as well as for one a person sends; nothing on a report
+ * tells the two apart (`docs/runbooks/household-notifications.md`). Passing it
+ * here would announce every uploaded KinTale to its household during the
+ * re-upload. It stays held until a send a person makes can be told apart.
+ *
+ * Invites and password resets were never behind the switch and are not here.
+ *
+ * Here, beside the gate itself, because the dispatcher and the scheduled sweep
+ * ask it synchronously at cold start. The async checks and the refusal live in
+ * `sendSwitchRules.ts`, which is loaded only when a broadcast or a blast runs.
+ */
+
+/** Household-copy keys that pass the send switch: one message, one household, sent by a person. */
+export const ONE_HOUSEHOLD_MESSAGE_KEYS: readonly string[] = ['message.reply'];
+
+/**
+ * The one-to-many sends. `broadcast.message` is a Communicate broadcast; the
+ * other three are the marketing blast campaigns (`MARKETING_KEYS` in
+ * `admin/scheduleMarketingBlast.ts`, pinned equal by the test).
+ */
+export const BROADCAST_KEYS: readonly string[] = [
+  'broadcast.message',
+  'newsletter.announcement',
+  'survey.event',
+  'marketing.optin',
+];
+
+/** True when a household copy of `key` goes out with the send switch off. */
+export function passesHouseholdSendSwitch(key: string): boolean {
+  return ONE_HOUSEHOLD_MESSAGE_KEYS.includes(key);
+}
+
+/** True for the keys a broadcast or a marketing blast sends. */
+export function isBroadcastKey(key: string): boolean {
+  return BROADCAST_KEYS.includes(key);
+}

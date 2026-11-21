@@ -32,6 +32,15 @@ class InvoiceQuoteTest {
     }
 
     @Test
+    fun `2358 a quote with a payment recorded on it holds Withdraw and says why`() {
+        assertEquals(null, quoteWithdrawHeldReason(inv("quote")))
+        assertEquals(null, quoteWithdrawHeldReason(inv("draft", quoteDraft = true).copy(paidCents = 0L)))
+        assertEquals(WITHDRAW_PAID_REASON, quoteWithdrawHeldReason(inv("quote").copy(paidCents = 1500L)))
+        assertEquals(WITHDRAW_PAID_REASON, quoteWithdrawHeldReason(inv("draft", quoteDraft = true).copy(paidCents = 1L)))
+        assertEquals("A payment is recorded on this quote, so it cannot be withdrawn.", WITHDRAW_PAID_REASON)
+        assertFalse(WITHDRAW_PAID_REASON.contains("—"))
+    }
+    @Test
     fun `2092 the draft panel says Kinfolk, never client`() {
         assertEquals("This invoice is still a draft. Review it, then send it to let the Kinfolk know.", draftPanelLine(false))
         assertFalse(draftPanelLine(false).contains("client"))

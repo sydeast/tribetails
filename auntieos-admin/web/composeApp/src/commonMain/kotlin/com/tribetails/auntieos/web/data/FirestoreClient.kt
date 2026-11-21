@@ -2817,6 +2817,14 @@ class FirestoreClient {
     /** Live stream of every breadcrumb on a session, sorted oldest→newest. */
     fun breadcrumbsStream(sessionId: String): Flow<FirestoreResult<List<Breadcrumb>>> =
         platformBreadcrumbsStream(sessionId)
+    /**
+     * #2386: the session's newest breadcrumb with a numeric clock (what both
+     * trackers write), as a list of zero or one, polled. The Arrived card's GPS
+     * line needs only this, so the console reads one document per poll, never
+     * the whole route.
+     */
+    fun lastBreadcrumbStream(sessionId: String): Flow<FirestoreResult<List<Breadcrumb>>> =
+        platformLastBreadcrumbStream(sessionId)
     suspend fun addBreadcrumb(sessionId: String, crumb: Breadcrumb): WriteResult<String> =
         platformAddBreadcrumb(sessionId, crumb)
 
@@ -3334,6 +3342,7 @@ internal expect suspend fun platformCreateDynamicField(field: DynamicField): Wri
 internal expect suspend fun platformArchiveDynamicField(id: String): WriteResult<Unit>
 
 internal expect fun platformBreadcrumbsStream(sessionId: String): Flow<FirestoreResult<List<Breadcrumb>>>
+internal expect fun platformLastBreadcrumbStream(sessionId: String): Flow<FirestoreResult<List<Breadcrumb>>>
 internal expect suspend fun platformAddBreadcrumb(sessionId: String, crumb: Breadcrumb): WriteResult<String>
 internal expect suspend fun platformGetBreadcrumbs(sessionId: String): WriteResult<List<Breadcrumb>>
 internal expect suspend fun platformSaveSessionGpsSummary(sessionId: String, summary: GpsSummary): WriteResult<Unit>

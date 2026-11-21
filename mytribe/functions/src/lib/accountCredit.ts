@@ -99,6 +99,7 @@ import {
 } from './paymentAppliedOwner';
 import { auditHashableDoc, readAuditChain, stageAuditEntry, writeAuditEntry } from './writeAuditEntry';
 import { isArchived } from './invoiceArchive';
+import { invoiceCancelled, type InvoicePaidDoc } from './invoicePaidGate';
 import { assertSameCaller } from './sendIdempotency';
 import { AUDIT_EVENTS } from './auditEvents';
 import { stageDrawEvent } from './creditLedger';
@@ -212,6 +213,7 @@ export type CreditDrawRefusal =
   | 'invoice_quote'
   | 'invoice_archived'
   | 'invoice_paid'
+  | 'invoice_cancelled'
   | 'invoice_not_collectable'
   | 'amount_invalid'
   | 'over_credit'
@@ -245,6 +247,9 @@ export function creditInvoiceRefusal(
   const status = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
   if (status === 'draft') return 'invoice_draft';
   if (status === 'quote') return 'invoice_quote';
+  // #2358: a cancelled invoice takes no payment of any kind, credit included,
+  // and says so by name (legacy `invoiceStatus` spelling too).
+  if (invoiceCancelled(doc as InvoicePaidDoc)) return 'invoice_cancelled';
   if (refusedLifecycle(doc) !== null) return 'invoice_not_collectable';
 
   // An archived invoice is one the admin has stopped working. `markInvoicePaid`

@@ -137,7 +137,9 @@ export type VisitNoticePreview =
         | 'session_has_no_kinfolk'
         | 'session_has_no_routing_ids'
         | 'household_has_no_portal_account'
-        | 'household_notices_off';
+        | 'household_notices_off'
+        /** #2339: a repeat of a step undone after the household heard about it. */
+        | 'already_notified';
     };
 
 /**
@@ -153,6 +155,23 @@ export function visitRoutingSkip(
   return null;
 }
 
+/**
+ * #2339: the step the server can name as a quiet repeat after an undo, for the
+ * Arrived and Departed confirms, or null for every other action.
+ */
+export function visitNoticeStepOf(action: VisitLifecycleAction): 'arrived' | 'departed' | null {
+  if (action === 'ARRIVED') return 'arrived';
+  if (action === 'DEPARTED') return 'departed';
+  return null;
+}
+/** What `useVisitNoticeReach` is asked about for this tap (#2339), or null. */
+export function noticeAbout(
+  sessionId: string | null,
+  action: VisitLifecycleAction,
+): { sessionId: string; step: 'arrived' | 'departed' } | null {
+  const step = visitNoticeStepOf(action);
+  return step === null || sessionId === null || sessionId.trim() === '' ? null : { sessionId, step };
+}
 /** Whether this action tells the household anything, so whether there is a question to ask. */
 export function actionNotifiesHousehold(action: VisitLifecycleAction): boolean {
   return TOLD_WHAT[action] !== undefined;
@@ -178,7 +197,11 @@ export function visitNoticePreview(input: {
   if (reach.status === 'checking') return { kind: 'checking' };
   if (reach.status === 'unknown') return { kind: 'unknown' };
   if (reach.willNotify) return { kind: 'will_notify' };
-  if (reach.reason === 'household_has_no_portal_account' || reach.reason === 'household_notices_off') {
+  if (
+    reach.reason === 'household_has_no_portal_account' ||
+    reach.reason === 'household_notices_off' ||
+    reach.reason === 'already_notified'
+  ) {
     return { kind: 'will_not_notify', reason: reach.reason };
   }
   // A reason this build has no words for. It promises nothing.
@@ -214,6 +237,8 @@ export function visitNoticeConfirmLine(
           return `${name} will not be told, because this visit is not linked to a booking.`;
         case 'session_has_no_kinfolk':
           return 'No household will be told, because this visit is not linked to one.';
+        case 'already_notified':
+          return `${name} was already told ${TOLD_WHAT[action] ?? 'about this step'}, so they will not be told again.`;
       }
   }
 }

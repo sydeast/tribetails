@@ -1,5 +1,8 @@
 package com.tribetails.auntieos.ui.communicate
 
+import com.tribetails.auntieos.domain.HeldSendKind
+import com.tribetails.auntieos.domain.heldSendText
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Broadcast (Stage 2 step 6): pure criteria model + validation + payload/decode
 // helpers. Android parity with web
@@ -264,6 +267,8 @@ internal fun decodeSavedSegmentId(raw: Map<String, Any?>?): String = (raw?.get("
 
 /** Maps a raw callable error to operator-facing text (server sentinels + passthrough). */
 fun broadcastErrorText(message: String): String = when {
+    // #1834: held while notices to households are off, or broadcasts are turned off.
+    heldSendText(message, HeldSendKind.Broadcast) != null -> heldSendText(message, HeldSendKind.Broadcast)!!
     message.contains("no_recipients", ignoreCase = true) ->
         "That audience has no kinfolk right now. Nothing was sent."
     // #1610: the server refuses a merge field it cannot fill.

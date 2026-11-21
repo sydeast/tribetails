@@ -891,9 +891,14 @@ class InvoiceDetailViewModel(
                     reloadInvoiceQuietly(invoice.id)
                 }
                 .onFailure { err ->
+                    // #2435: a moved balance reopens the confirm at the server's
+                    // figure. The stored one can stay above what the payments
+                    // leave owing, and offering it again would be refused again.
+                    val moved = com.tribetails.auntieos.domain.writeOffRefusedOwedCents(err.message.orEmpty())
+                        ?.takeIf { it != cents }
                     _uiState.value = _uiState.value.copy(
                         writingOff = false,
-                        writeOffPromptCents = null,
+                        writeOffPromptCents = moved,
                         toastMessage = err.message.orEmpty().ifBlank { "Couldn't write off the balance." },
                         toastVisible = true,
                         toastIsError = true,

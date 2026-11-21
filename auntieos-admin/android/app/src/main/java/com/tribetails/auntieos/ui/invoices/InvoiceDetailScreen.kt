@@ -756,11 +756,21 @@ private fun invoiceDetailBody(
                     onClick = { onQuoteAction("convert") },
                     enabled = !changingQuote,
                 )
+                // #2358: a quote with a payment on it is never withdrawn. Shown,
+                // held, and saying why.
+                val withdrawHeld = com.tribetails.auntieos.domain.quoteWithdrawHeldReason(invoice)
                 GhostButton(
                     label   = "Withdraw quote",
-                    onClick = { onQuoteAction("withdraw") },
-                    enabled = !changingQuote,
+                    onClick = { if (withdrawHeld == null) onQuoteAction("withdraw") },
+                    enabled = !changingQuote && withdrawHeld == null,
                 )
+                if (withdrawHeld != null) {
+                    Text(
+                        text  = withdrawHeld,
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                    )
+                }
             }
             // #2090: the owner gives up what is left, behind its own confirm.
             com.tribetails.auntieos.domain.invoiceWriteOffOwedCents(invoice)?.let { owed ->

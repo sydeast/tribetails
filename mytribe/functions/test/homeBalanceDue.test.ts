@@ -131,3 +131,28 @@ describe('getMyHome.balanceDueCents', () => {
     expect(res.balanceDueCents).toBe(0);
   });
 });
+
+describe('#2435: Home reads the balance as the total less what has been applied', () => {
+  it('the named case: $40 bill, $15 recorded, $40 stated, counts $25', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: { 'clients/pk1': { kinfolkIds: ['fam1'] }, 'families/fam1': { displayName: 'The Mercers' } },
+        queryDocs: {
+          invoices: [{ id: 'i-stale', data: { kinfolkId: 'fam1', status: 'open', amountDue: 40, total: 40 } }],
+          'invoices/i-stale/payments': [{ id: 'p1', data: { amountCents: 1500, amount: 15 } }],
+        },
+      }).db,
+    );
+    const res = await getMyHomeHandler(req('pk1'));
+    expect(res.balanceDueCents).toBe(2500);
+  });
+
+  it('openBalanceCentsOf takes the rows by position, and the stored figure where none were read', () => {
+    const stale = { status: 'open', amountDue: 40, total: 40 };
+    expect(openBalanceCentsOf([stale], [1500])).toBe(2500);
+    expect(openBalanceCentsOf([stale], [null])).toBe(4000);
+    expect(openBalanceCentsOf([{ ...stale, paidCents: 1500 }], [null])).toBe(2500);
+    // An invoice brought over part paid keeps its lower stated balance.
+    expect(openBalanceCentsOf([{ status: 'open', amountDue: 25, total: 40 }], [0])).toBe(2500);
+  });
+});

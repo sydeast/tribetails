@@ -66,6 +66,7 @@ import {
 import { centsToInputDollars, normalizeMoneyText } from '../lib/invoiceMoneyInput';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
+import { HeldButton } from './HeldButton';
 import { Banner } from './Banner';
 import { invoiceTermsDefs, parseInvoiceTermsCode, type InvoiceTermsCode } from '../lib/invoiceTerms';
 import { dueDateOrderProblem } from '../lib/invoiceDueOrder';
@@ -776,6 +777,23 @@ export function archivedQuoteBannerText(invoice: InvoiceEntry): string | null {
   }
   return 'This quote is out of the working list. The household cannot see it or answer it until it is restored, and the visits it held are back on the not yet invoiced list.';
 }
+/**
+ * #2358 (operator ruling 2026-11-20): an invoice with any applied payment is
+ * never cancelled, and withdrawing a quote is how one is cancelled. The same
+ * sentence the server refuses with, on Android and the desktop console too.
+ */
+export const WITHDRAW_PAID_REASON = 'A payment is recorded on this quote, so it cannot be withdrawn.';
+/**
+ * #2358: why Withdraw quote is held, or null when it is not. Reads the ledger's
+ * figure when it has loaded (the payment rows), else the stored `paidCents`.
+ * The server decides again on its own read; this keeps the button from
+ * offering what it would refuse.
+ */
+export function quoteWithdrawHeldReason(invoice: InvoiceEntry, ledgerPaidCents: number | null): string | null {
+  const stored = typeof invoice.paidCents === 'number' && Number.isFinite(invoice.paidCents) ? invoice.paidCents : 0;
+  const paid = ledgerPaidCents !== null && Number.isFinite(ledgerPaidCents) ? Math.max(ledgerPaidCents, stored) : stored;
+  return paid > 0 ? WITHDRAW_PAID_REASON : null;
+}
 /** The confirmation once a quote is withdrawn, naming how many visits went back on the list. */
 export function withdrawNoticeText(released: number): string {
   if (released === 0) return 'Quote withdrawn. The household no longer sees it.';
@@ -1044,6 +1062,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // #2088: send it, turn it into an invoice, or withdraw it, while it is still
   // a quote the household has not accepted and it is not archived.
   const changeableQuote = quoteIsChangeable(invoice);
+  const withdrawHeld = changeableQuote ? quoteWithdrawHeldReason(invoice, ledger?.paidCents ?? null) : null;
   // #2092: a quote is named as one, sent or saved unsent. An accepted quote is
   // an open invoice now and is named as an invoice.
   const isQuote = state === 'quote' || quoteDraft;
@@ -2565,7 +2584,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             {changeableQuote && (
               <GhostButton label={QUOTE_ACTION_COPY.convert.label} onClick={() => setQuotePrompt('convert')} />
             )}
-            {changeableQuote && (
+            {/* #2358: a quote with a payment on it is never withdrawn. Shown,
+                held, and saying why. */}
+            {changeableQuote && withdrawHeld !== null && (
+              <HeldButton label={QUOTE_ACTION_COPY.withdraw.label} reason={withdrawHeld} />
+            )}
+            {changeableQuote && withdrawHeld === null && (
               <GhostButton label={QUOTE_ACTION_COPY.withdraw.label} onClick={() => setQuotePrompt('withdraw')} />
             )}
             {/* Archive is deliberately NOT part of the state-driven action
