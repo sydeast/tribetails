@@ -13,6 +13,39 @@
  */
 export const CHECKOUT_RETURN_PARAM = 'checkout';
 export const CHECKOUT_RETURN_VALUE = 'done';
+/** How often the bill is read again while a payment is being checked. */
+export const PAYMENT_CHECK_EVERY_MS = 3_000;
+/** How long the check runs before the screen stops waiting and says so. */
+export const PAYMENT_CHECK_FOR_MS = 60_000;
+
+/** `payInvoice`'s `details.code` when a finished payment is not on the invoice yet (#2437). */
+export const PAYMENT_BEING_RECORDED_CODE = 'payment_being_recorded';
+/** The server's sentence for it, used only when the refusal arrives with no words of its own. */
+export const PAYMENT_BEING_RECORDED = 'A payment on this invoice is still being recorded. Check again in a minute.';
+
+/**
+ * #2437: THE SERVER REFUSED TO OPEN A CHECKOUT BECAUSE A PAYMENT ON THIS
+ * INVOICE HAS FINISHED AT STRIPE AND IS NOT RECORDED YET. Returns the server's
+ * sentence for it, or null for any other failure.
+ *
+ * This is the same state the check after a return from Stripe is for, reached
+ * by a household that did not come back through Stripe's own address: a second
+ * window, a reload, or a return by hand. So both screens answer it the same
+ * way: no Pay, the sentence where Pay was, and the bill read again until the
+ * payment shows.
+ *
+ * Read off `details.code`, with the sentence itself as the fallback, because a
+ * callable error that crosses a proxy can lose `details` and keep its message.
+ */
+export function paymentBeingRecorded(err: unknown): string | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const details = (err as { details?: unknown }).details;
+  const code = typeof details === 'object' && details !== null ? (details as { code?: unknown }).code : undefined;
+  const raw = (err as { message?: unknown }).message;
+  const message = typeof raw === 'string' ? raw : '';
+  if (code === PAYMENT_BEING_RECORDED_CODE) return message || PAYMENT_BEING_RECORDED;
+  return message.includes(PAYMENT_BEING_RECORDED) ? PAYMENT_BEING_RECORDED : null;
+}
 
 function invoicePath(invoiceId: string, finished: boolean): string {
   const page = `/invoices/${encodeURIComponent(invoiceId)}`;

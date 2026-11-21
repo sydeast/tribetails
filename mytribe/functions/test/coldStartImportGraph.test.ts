@@ -327,8 +327,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * works with, used by `admin/setMediaProfilePhoto.ts` and
  * `admin/saveMediaTags.ts`. It is one list and one pure function and imports
  * nothing.
+ *
+ * 466 since #2437 (on top of 465): `lib/checkoutBeingRecorded.ts`, the rule
+ * `portal/payInvoice.ts` asks before it opens a checkout while a finished card
+ * payment is not on the invoice yet. It is pure, and the one module it imports
+ * (`lib/checkoutSessionSweep.ts`) was already here.
  */
-const MAX_OWN_EAGER_MODULES = 465;
+const MAX_OWN_EAGER_MODULES = 466;
 
 interface Edge {
   spec: string;

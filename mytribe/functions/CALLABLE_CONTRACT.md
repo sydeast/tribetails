@@ -497,6 +497,31 @@ fails ships null and `payInvoice` still refuses. Both portals offer no way to
 pay and print the sentence when it is set, and read an absent key (an older
 server) as null.
 
+**No second checkout while a finished payment is being recorded (#2437).**
+After a household pays at Stripe, the invoice reads owed until the card webhook
+records the payment. In that gap `payInvoice` opens nothing. It reads the
+checkouts stored on the invoice back from Stripe (`pendingCheckoutSessionId`,
+then `openCheckoutSessionIds` newest first without the closed ones, at most 4,
+each read once and shared with the session reuse). When one is `complete` and
+`paid` for this invoice and no `stripePayments/{paymentIntentId}` claim exists
+yet, the call is refused `failed-precondition` with `details.code`
+`payment_being_recorded` and the message "A payment on this invoice is still
+being recorded. Check again in a minute." Nothing is created, reused or
+written. The claim is what the webhook writes with its decision, for a payment
+it put on the invoice and for one it held for the owner, so Pay works again for
+whatever is still owed once the webhook has landed. The hold lasts 15 minutes
+from the charge's own time at Stripe (`PAYMENT_RECORDING_WINDOW_MS`, one
+`paymentIntents.retrieve` made only for a finished, unclaimed payment). After
+that the checkout opens as before and `portal.invoice.checkout.recording.overdue`
+is logged at warn. A stored checkout that cannot be read, one that expired or
+finished unpaid, and a payment whose time cannot be read hold nothing. The
+check runs after every earlier refusal and before the session reuse.
+`getMyInvoices` does not ship this state, because it would cost a Stripe read
+on a list read. The portals learn it from the refusal: they hold Pay back,
+print the sentence in its place and read the bill again until the payment
+shows. A portal build from before the change prints the message where it
+prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
+
 ### createInvoice
 - req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[], lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int 0..10_000_000 */, discountCents?: number /* int >=0 */ }> /* max 100 */, invoiceDiscountCents?: number /* int >=0 */, idempotencyKey?: string /* #825, `inv_<millis>_<suffix>`; becomes the `invoices/{key}` document id, and a replay never reaches the number counter */ }`
 - res `{ ok: true, invoiceId: string }`
