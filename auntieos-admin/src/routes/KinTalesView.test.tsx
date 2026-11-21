@@ -17,15 +17,17 @@ import userEvent from '@testing-library/user-event';
  * The router hooks and the three screens are stubbed: what is under test is the
  * decision this view makes, and each screen has its own suite.
  */
-const { navigate, back, search } = vi.hoisted(() => ({
+const { navigate, back, search, access } = vi.hoisted(() => ({
   navigate: vi.fn(),
   back: vi.fn(),
+  access: { current: { status: 'admin' } as { status: string } | null },
   search: { current: {} as { kinTaleId?: string; sessionId?: string; range?: string } },
 }));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigate,
   useRouter: () => ({ history: { back } }),
   useSearch: () => search.current,
+  useRouteContext: () => ({ access: access.current }),
 }));
 vi.mock('../screens/KinTales', () => ({
   KinTales: ({

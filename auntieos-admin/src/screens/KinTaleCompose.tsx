@@ -131,6 +131,14 @@ export interface KinTaleComposeProps {
    * out to be.
    */
   kinfolkId?: string;
+  /**
+   * An Auntie is signed in, from the access the admin layout resolved before
+   * the screen drew. Two controls here end in a refusal for her, so neither is
+   * drawn: "Ask Auntie" (`/api/generate` refuses a caretaker, because it reads
+   * the household dossier) and Delete draft (`deleteKinTaleReportDraft` is
+   * destructive, the owner's). Writing, photos, Save draft and Send are hers.
+   */
+  isAuntie?: boolean;
   onClose: () => void;
 }
 
@@ -436,7 +444,7 @@ type Banner_ = { tone: 'error' | 'success' | 'info'; text: string };
  */
 const NOTHING_YET_HINT = 'Nothing here yet. Add a headline, some notes, a photo, or tick a moment.';
 
-export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: KinTaleComposeProps) {
+export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, isAuntie = false, onClose }: KinTaleComposeProps) {
   const reports = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const sessions = useCollection<SessionEntry>(SESSIONS_QUERY);
   /**
@@ -478,7 +486,10 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
   const [isSending, setIsSending] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
   // #1816: the confirm asks the server who the send will reach, and how.
-  const auntie = useIsAuntie();
+  // The route's answer is known on the first paint; the token read is the
+  // fallback for a caller that does not pass one.
+  const auntieRead = useIsAuntie();
+  const auntie = isAuntie || auntieRead;
   const sendPreview = useHouseholdNoticePreview(
     confirmSend && draft !== null ? draft.kinfolkId : null,
     'kintale.published',
@@ -860,7 +871,8 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         onOpenSendConfirm: () => setConfirmSend(true),
         onCancelSendConfirm: () => setConfirmSend(false),
         onConfirmSend: () => void handleConfirmSend(),
-        deleteTarget,
+        deleteTarget: auntie ? null : deleteTarget,
+        canAskAuntie: !auntie,
         onDeleted: onClose,
         isSent,
       }
@@ -1069,6 +1081,8 @@ interface ComposeFormProps {
   onConfirmSend: () => void;
   /** #1631: the saved, unsent draft Delete removes, or null when there is none to offer. */
   deleteTarget: { reportId: string; household: string } | null;
+  /** False for an Auntie: the generator refuses her, so the button is not drawn. */
+  canAskAuntie: boolean;
   onDeleted: () => void;
   /** #1940: the tale has been sent; the form saves changes to it and offers no Send. */
   isSent: boolean;
@@ -1132,6 +1146,7 @@ function ComposeForm({
   onCancelSendConfirm,
   onConfirmSend,
   deleteTarget,
+  canAskAuntie,
   onDeleted,
   isSent,
 }: ComposeFormProps) {
@@ -1250,24 +1265,28 @@ function ComposeForm({
               </span>
             )}
           </label>
-          <div className="kintale-compose__ask">
-            {canRestoreNotes && (
-              <GhostButton label="Back to my notes" onClick={onRestoreNotes} disabled={isSaving || isSending} />
-            )}
-            <GenerateButton
-              communicationType="visit_report"
-              recipient={draft.kinfolkName}
-              kinfolkId={draft.kinfolkId}
-              sessionId={draft.sessionId}
-              careTasks={tickedCareTasks(template, checklistCtx, draft.fieldResponses)}
-              rawNotes={askNotes}
-              wantTitle
-              currentBody={lastAuntieDraftBody}
-              onGenerated={onGenerated}
-              onError={onGenerateError}
-              disabled={isSaving || isSending}
-            />
-          </div>
+          {(canRestoreNotes || canAskAuntie) && (
+            <div className="kintale-compose__ask">
+              {canRestoreNotes && (
+                <GhostButton label="Back to my notes" onClick={onRestoreNotes} disabled={isSaving || isSending} />
+              )}
+              {canAskAuntie && (
+                <GenerateButton
+                  communicationType="visit_report"
+                  recipient={draft.kinfolkName}
+                  kinfolkId={draft.kinfolkId}
+                  sessionId={draft.sessionId}
+                  careTasks={tickedCareTasks(template, checklistCtx, draft.fieldResponses)}
+                  rawNotes={askNotes}
+                  wantTitle
+                  currentBody={lastAuntieDraftBody}
+                  onGenerated={onGenerated}
+                  onError={onGenerateError}
+                  disabled={isSaving || isSending}
+                />
+              )}
+            </div>
+          )}
           {/* #2052: Auntie's draft sits beside the notes, never in them. It is
               hers until the Auntie takes it. */}
           {auntieDraft !== null && (

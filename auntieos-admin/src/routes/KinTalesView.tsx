@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useRouter, useSearch } from '@tanstack/react-router';
+import { useNavigate, useRouteContext, useRouter, useSearch } from '@tanstack/react-router';
 import { KinTales } from '../screens/KinTales';
 import { isDateRangeKey } from '../components/ListToolbar';
 import { KinTaleCompose } from '../screens/KinTaleCompose';
 import { KinTaleDetail } from '../screens/KinTaleDetail';
 import { draftIdFromListRowId } from '../lib/kinTaleList';
 import { LoadingRow } from '../components/LoadingRow';
+import { isAuntieAccess } from '../lib/access';
 
 /**
  * Three-state router wrapper, replacing the old two-state (list/compose)
@@ -55,6 +56,11 @@ export function KinTalesView() {
   // list remounts on Close and reads its window from the URL, which is how the
   // filter survives instead of resetting to Last 7 days.
   const { kinTaleId, sessionId, range } = useSearch({ from: '/admin/kintales' });
+  // Whether an Auntie is signed in, from the access the admin layout already
+  // resolved: the composer and the detail draw her no control the server
+  // refuses (Ask Auntie, Delete draft, the Reaction panel).
+  const { access } = useRouteContext({ from: '/admin' });
+  const isAuntie = isAuntieAccess(access);
   const navigate = useNavigate();
   const router = useRouter();
   const listRange = isDateRangeKey(range) ? range : undefined;
@@ -112,6 +118,7 @@ export function KinTalesView() {
       <KinTaleCompose
         {...(mode.kinTaleId ? { kinTaleId: mode.kinTaleId } : {})}
         {...(mode.sessionId ? { sessionId: mode.sessionId } : {})}
+        isAuntie={isAuntie}
         onClose={closeToList}
       />
     );
@@ -122,6 +129,7 @@ export function KinTalesView() {
         kinTaleId={mode.kinTaleId}
         onEdit={(id) => setMode({ kind: 'compose', kinTaleId: id })}
         onDeleted={closeToList}
+        isAuntie={isAuntie}
         onClose={closeToList}
       />
     );
