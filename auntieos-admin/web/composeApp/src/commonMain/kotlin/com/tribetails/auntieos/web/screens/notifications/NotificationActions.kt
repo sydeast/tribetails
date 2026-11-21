@@ -392,3 +392,19 @@ fun notificationOpenRoute(entry: NotificationEntry): NotificationOpenRoute {
     }
     return NotificationOpenRoute.Target(entry.targetType, entry.targetId)
 }
+/**
+ * #1829: Open on an unread notice marks it read. The Unread tile counts notices
+ * "not opened yet", and Open went to the right place but left the notice
+ * unread, so the count never moved. [markRead] is started first and never
+ * waited on: the Open goes ahead at once, and a failed mark is the caller's to
+ * report. A read notice, or one with no id, opens without a write. Same rule as
+ * admin web and admin Android.
+ */
+fun openNotification(
+    entry: NotificationEntry,
+    markRead: (notificationId: String) -> Unit,
+    open: (NotificationEntry) -> Unit,
+) {
+    if (!entry.isRead && entry._id.isNotBlank()) markRead(entry._id)
+    open(entry)
+}

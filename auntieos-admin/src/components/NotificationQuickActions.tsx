@@ -57,6 +57,11 @@ export interface NotificationQuickActionsProps {
   /** Handed a route from the pure table; the router performs the navigation. */
   onNavigate: (route: NotificationRoute) => void;
   /**
+   * #1829: called as Open is pressed, before the navigation. The screen marks
+   * an unread notice read here. Absent means Open only navigates.
+   */
+  onOpen?: () => void;
+  /**
    * #1875: asks for the decision. The screen opens the confirm step that names
    * the household and the dates and says who will be told; nothing is sent
    * from this press alone.
@@ -89,6 +94,7 @@ export function NotificationQuickActions({
   onArchive,
   onRestore,
   onNavigate,
+  onOpen,
   onBookingAction,
   isAuntie = false,
   pendingRequests = null,
@@ -149,7 +155,13 @@ export function NotificationQuickActions({
           never races it, and a stuck call should not trap the operator on this
           row. */}
       {actions.open ? (
-        <GhostButton label="Open" onClick={() => onNavigate(actions.open!)} />
+        <GhostButton
+          label="Open"
+          onClick={() => {
+            onOpen?.();
+            onNavigate(actions.open!);
+          }}
+        />
       ) : null}
 
       {actions.quote ? (
