@@ -13,7 +13,7 @@ import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib
 import { validateResponse } from '../lib/callableResponse';
 import { hiddenFromHousehold, quoteDecisionOf } from '../lib/quoteDecision';
 import { amountDueCentsOf } from '../lib/amountDueRule';
-import { centsToDollars, type PaymentAmount } from '../lib/invoiceMath';
+import { centsToDollars, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { cardCheckoutRefusal, cardCheckoutRefusalSentence } from '../lib/cardPaymentApply';
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
@@ -510,7 +510,14 @@ export async function getMyInvoicesHandler(
     // Integer cents off the doc, never a subtraction of two floats. See the
     // InvoiceDto field note for why that subtraction is specifically unsafe on
     // the invoices this exists to describe.
-    const paidCents = integerCentsFrom(data['paidCents']);
+    // #2410: null for every invoice whose rows were not read above.
+    const payRows = payRowsByInvoice.get(d.id);
+    // #2435: WHAT HAS BEEN APPLIED. Every applied payment and applied credit
+    // writes a row, and every writer stores their sum as `paidCents`; the
+    // larger of the two is read, the same as `payInvoice` charges by. A
+    // stated balance above the total less this is stale, and the rule reads
+    // it as the payments leave it.
+    const paidCents = appliedCentsOf(data, payRows ?? null);
     // THE CENTS SEAM, deliberately (issue #409). `resolvePayMethods` reads
     // CENTS; this collection's `amountDue` is a legacy DOLLARS float. The rule
     // reads the integer field the settlement pass writes first and falls back to
@@ -527,8 +534,8 @@ export async function getMyInvoicesHandler(
     // `lib/amountDueRule.ts` derives what such a document owes, from its own
     // `paidCents` where the settlement pass wrote one and from its status label
     // otherwise, and every other reader of this collection asks the same
-    // function. An invoice that states a balance is untouched by it, so nothing
-    // this callable shipped for an ordinary bill has changed.
+    // function. #2435: a stated balance stands unless it asks for more than
+    // the total less what has been applied, which is then the balance.
     //
     // THE CLIENTS STILL DO NOT CLASSIFY. This is the portal's classifier of
     // record (see `statusFromStamp`), and the rule runs HERE, once, on the raw
@@ -537,8 +544,6 @@ export async function getMyInvoicesHandler(
     const amountDueCents = amountDueCentsOf(data, paidCents);
     const amountDue = centsToDollars(amountDueCents);
     const partiallyPaid = !isCredit && !isPaid && paidCents > 0 && amountDue > 0;
-    // #2410: null for every invoice whose rows were not read above.
-    const payRows = payRowsByInvoice.get(d.id);
     const payRefusal =
       payRows === undefined
         ? null
@@ -749,14 +754,39 @@ function offeredForPayment(data: Record<string, unknown>): boolean {
  * invoices add nothing. This is NOT the account credit (`accountBalanceCents`),
  * which is money the office holds for the household.
  */
-export function openBalanceCentsOf(docs: ReadonlyArray<Record<string, unknown>>): number {
+export function openBalanceCentsOf(
+  docs: ReadonlyArray<Record<string, unknown>>,
+  /**
+   * #2435: the applied cents from each invoice's payment rows, by position, or
+   * null where they were not read. The larger of this and the stored
+   * `paidCents` is read, as `appliedCentsOf` does.
+   */
+  rowsPaidCents: ReadonlyArray<number | null> = [],
+): number {
   let sum = 0;
-  for (const data of docs) {
-    if (statusFromStamp(data).status !== 'open') continue;
-    const due = amountDueCentsOf(data, integerCentsFrom(data['paidCents']));
+  docs.forEach((data, i) => {
+    if (statusFromStamp(data).status !== 'open') return;
+    const fromRows = rowsPaidCents[i];
+    const paid = Math.max(integerCentsFrom(data['paidCents']), typeof fromRows === 'number' ? fromRows : 0);
+    const due = amountDueCentsOf(data, paid);
     if (due > 0) sum += due;
-  }
+  });
   return sum;
+}
+/**
+ * #2435: what has been applied to an invoice, in cents, for the portal's
+ * balance: the larger of its stored `paidCents` and its payment rows' sum
+ * (when the caller read them). `payInvoice` charges by the same figure.
+ */
+export function appliedCentsOf(data: Record<string, unknown>, rows: readonly PaymentAmount[] | null): number {
+  return Math.max(integerCentsFrom(data['paidCents']), rows === null ? 0 : paidCentsFromPayments(rows));
+}
+/**
+ * #2435: whether Home's Balance due needs this invoice's payment rows: an
+ * open one, the only kind it counts. Exported for `getMyHome`.
+ */
+export function countsTowardOpenBalance(data: Record<string, unknown>): boolean {
+  return statusFromStamp(data).status === 'open';
 }
 
 /** The stamp's stored edit scope, or null when the doc carries none. */

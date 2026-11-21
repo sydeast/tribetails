@@ -207,6 +207,12 @@ export interface BlastRecord {
   queued: number;
   /** #823. The frozen roster's size. 0 on a row written before this change. */
   audienceSize: number;
+  /**
+   * #1834. Copies taken off the queue at the send time because notices to
+   * households had been turned off (or the campaign had) since it was
+   * scheduled. Counted inside [dispatched]; never sent later.
+   */
+  heldAtSend: number;
 }
 
 /** Defensive number read: a row written by an older deploy must not become NaN in a total. */
@@ -263,6 +269,7 @@ export async function listMarketingBlastsHandler(
       fanoutState: fanout,
       queued: num(data.fanoutProcessed),
       audienceSize: num(data.fanoutTotal),
+      heldAtSend: num(data.heldAtSend),
     };
   });
 

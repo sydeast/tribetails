@@ -402,8 +402,10 @@ describe('Q1 portal-only callables refuse an Auntie by role', () => {
  * web KinTale detail calls all three, so they gate on householdStaffFlag
  * instead of the raw `admin` claim. The raw claim sent an Auntie into the
  * kinfolk branch, where one assigned tribe let her comment and react as that
- * household. Now: addKinTaleComment (allowlisted) resolves her as staff; the
- * reaction pair (not allowlisted) refuses her.
+ * household. Now: addKinTaleComment (allowlisted) resolves her as staff, and
+ * so does getKinTaleReaction since the #2461 ruling (she sees the full KinTale,
+ * the loves included, read-only). toggleKinTaleLove (not allowlisted) refuses
+ * her: she never reacts as the household.
  */
 describe('Q1 KinTale engagement never lets an Auntie act as the household', () => {
   const eng = async () => import('../src/portal/kinTaleEngagement');
@@ -417,13 +419,20 @@ describe('Q1 KinTale engagement never lets an Auntie act as the household', () =
         },
       }).db,
     );
-  it.each(['getKinTaleReactionHandler', 'toggleKinTaleLoveHandler'] as const)('%s refuses an Auntie holding the tale\'s tribe', async (fn) => {
+  it('toggleKinTaleLoveHandler refuses an Auntie holding the tale\'s tribe', async () => {
     withTale();
-    const handler = (await eng())[fn] as Handler;
-    await expect(handler({ auth: AUTH.auntie1, data: { taleId: 't1' } } as never)).rejects.toMatchObject({
+    const { toggleKinTaleLoveHandler } = await eng();
+    await expect(toggleKinTaleLoveHandler({ auth: AUTH.auntie1, data: { taleId: 't1' } } as never)).rejects.toMatchObject({
       code: 'permission-denied',
       message: CARETAKER_MESSAGE,
     });
+  });
+  it('#2461: getKinTaleReactionHandler serves an Auntie as staff, read-only, never as the household', async () => {
+    withTale();
+    const { getKinTaleReactionHandler } = await eng();
+    const res = await getKinTaleReactionHandler({ auth: AUTH.auntie1, data: { taleId: 't1' } } as never);
+    // Her own uid has no reaction on the tale; the count is the household's.
+    expect(res).toEqual({ loved: false, loveCount: 0 });
   });
   it.each(['getKinTaleReactionHandler', 'toggleKinTaleLoveHandler'] as const)('%s still serves the kinfolk', async (fn) => {
     withTale();

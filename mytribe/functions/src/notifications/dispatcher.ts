@@ -10,6 +10,7 @@ import { visitTimesForStream } from './visitDates';
 import { getNotificationDef } from './catalog';
 import {
   loadHouseholdSendGate,
+  passesHouseholdSendSwitch,
   type HouseholdSendGate,
   type HouseholdSendGateState,
 } from './householdSendGate';
@@ -360,8 +361,11 @@ export async function previewHouseholdCopy(key: string, recipientUid: string): P
   if (!resolvers.includes('kinfolkAcct') && !resolvers.includes('specificUid')) return { kind: 'not_household' };
   const decision = await copyDecision(def, { uid: recipientUid, collection: 'clients' });
   if (decision.disabled !== null) return { kind: 'prefs' };
-  const gate = await loadHouseholdSendGate(db());
-  if (!gate.live) return { kind: 'gate' };
+  // #1834: the same pass the enqueue gives a single message (`householdSendGate.ts`).
+  if (!passesHouseholdSendSwitch(def.key)) {
+    const gate = await loadHouseholdSendGate(db());
+    if (!gate.live) return { kind: 'gate' };
+  }
   return { kind: 'send', channels: activeChannelList(decision.channels) };
 }
 
@@ -668,8 +672,13 @@ export async function enqueueNotificationDetailed(
      *     channel off still reaches the gate (#1505): with the gate shut it is
      *     not written at all, record included, which is the one case in which
      *     a kinfolk's list stays empty on purpose.
+     *
+     * #1834 (ruling 2026-11-20): a single message to one household, sent by a
+     * person (an inbox reply, a Communicate push), passes the switch.
+     * `householdSendGate.ts` names the keys and why the KinTale notice is not one
+     * of them. The prefs check above still applies.
      */
-    if (stream === 'kinfolk') {
+    if (stream === 'kinfolk' && !passesHouseholdSendSwitch(def.key)) {
       const { live, state } = await householdGate();
       if (!live) {
         gateSuppressed += 1;
@@ -1225,7 +1234,7 @@ export async function deliverListedCopy(
     }
     return none('no-channels');
   }
-  if (stream === 'kinfolk') {
+  if (stream === 'kinfolk' && !passesHouseholdSendSwitch(def.key)) {
     const gate = await loadHouseholdSendGate(db());
     if (!gate.live) {
       const unreadable = gate.state === 'read-failed';

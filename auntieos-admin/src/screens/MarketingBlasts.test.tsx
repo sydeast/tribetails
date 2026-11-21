@@ -267,6 +267,48 @@ describe('MarketingBlasts', () => {
     expect(listMarketingBlasts).toHaveBeenCalledTimes(2);
   });
 
+  it('#1834: a blast held because notices to households are off says so, as a hold and not a failure', async () => {
+    scheduleBlast.mockRejectedValue(new Error('held_household_notices_off'));
+    const when = futureDateTime();
+    render(<MarketingBlasts />);
+    await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+
+    await userEvent.type(screen.getByLabelText('Date'), when.date);
+    await userEvent.type(screen.getByLabelText('Time'), when.time);
+    await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
+
+    expect(await screen.findByText('Blast held')).toBeInTheDocument();
+    expect(screen.getByText(/This blast was not scheduled and will not go out later/)).toBeInTheDocument();
+    expect(screen.queryByText(/Could not schedule/)).toBeNull();
+    expect(screen.queryByText(/held_household_notices_off/)).toBeNull();
+  });
+
+  it('#1834: a sent campaign with copies held at the send time names them and takes them out of sent', async () => {
+    listMarketingBlasts.mockResolvedValue([
+      {
+        id: 'b9',
+        key: 'newsletter.announcement',
+        title: 'Held at send',
+        fireAtMs: Date.now() - HOUR,
+        status: 'sent',
+        audienceDescription: 'All active kinfolk',
+        matched: 5,
+        noLinkedAccount: 0,
+        dispatched: 5,
+        suppressed: 0,
+        failed: 0,
+        cancelledAtMs: null,
+        fanoutState: 'complete',
+        queued: 5,
+        audienceSize: 5,
+        heldAtSend: 5,
+      },
+    ]);
+    render(<MarketingBlasts />);
+    expect(await screen.findByText(/0 sent, 0 suppressed, 5 held and not sent/)).toBeInTheDocument();
+  });
+
   it('surfaces a failed schedule rather than reporting a campaign that does not exist', async () => {
     scheduleBlast.mockRejectedValue(new Error('no_recipients'));
     const when = futureDateTime();

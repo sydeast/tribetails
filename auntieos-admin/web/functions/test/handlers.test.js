@@ -518,15 +518,18 @@ describe('draft endpoints: admin-token gate', () => {
   // A Firestore double that serves BOTH collections these handlers touch: the
   // draft collection and the rate-limit bucket. `bucket` seeds the caller's
   // current budget state; `transactionError` makes the limiter itself fail.
-  function fakeFirestore({ bucket, transactionError } = {}) {
+  // `existingDrafts` names draft ids that are already stored (#2443).
+  function fakeFirestore({ bucket, transactionError, existingDrafts = [] } = {}) {
     const writes = [];
     const store = { bucket };
     const makeDoc = (collection, id) => ({
       id,
       _collection: collection,
       get: async () => ({
-        exists: collection === 'draft_rate_limits' && store.bucket !== undefined,
-        data: () => store.bucket,
+        exists:
+          (collection === 'draft_rate_limits' && store.bucket !== undefined) ||
+          (collection === 'generated_drafts' && existingDrafts.includes(id)),
+        data: () => (collection === 'draft_rate_limits' ? store.bucket : {}),
       }),
       set: async (data, opts) => { writes.push({ collection, id, data, opts }); },
     });
@@ -626,6 +629,52 @@ describe('draft endpoints: admin-token gate', () => {
     assert.strictEqual(res.statusCode, 400);
     assert.match(res.jsonBody.error, /reserved/);
     assert.strictEqual(fs.drafts().length, 0);
+  });
+
+  // #2443 ruling: a draft records who made it, stamped by the server.
+  it('#2443 writeDraft: a new draft is stamped with the caller as its maker', async () => {
+    const fs = fakeFirestore();
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { draft: { copy: 'x' } } }), res);
+    assert.strictEqual(res.statusCode, 200);
+    const drafts = fs.drafts();
+    assert.strictEqual(drafts.length, 1);
+    assert.strictEqual(drafts[0].data.createdBy, 'admin1');
+  });
+
+  it('#2443 writeDraft: a new draft at a chosen id is stamped too', async () => {
+    const fs = fakeFirestore();
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { docId: 'd8', draft: { copy: 'x' } } }), res);
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(fs.drafts()[0].data.createdBy, 'admin1');
+  });
+
+  it('#2443 writeDraft: a write to a draft that already exists leaves its maker as it was', async () => {
+    const fs = fakeFirestore({ existingDrafts: ['d9'] });
+    installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+    const res = makeRes();
+    await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { docId: 'd9', draft: { copy: 'Edited' } } }), res);
+    assert.strictEqual(res.statusCode, 200);
+    const drafts = fs.drafts();
+    assert.strictEqual(drafts.length, 1);
+    assert.strictEqual(drafts[0].data.copy, 'Edited');
+    assert.ok(!('createdBy' in drafts[0].data));
+    assert.deepStrictEqual(drafts[0].opts, { merge: true });
+  });
+
+  it('#2443 writeDraft: the body cannot name a maker, its own or anybody else', async () => {
+    for (const createdBy of ['auntie-1', 'admin1', '']) {
+      const fs = fakeFirestore();
+      installAdmin({ auth: authReturning({ uid: 'admin1', admin: true }), firestore: fs.db });
+      const res = makeRes();
+      await idx.writeDraft(makeReq({ headers: ADMIN_BEARER, body: { draft: { copy: 'x', createdBy } } }), res);
+      assert.strictEqual(res.statusCode, 400);
+      assert.match(res.jsonBody.error, /createdBy/);
+      assert.strictEqual(fs.drafts().length, 0);
+    }
   });
 
   it('getDraft rejects a path id too, and never reads', async () => {

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.communicate
 
+import com.tribetails.auntieos.domain.HELD_SEND_PREFIX
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -1000,8 +1001,14 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
         if (state.bcConfirmOpen) BroadcastConfirm(state = state, viewModel = viewModel)
 
         state.broadcastError?.let { msg ->
-            AuntieBanner(tone = AuntieBannerTone.Error, title = "Broadcast blocked", icon = Lucide.Megaphone) {
-                Text(text = msg, style = AuntieTheme.typography.bodyMedium, color = c.error)
+            // #1834: a broadcast held while notices to households are off is not a failure.
+            val held = msg.startsWith(HELD_SEND_PREFIX)
+            AuntieBanner(
+                tone = if (held) AuntieBannerTone.Warning else AuntieBannerTone.Error,
+                title = if (held) "Broadcast held" else "Broadcast blocked",
+                icon = Lucide.Megaphone,
+            ) {
+                Text(text = msg, style = AuntieTheme.typography.bodyMedium, color = if (held) c.textDim else c.error)
             }
         }
         state.broadcastResult?.let { r ->

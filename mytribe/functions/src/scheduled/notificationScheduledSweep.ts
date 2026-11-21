@@ -1,10 +1,14 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { promoteQueuedNotification } from '../notifications/promoteQueued';
 import { FULL_CPU_SERIAL, SCHEDULE_RETRY_FREQUENT } from '../lib/runtimeOptions';
 import { sweepPendingCreditNotices } from '../lib/accountCredit';
+import { isBroadcastKey } from '../notifications/householdSendGate';
+import { countHeldNotice, withHeldNoticeBatch } from '../notifications/heldNoticeBatch';
+import type { BroadcastHoldReason } from '../notifications/sendSwitchRules';
 
 /**
  * Drains `scheduledNotifications/{auto}` docs whose `fireAtMs` has elapsed.
@@ -21,6 +25,137 @@ import { sweepPendingCreditNotices } from '../lib/accountCredit';
  * without practical benefit.
  */
 const SCAN_LIMIT = 200;
+
+/**
+ * Drains the due rows of `scheduledNotifications` at `now`. Exported for the
+ * tests; the cron below is its only caller.
+ */
+export async function drainScheduledNotifications(now: number): Promise<{ promoted: number; held: number }> {
+  const snap = await db()
+    .collection('scheduledNotifications')
+    .where('fireAtMs', '<=', now)
+    .limit(SCAN_LIMIT)
+    .get();
+  if (snap.empty) return { promoted: 0, held: 0 };
+
+  let promoted = 0;
+  let held = 0;
+  let skipped = 0;
+  /**
+   * #1834 (ruling 2026-11-20): A MARKETING BLAST IS HELD AT ITS SEND TIME
+   * when notices to households were turned off after it was scheduled, or
+   * its campaign was turned off in Settings. Its household copies are taken
+   * off the queue, never sent later; the run writes one Activity Log line
+   * (the same `marketingBlast` count the blast's own fan-out writes) and the
+   * blast row counts them as `heldAtSend` for the owner's list. Asked once
+   * per campaign key per run.
+   */
+  const holdByKey = new Map<string, BroadcastHoldReason | null>();
+  const holdFor = async (key: string): Promise<BroadcastHoldReason | null> => {
+    if (!holdByKey.has(key)) {
+      const { broadcastHoldReason } = await import('../notifications/sendSwitchRules.js');
+      holdByKey.set(key, await broadcastHoldReason(key));
+    }
+    return holdByKey.get(key) ?? null;
+  };
+  await withHeldNoticeBatch('marketingBlast', { atMs: now }, async (heldBatch) => {
+    for (const doc of snap.docs) {
+      const data = doc.data() as Record<string, unknown>;
+      const key = typeof data.key === 'string' ? data.key : '';
+      // A row queued before #1898 carries no stream; a blast key reaches households only.
+      const householdCopy = data.stream === undefined || data.stream === 'kinfolk';
+      if (key !== '' && isBroadcastKey(key) && householdCopy) {
+        let hold: BroadcastHoldReason | null;
+        try {
+          hold = await holdFor(key);
+        } catch (err) {
+          hold = 'unreadable';
+          logEvent({
+            severity: 'warn',
+            function: 'notificationScheduledSweep',
+            event: 'scheduled.hold.read.failed',
+            extra: { scheduledId: doc.id, error: (err as Error)?.message },
+          });
+        }
+        // Settings that cannot be read are no answer: the copy is neither sent
+        // nor taken off the queue, and the next tick asks again. A held copy
+        // is gone for good, so one failed read must not decide that.
+        if (hold === 'unreadable') {
+          skipped += 1;
+          continue;
+        }
+        if (hold !== null) {
+          const reason = hold;
+          const inner = (data.data ?? {}) as Record<string, unknown>;
+          const blastId = typeof inner.blastId === 'string' ? inner.blastId : '';
+          try {
+            const removed = await db().runTransaction(async (tx) => {
+              const fresh = await tx.get(doc.ref);
+              if (!fresh.exists) return false;
+              tx.delete(doc.ref);
+              if (blastId !== '') {
+                tx.set(
+                  db().collection('marketingBlasts').doc(blastId),
+                  { heldAtSend: FieldValue.increment(1), heldReason: reason },
+                  { merge: true },
+                );
+              }
+              return true;
+            });
+            if (removed) {
+              held += 1;
+              const recipientUid = typeof data.recipientUid === 'string' ? data.recipientUid : '';
+              countHeldNotice(
+                heldBatch,
+                key,
+                reason,
+                blastId === '' ? '' : [key, `blast:${blastId}`, recipientUid].join('\u0000'),
+              );
+            }
+          } catch (err) {
+            logEvent({
+              severity: 'warn',
+              function: 'notificationScheduledSweep',
+              event: 'scheduled.hold.failed',
+              extra: { scheduledId: doc.id, error: (err as Error)?.message },
+            });
+          }
+          continue;
+        }
+      }
+      try {
+        await db().runTransaction(async (tx) => {
+          const fresh = await tx.get(doc.ref);
+          if (!fresh.exists) return;
+          promoteQueuedNotification(tx, data, {
+            mode: 'scheduled-promoted',
+            origin: {
+              originScheduledId: doc.id,
+              scheduledFireAtMs: data.fireAtMs ?? null,
+            },
+          });
+          tx.delete(doc.ref);
+        });
+        promoted += 1;
+      } catch (err) {
+        logEvent({
+          severity: 'warn',
+          function: 'notificationScheduledSweep',
+          event: 'scheduled.promote.failed',
+          extra: { scheduledId: doc.id, error: (err as Error)?.message },
+        });
+      }
+    }
+  });
+
+  logEvent({
+    severity: 'info',
+    function: 'notificationScheduledSweep',
+    event: 'scheduled.sweep.complete',
+    extra: { scanned: snap.size, promoted, held, skipped },
+  });
+  return { promoted, held };
+}
 
 export const notificationScheduledSweep = onSchedule(
   // Dispatches due notifications inside the default 60s timeout. See
@@ -78,45 +213,6 @@ export const notificationScheduledSweep = onSchedule(
         extra: { error: (err as Error)?.message },
       });
     }
-    const snap = await db()
-      .collection('scheduledNotifications')
-      .where('fireAtMs', '<=', now)
-      .limit(SCAN_LIMIT)
-      .get();
-    if (snap.empty) return;
-
-    let promoted = 0;
-    for (const doc of snap.docs) {
-      const data = doc.data() as Record<string, unknown>;
-      try {
-        await db().runTransaction(async (tx) => {
-          const fresh = await tx.get(doc.ref);
-          if (!fresh.exists) return;
-          promoteQueuedNotification(tx, data, {
-            mode: 'scheduled-promoted',
-            origin: {
-              originScheduledId: doc.id,
-              scheduledFireAtMs: data.fireAtMs ?? null,
-            },
-          });
-          tx.delete(doc.ref);
-        });
-        promoted += 1;
-      } catch (err) {
-        logEvent({
-          severity: 'warn',
-          function: 'notificationScheduledSweep',
-          event: 'scheduled.promote.failed',
-          extra: { scheduledId: doc.id, error: (err as Error)?.message },
-        });
-      }
-    }
-
-    logEvent({
-      severity: 'info',
-      function: 'notificationScheduledSweep',
-      event: 'scheduled.sweep.complete',
-      extra: { scanned: snap.size, promoted },
-    });
+    await drainScheduledNotifications(now);
   }),
 );

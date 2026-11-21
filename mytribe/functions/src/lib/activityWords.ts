@@ -71,6 +71,38 @@ export function notificationDeliveredWords(name: string, channel: string, to = '
  * per channel where the reason is a channel's. `to` is the person's name, "the
  * household" or "the office", never an email address or an id.
  */
+/**
+ * #1834 (ruling 2026-11-20): a broadcast or a marketing blast held back as a
+ * whole, before anything was sent. `what` is "a broadcast" or "a marketing
+ * blast"; `households` is how many it was for.
+ * `Held back a broadcast to 40 households: notices to households are turned off. It will not be sent later`.
+ */
+export function broadcastHeldWords(
+  what: string,
+  households: number,
+  reason: 'off' | 'unreadable' | 'turnedOff',
+): string {
+  const n = Math.max(0, Math.trunc(households));
+  const to = n === 0 ? '' : ` to ${n} ${n === 1 ? 'household' : 'households'}`;
+  if (reason === 'turnedOff') {
+    return `Did not send ${what}${to}: this notification is turned off in Settings. It will not be sent later`;
+  }
+  const why =
+    reason === 'unreadable'
+      ? 'the setting for notices to households could not be read'
+      : 'notices to households are turned off';
+  return `Held back ${what}${to}: ${why}. It will not be sent later`;
+}
+/**
+ * #1834: a broadcast that was still sending when notices to households were
+ * turned off. The rest of it is stopped, never sent later.
+ */
+export function broadcastStoppedHeldWords(reason: 'off' | 'turnedOff' = 'off'): string {
+  // No counts: the stored count moves only when a chunk of the roster closes,
+  // so mid-chunk it would say nobody was contacted while some were.
+  const why = reason === 'turnedOff' ? 'broadcasts were turned off in Settings' : 'notices to households were turned off';
+  return `Stopped a broadcast part-way: ${why}. What already went cannot be recalled, and the rest will not be sent`;
+}
 /** The send switch in Settings is off: `Held back "Auntie on the way" for Dre East: notices to households are turned off`. */
 export function notificationHeldWords(name: string, to: string): string {
   const t = to.trim();

@@ -149,12 +149,14 @@ describe('useCollection', () => {
  * carry it; the owner's reads every type and carries nothing.
  */
 describe('useCollection: the drafts list', () => {
-  it('HAPPY: an Auntie\'s listener names the KinTale type, still sorted and capped', () => {
+  it('HAPPY: an Auntie\'s listener names the KinTale type and her as the maker, still sorted and capped', () => {
     captureCallbacks();
-    setCaretakerScope(true);
+    setCaretakerScope(true, 'auntie-1');
     renderHook(() => useCollection(GENERATED_DRAFTS_QUERY));
-    expect(where).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledTimes(2);
     expect(where).toHaveBeenCalledWith('communication_type', '==', 'visit_report');
+    // #2443: she lists only the KinTale drafts she made.
+    expect(where).toHaveBeenCalledWith('createdBy', '==', 'auntie-1');
     expect(orderBy).toHaveBeenCalledWith('createdOn', 'desc');
     expect(limit).toHaveBeenCalledWith(50);
     expect(onSnapshot).toHaveBeenCalledOnce();
@@ -192,13 +194,14 @@ describe('useCollection: the drafts list', () => {
   });
   it('a session that changes from Auntie to owner re-subscribes without the type', () => {
     const cb = captureCallbacks();
-    setCaretakerScope(true);
+    setCaretakerScope(true, 'auntie-1');
     const { rerender } = renderHook(() => useCollection(GENERATED_DRAFTS_QUERY));
-    expect(where).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledTimes(2);
     setCaretakerScope(false);
     rerender();
     expect(cb.unsub).toHaveBeenCalledOnce();
-    expect(where).toHaveBeenCalledTimes(1);
+    // The owner's subscription adds no predicate: the two are the Auntie's.
+    expect(where).toHaveBeenCalledTimes(2);
     expect(onSnapshot).toHaveBeenCalledTimes(2);
   });
 });

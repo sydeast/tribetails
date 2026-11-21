@@ -294,6 +294,8 @@ export interface MarketingBlast {
   queued: number;
   /** #823. The frozen roster's size. 0 on a campaign written before this shipped. */
   audienceSize: number;
+  /** #1834. Copies held at the send time and never sent; counted inside `dispatched`. Absent reads as none. */
+  heldAtSend?: number;
 }
 
 const BLAST_STATUSES: readonly BlastStatus[] = [
@@ -371,6 +373,7 @@ export async function listMarketingBlasts(limit?: number): Promise<MarketingBlas
       fanoutState: narrowFanoutState(r.fanoutState),
       queued: num(r.queued),
       audienceSize: num(r.audienceSize),
+      heldAtSend: num(r.heldAtSend),
     }))
     .sort((a, b) => b.fireAtMs - a.fireAtMs);
 }

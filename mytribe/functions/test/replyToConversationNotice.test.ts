@@ -110,11 +110,11 @@ describe('#1874 a reply from the office tells the household', () => {
     expect(householdNotices()).toHaveLength(2);
   });
 
-  it('the household send gate off sends nothing, and the reply is still saved', async () => {
+  it('#1834: notices to households switched off, the reply notice still goes (a single message passes)', async () => {
     seed({ [HOUSEHOLD_GATE_SETTINGS_PATH]: { householdNotificationsLive: false } });
     const res = await reply();
     expect(res.ok).toBe(true);
-    expect(householdNotices()).toHaveLength(0);
+    expect(householdNotices()).toHaveLength(1);
     expect(ctx.writes.some((w) => w.path.startsWith('conversations/kf1/messages/'))).toBe(true);
   });
 

@@ -125,6 +125,17 @@ describe('writeOffInvoice: the happy path', () => {
     expect(entryWrite(ctx)!.data).toMatchObject({ amountCents: 1500, paidCents: 2500, totalCents: 4000 });
   });
 
+  it('#2435: a stale stated balance writes off only what the payments left, never money already paid', async () => {
+    // Total $40, $15 recorded, $40 still stated: $25 is owed, so $25 is written off.
+    const stale = { ...OPEN, total: 40, totalCents: 4000, amountDue: 40, amountDueCents: 4000 };
+    const ctx = seed(stale, [{ amountCents: 1500 }]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const refused = await writeOffInvoiceHandler(req({ invoiceId: 'inv1', amountCents: 4000 })).catch((e) => e);
+    expect(refused).toMatchObject({ details: { code: 'write_off_amount_changed', owedCents: 2500 } });
+    const res = await writeOffInvoiceHandler(req({ invoiceId: 'inv1', amountCents: 2500 }));
+    expect(res.writtenOffCents).toBe(2500);
+    expect(entryWrite(ctx)!.data).toMatchObject({ amountCents: 2500, paidCents: 1500, totalCents: 4000 });
+  });
   it('logs a server-only audit line naming the invoice number and the amount, and sends the household nothing', async () => {
     const ctx = seed(OPEN);
     mocks.dbFn.mockReturnValue(ctx.db);

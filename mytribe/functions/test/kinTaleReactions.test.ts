@@ -174,3 +174,41 @@ describe('toggleKinTaleLoveHandler', () => {
     ).rejects.toMatchObject({ code: 'not-found' });
   });
 });
+
+/**
+ * #2461 ruling, 2026-11-20: an Auntie sees the full KinTale, its loves
+ * included. She reads the count on any KinTale she can open; pressing Love is
+ * not hers.
+ */
+describe('KinTale reactions: an Auntie reads, and does not react', () => {
+  const asAuntie = (data: unknown): CallableRequest<unknown> =>
+    ({ ...req(data, 'auntie1'), auth: { uid: 'auntie1', token: { staffRole: 'auntie' } } }) as unknown as CallableRequest<unknown>;
+
+  it('HAPPY: she reads how many loves a KinTale has, on any household, with no tribe of her own', async () => {
+    const ctx = buildDbMock({
+      docs: { [TALE_PATH]: { kinfolkId: 'f1' } },
+      queryDocs: { [REACTIONS_PATH]: [{ id: 'u1', data: {} }, { id: 'u2', data: {} }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect(await getKinTaleReactionHandler(asAuntie({ taleId: 't1' }))).toEqual({ loved: false, loveCount: 2 });
+  });
+
+  it('SAD: a KinTale nobody has loved reads zero for her', async () => {
+    const ctx = buildDbMock({ docs: { [TALE_PATH]: { kinfolkId: 'f1' } }, queryDocs: { [REACTIONS_PATH]: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect(await getKinTaleReactionHandler(asAuntie({ taleId: 't1' }))).toEqual({ loved: false, loveCount: 0 });
+  });
+
+  it('NEGATIVE: a KinTale that does not exist is not-found for her too', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({}).db);
+    await expect(getKinTaleReactionHandler(asAuntie({ taleId: 'ghost' }))).rejects.toMatchObject({ code: 'not-found' });
+  });
+
+  it('NEGATIVE: she cannot press Love, and nothing is written', async () => {
+    const ctx = buildDbMock({ docs: { [TALE_PATH]: { kinfolkId: 'f1' } }, queryDocs: { [REACTIONS_PATH]: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(toggleKinTaleLoveHandler(asAuntie({ taleId: 't1' }))).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(ctx.writes).toEqual([]);
+    expect(ctx.deletes).toEqual([]);
+  });
+});

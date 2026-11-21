@@ -62,12 +62,21 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'createShareLink', // share a tale with someone outside the household
   'addKinTaleComment', // comments are write-closed in rules; this is the only path
   'getKinTaleComments',
+  // #2461 ruling, 2026-11-20: "auntie sees the full kintale". Both reads are
+  // read-only. The loves count on a KinTale she opens; pressing Love
+  // (toggleKinTaleLove) is not hers and stays off this list.
+  'getKinTaleReaction',
+  // The labels of a KinTale's custom field answers. For her the handler lists
+  // the KinTale form only (`appliesTo: 'KINTALE'`); the other forms, and the
+  // editing callables, stay the owner's.
+  'listFormSchemas',
   'listOrphanReports', // a tale that landed without a household
   'triageOrphanReport', // assign / mark duplicate / archive bad data
   // #1563: send a generated KinTale draft to its household. Deleting one
   // (deleteGeneratedDraft) is destructive (rule 6) and stays with the owner.
-  // The handler holds her to KinTale drafts (type exactly `visit_report`), the
-  // ones the rules let her read; any other draft is the owner's.
+  // The handler holds her to KinTale drafts (type exactly `visit_report`) that
+  // she made (`createdBy` is her uid, #2443), the ones the rules let her read;
+  // any other draft is the owner's.
   'publishGeneratedDraft',
   // #2058: sending a visit's KinTale. Marks it sent and stamps its own copy of
   // the care tasks in one transaction, which a client write could not do.

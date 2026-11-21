@@ -14,7 +14,7 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
 });
 
-import { markInvoicePaidHandler } from '../src/admin/markInvoicePaid';
+import { markInvoicePaidHandler, refusedLifecycle } from '../src/admin/markInvoicePaid';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
 beforeEach(() => {
@@ -151,6 +151,25 @@ describe('markInvoicePaid validation + sad paths', () => {
     });
   });
 
+  it('#2358: refuses a cancelled invoice in plain words, and one cancelled only in the legacy field', async () => {
+    for (const doc of [
+      { kinfolkId: 'fam1', status: 'cancelled', amountDue: 40, total: 40 },
+      { kinfolkId: 'fam1', invoiceStatus: 'cancelled', amountDue: 40, total: 40 },
+    ]) {
+      const ctx = seed(doc);
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const err = await markInvoicePaidHandler(req({ invoiceId: 'inv1' })).catch((e) => e);
+      expect(err, JSON.stringify(doc)).toMatchObject({ code: 'failed-precondition' });
+      expect(err.message).toBe('This invoice is cancelled, so a payment cannot be recorded against it.');
+    }
+  });
+  it('#2358: refusedLifecycle reads the legacy status only when no status is stored', () => {
+    expect(refusedLifecycle({ invoiceStatus: 'cancelled' })).toBe(
+      'This invoice is cancelled, so a payment cannot be recorded against it.',
+    );
+    expect(refusedLifecycle({ status: 'open', invoiceStatus: 'cancelled' })).toBeNull();
+    expect(refusedLifecycle({ status: 'open' })).toBeNull();
+  });
   it('refuses a payment against a credit, whose money points the other way', async () => {
     const ctx = seed({ kinfolkId: 'fam1', status: 'credit', amountDue: -25, total: -25 });
     mocks.dbFn.mockReturnValue(ctx.db);
