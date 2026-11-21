@@ -71,6 +71,38 @@ class UnappliedPaymentTest {
             unappliedPaymentDetail(unnumbered, zone),
         )
     }
+
+    @Test
+    fun `2417 a payment whose invoice has no number leaves the invoice out and never shows its id`() {
+        val held = payment.copy(
+            invoiceId = "k3Jx9QpLm2", invoiceNumber = " ", amountCents = 4000L,
+            reason = "the invoice could not be found",
+        )
+        assertEquals("$40.00 card payment", unappliedPaymentHeadline(held))
+        assertEquals(
+            "Card payment of $40.00. There are no refunds. " +
+                "Anything you do not credit or apply stays recorded on the payment.",
+            decidePaymentLead(held),
+        )
+    }
+
+    @Test
+    fun `2417 an open invoice with no number is named in words in the picker, never by its id`() {
+        val unnumbered = ListUnappliedPaymentsResultOpenInvoice("k3Jx9QpLm2", "", 4000L)
+        assertEquals("Invoice with no number, $40.00 due", openInvoiceOptionLabel(unnumbered))
+        assertEquals("Invoice with no number, $40.00 due", openInvoiceOptionLabel(unnumbered.copy(invoiceNumber = "  ")))
+    }
+
+    @Test
+    fun `2417 money applied to an invoice with no number says so, never its id`() {
+        val note = decisionResultText(
+            result(applied = 1500, state = "settled").copy(appliedInvoiceId = "k3Jx9QpLm2", appliedInvoiceNumber = ""),
+        )
+        assertEquals(
+            "Decision saved. $15.00 on an invoice with no number (paid in full). $0.00 kept on the payment.",
+            note,
+        )
+    }
     @Test
     fun `a reason that already ends in a period is not doubled`() {
         assertEquals(

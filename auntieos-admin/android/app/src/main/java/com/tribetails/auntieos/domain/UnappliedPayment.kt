@@ -38,9 +38,9 @@ fun decidePaymentLead(p: ListUnappliedPaymentsResultPayment): String {
         "Anything you do not credit or apply stays recorded on the payment."
 }
 
-/** A picker row: "INV-1050, $40.00 due". */
+/** A picker row: "INV-1050, $40.00 due", or "Invoice with no number, $40.00 due". Never a stored id. */
 fun openInvoiceOptionLabel(inv: ListUnappliedPaymentsResultOpenInvoice): String =
-    "${inv.invoiceNumber.ifBlank { inv.invoiceId }}, ${formatCentsUsd(inv.amountDueCents)} due"
+    "${inv.invoiceNumber.trim().ifEmpty { INVOICE_WITH_NO_NUMBER_LEAD }}, ${formatCentsUsd(inv.amountDueCents)} due"
 
 const val DECIDE_NONE_OPTION = "None"
 const val NO_OPEN_INVOICES_TEXT = "No open invoices for this household."
@@ -123,10 +123,11 @@ fun decisionResultText(res: ResolveUnappliedPaymentResult): String = buildString
         append("(balance now ${formatCentsUsd(res.newAccountBalanceCents)}).")
     }
     if (res.appliedCents > 0L) {
-        val inv = res.appliedInvoiceNumber.trim().ifEmpty { res.appliedInvoiceId }
+        val number = res.appliedInvoiceNumber.trim()
+        val inv = if (number.isEmpty()) INVOICE_WITH_NO_NUMBER else "invoice $number"
         val state = if (res.appliedInvoiceState == "settled") "paid in full"
         else "${formatCentsUsd(res.appliedInvoiceAmountDueCents)} still due"
-        append(" ${formatCentsUsd(res.appliedCents)} on invoice $inv ($state).")
+        append(" ${formatCentsUsd(res.appliedCents)} on $inv ($state).")
     }
     append(" ${formatCentsUsd(res.keptCents)} kept on the payment.")
 }

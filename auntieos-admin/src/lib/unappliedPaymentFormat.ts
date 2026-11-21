@@ -5,6 +5,7 @@ import type {
 } from '../contracts/invoiceContracts.generated';
 import { MAX_CREDIT_REASON_LENGTH, formatCreditDate } from './accountCreditFormat';
 import { parseDollarsToCents } from './invoiceMoneyInput';
+import { INVOICE_WITH_NO_NUMBER, INVOICE_WITH_NO_NUMBER_LEAD } from './invoiceLedger';
 import { formatCentsUsd } from './invoiceReconcile';
 
 /**
@@ -31,14 +32,19 @@ export const ERR_REASON_TOO_LONG = 'Keep the reason to 1,000 characters or fewer
 
 export { MAX_CREDIT_REASON_LENGTH };
 
-/** "INV-1042", or the invoice id when the number is missing. */
-function invoiceLabel(p: ListUnappliedPaymentsResultPayment): string {
-  return p.invoiceNumber.trim() || p.invoiceId;
+/**
+ * " on invoice INV-1042", or nothing when the server had no number for it
+ * (#2417): the invoice on the checkout may be gone, and the line under this
+ * one already says why. Never the invoice's stored id.
+ */
+function onInvoice(p: ListUnappliedPaymentsResultPayment): string {
+  const number = p.invoiceNumber.trim();
+  return number === '' ? '' : ` on invoice ${number}`;
 }
 
 /** Row line one: "$25.00 card payment on invoice INV-1042". */
 export function unappliedPaymentTitle(p: ListUnappliedPaymentsResultPayment): string {
-  return `${formatCentsUsd(p.amountCents)} card payment on invoice ${invoiceLabel(p)}`;
+  return `${formatCentsUsd(p.amountCents)} card payment${onInvoice(p)}`;
 }
 
 /** Row line two: "Sep 27, 2026. Not applied because the invoice was already marked paid." */
@@ -49,12 +55,12 @@ export function unappliedPaymentDetail(p: ListUnappliedPaymentsResultPayment): s
 
 /** The dialog's lead line. */
 export function decideLeadLine(p: ListUnappliedPaymentsResultPayment): string {
-  return `Card payment of ${formatCentsUsd(p.amountCents)} on invoice ${invoiceLabel(p)}. There are no refunds. Anything you do not credit or apply stays recorded on the payment.`;
+  return `Card payment of ${formatCentsUsd(p.amountCents)}${onInvoice(p)}. There are no refunds. Anything you do not credit or apply stays recorded on the payment.`;
 }
 
-/** A picker option: "INV-1050, $40.00 due". */
+/** A picker option: "INV-1050, $40.00 due", or "Invoice with no number, $40.00 due". */
 export function openInvoiceOptionLabel(inv: ListUnappliedPaymentsResultOpenInvoice): string {
-  return `${inv.invoiceNumber.trim() || inv.invoiceId}, ${formatCentsUsd(inv.amountDueCents)} due`;
+  return `${inv.invoiceNumber.trim() || INVOICE_WITH_NO_NUMBER_LEAD}, ${formatCentsUsd(inv.amountDueCents)} due`;
 }
 
 export interface DecisionFormInput {
@@ -159,8 +165,9 @@ export function decisionSavedNote(res: ResolveUnappliedPaymentResult): string {
       res.appliedInvoiceState === 'settled'
         ? '(paid in full)'
         : `(${formatCentsUsd(res.appliedInvoiceAmountDueCents)} still due)`;
-    const number = res.appliedInvoiceNumber.trim() || res.appliedInvoiceId;
-    parts.push(`${formatCentsUsd(res.appliedCents)} on invoice ${number} ${state}.`);
+    const number = res.appliedInvoiceNumber.trim();
+    const invoice = number === '' ? INVOICE_WITH_NO_NUMBER : `invoice ${number}`;
+    parts.push(`${formatCentsUsd(res.appliedCents)} on ${invoice} ${state}.`);
   }
   parts.push(`${formatCentsUsd(res.keptCents)} kept on the payment.`);
   return parts.join(' ');
