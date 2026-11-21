@@ -46,13 +46,21 @@ import {
  * `alreadyPublished`. A second call while the first is still sending is refused
  * with `aborted` (`details.code: 'draft_send_in_flight'`).
  *
- * THE CLAIM IS LET GO ONLY WHEN THE PROVIDER SAID NO. `sendThroughProvider`
- * throwing means nothing went out, so the draft goes back to the status it had
- * and can be sent again. Any other ending leaves the draft approved. Unlike a
- * push, which the household's notice doc dedupes, nothing downstream would
- * catch a second email or text, so a send that was cut off after the provider
- * may have taken the message is never tried again from the same draft. It
- * answers `already_sent`. The operator writes a new draft if it has to go again.
+ * THE CLAIM IS LET GO ONLY WHEN IT IS KNOWN NOTHING WENT OUT (`nothingWentOut`):
+ * a refusal before the provider was called (a hard bounce, an address that
+ * cannot be normalized), the provider answering no, or a connection that was
+ * never made. Then the draft goes back to the status it had and can be sent
+ * again.
+ *
+ * A send that got no answer is different. A timeout or a dropped connection
+ * after the request left says nothing about whether smtp2go or Twilio took the
+ * message, and unlike a push, which the household's notice doc dedupes, nothing
+ * downstream would catch a second email or text. So the claim is KEPT, the
+ * draft is marked `sendUnconfirmedAt`, and this call and every later one for
+ * that draft are refused with `failed-precondition`
+ * (`details.code: 'draft_send_unconfirmed'`). A claim left behind by a call
+ * that died is read the same way once its lease has passed. The operator
+ * writes a new draft if the message has to go again.
  *
  * ── AN APPROVED DRAFT WITH NO STAMP ──────────────────────────────────────────
  * That is a draft an older client approved and sent itself. It answers
@@ -95,7 +103,8 @@ export interface SendGeneratedDraftResult {
   ok: true;
   /**
    * sent: this call sent it.
-   * already_sent: it went out before, or may have. Nothing new was sent.
+   * already_sent: it went out before (stamped, or approved by an older client).
+   * Nothing new was sent.
    */
   outcome: 'sent' | 'already_sent';
   channel: DraftMessageChannel;
@@ -107,6 +116,53 @@ export interface SendGeneratedDraftResult {
 
 /** `details.code` on the refusals a client tells apart from any other. */
 export const DRAFT_SEND_IN_FLIGHT = 'draft_send_in_flight';
+export const DRAFT_SEND_UNCONFIRMED = 'draft_send_unconfirmed';
+
+/** What the operator reads when a send got no answer. It claims neither a send nor a failure. */
+export const DRAFT_SEND_UNCONFIRMED_MESSAGE =
+  'The send did not get an answer, so it is not known whether this message reached the household. ' +
+  'It is not sent again from this draft. Write a new one if it has to go again.';
+
+function unconfirmed(): HttpsError {
+  return new HttpsError('failed-precondition', DRAFT_SEND_UNCONFIRMED_MESSAGE, { code: DRAFT_SEND_UNCONFIRMED });
+}
+
+/**
+ * Transport codes that mean the connection to the provider was never made, so
+ * no request reached it: DNS did not resolve, the connect was refused or timed
+ * out. Every other transport code (a reset, a headers or body timeout, the
+ * Twilio client's own timeout) can follow a request the provider accepted.
+ */
+const NEVER_CONNECTED: ReadonlySet<string> = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/**
+ * True when a throw from `sendThroughProvider` proves nothing went out.
+ *
+ *   not `unavailable`      refused before the provider was called (hard bounce,
+ *                          opt-out, an address that cannot be normalized)
+ *   an HTTP status         the provider answered, and the answer was no
+ *   no transport code      the provider answered no in its body (smtp2go's
+ *                          "no sends succeeded", its HTTP errors), or the call
+ *                          was never dialled (a missing secret)
+ *   never connected        see `NEVER_CONNECTED`
+ *
+ * What is left is a transport failure after the request may have gone: not
+ * known, so not this. `sendThroughProvider` puts the provider's status and code
+ * on `details` (`lib/providerFailure.ts`).
+ */
+export function nothingWentOut(err: unknown): boolean {
+  const e = err as { code?: unknown; details?: { providerStatus?: unknown; providerCode?: unknown } } | null;
+  if (e?.code !== 'unavailable') return true;
+  if (typeof e.details?.providerStatus === 'number') return true;
+  const code = e.details?.providerCode;
+  if (typeof code !== 'string') return true;
+  return NEVER_CONNECTED.has(code);
+}
 
 function trimmed(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
@@ -170,9 +226,24 @@ export async function sendGeneratedDraftHandler(req: CallableRequest<unknown>): 
   try {
     sent = await sendThroughProvider(claim.send);
   } catch (err) {
-    // Nothing went out, so the draft is unsent again and can be sent again.
-    await releaseClaim(draftRef, claim.claimedAt, claim.priorStatus, uid);
-    throw err;
+    if (nothingWentOut(err)) {
+      // The draft is unsent again and can be sent again.
+      await releaseClaim(draftRef, claim.claimedAt, claim.priorStatus, uid);
+      throw err;
+    }
+    // No answer. The provider may have the message, so the claim stays and
+    // the draft says so. The provider's own words go to the log, not to an
+    // operator who would read "failed" as "try again".
+    await markUnconfirmed(draftRef, claim.claimedAt, uid);
+    logEvent({
+      severity: 'error',
+      function: 'sendGeneratedDraft',
+      event: 'draft.send.unconfirmed',
+      uid,
+      errorMessage: (err as Error)?.message,
+      extra: { draftId: args.draftId, channel: claim.channel },
+    });
+    throw unconfirmed();
   }
 
   // The message is with the provider. Nothing below may fail the call: an error
@@ -242,9 +313,12 @@ async function claimDraft(
     const state = draftSendState(draft);
     if (state === 'sending') {
       const claimedMs = Date.parse(trimmed(draft['sendClaimedAt']));
-      if (!Number.isNaN(claimedMs) && Date.now() - claimedMs < DRAFT_SEND_LEASE_MS) {
+      const live = !Number.isNaN(claimedMs) && Date.now() - claimedMs < DRAFT_SEND_LEASE_MS;
+      if (live && trimmed(draft['sendUnconfirmedAt']) === '') {
         throw new HttpsError('aborted', 'This message is being sent right now.', { code: DRAFT_SEND_IN_FLIGHT });
       }
+      // A send that got no answer, or a claim left by a call that died.
+      throw unconfirmed();
     }
     if (state !== 'unsent') {
       return {
@@ -344,6 +418,37 @@ async function releaseClaim(
       severity: 'error',
       function: 'sendGeneratedDraft',
       event: 'draft.send.release.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+      extra: { draftId: draftRef.id },
+    });
+  }
+}
+
+/**
+ * The send got no answer. The claim stays, and `sendUnconfirmedAt` says why, so
+ * a later call is told the same thing at once and not "being sent right now".
+ * Only this call's own claim is marked. If this fails the claim is still
+ * there, which is refused too once its lease has passed.
+ */
+async function markUnconfirmed(
+  draftRef: FirebaseFirestore.DocumentReference,
+  claimedAt: string,
+  uid: string,
+): Promise<void> {
+  try {
+    await db().runTransaction(async (tx) => {
+      const snap = await tx.get(draftRef);
+      if (!snap.exists) return;
+      const draft = (snap.data() ?? {}) as Record<string, unknown>;
+      if (trimmed(draft['sendClaimedAt']) !== claimedAt || trimmed(draft['sentAt']) !== '') return;
+      tx.update(draftRef, { sendUnconfirmedAt: new Date().toISOString() });
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'sendGeneratedDraft',
+      event: 'draft.send.unconfirmed.mark.failed',
       uid,
       errorMessage: (err as Error)?.message,
       extra: { draftId: draftRef.id },

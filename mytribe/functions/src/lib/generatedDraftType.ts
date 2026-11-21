@@ -53,8 +53,9 @@ function carriesType(draft: DraftData, wanted: readonly string[]): boolean {
  *
  *   unsent    nobody has approved it. It can be sent.
  *   sending   `sendGeneratedDraft` holds it (`sendClaimedAt`) and has not
- *             stamped an answer. Either the send is in flight, or it was cut
- *             off after the provider may have taken the message.
+ *             stamped an answer. Either the send is in flight, or it got no
+ *             answer (`sendUnconfirmedAt`, or a claim left by a call that
+ *             died), so the provider may have taken the message.
  *   approved  approved with no stamp. Every client before #2428 approved a
  *             draft with its own write and sent it straight afterwards, so this
  *             is a message that went out the old way.

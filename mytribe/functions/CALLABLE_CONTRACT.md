@@ -3368,7 +3368,7 @@ Email or Text draft; none of them writes the approve or calls
 | `sendGeneratedDraft` | `{ draftId, kinfolkId, body, subject? }` | `{ ok, outcome, channel, recipientRedacted, sentAt }` | admin only |
 
 - `outcome` is `sent` (this call sent it) or `already_sent` (it went out
-  before, or may have; nothing new was sent). `channel` is `email` or `sms`,
+  before; nothing new was sent). `channel` is `email` or `sms`,
   read from the draft's type. `recipientRedacted` and `sentAt` are blank on
   `already_sent` for a draft an older client sent.
 - There is no address in the request. The server sends to `email` or
@@ -3380,11 +3380,18 @@ Email or Text draft; none of them writes the approve or calls
   is stamped `sentAt`, `sentChannel`, `sentTo` (masked) and
   `sentProviderMessageId`, and `sendClaimedAt` is removed.
 - Only a draft that is not `approved` and has no `sentAt` is sent. A call for
-  any other answers `already_sent`, except while a claim is under 120 seconds
-  old, which is `aborted` with `details.code: 'draft_send_in_flight'`.
-- When the provider refuses (or the address is hard-bounced) the claim is let
-  go, the draft returns to the status it had with `sendFailedAt` set, and the
-  provider's error is rethrown. Nothing else lets a claim go.
+  a stamped draft, or one approved with no claim on it (an older client sent
+  it), answers `already_sent`. While a claim is under 120 seconds old the call
+  is `aborted` with `details.code: 'draft_send_in_flight'`.
+- When it is known nothing went out (the address is hard-bounced, the provider
+  answered no, or the connection was never made) the claim is let go, the
+  draft returns to the status it had with `sendFailedAt` set, and the error is
+  rethrown. Nothing else lets a claim go.
+- When the send got no answer (a timeout or a dropped connection after the
+  request left) the claim is kept and the draft is marked `sendUnconfirmedAt`.
+  That call, every later call for the draft, and a call that finds a claim
+  older than 120 seconds are refused with `failed-precondition`,
+  `details.code: 'draft_send_unconfirmed'`. Such a draft is never sent again.
 - Refusals: `not-found` (no draft), `permission-denied` (another household's
   draft), `failed-precondition` (not an Email or Text, no address on file, an
   address that cannot be sent to, the household doc is gone),

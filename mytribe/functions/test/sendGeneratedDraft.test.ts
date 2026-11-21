@@ -34,7 +34,14 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__', delete: () => '__DELETE__' } };
 });
 
-import { sendGeneratedDraftHandler, DRAFT_SEND_LEASE_MS, DRAFT_SEND_IN_FLIGHT } from '../src/admin/sendGeneratedDraft';
+import {
+  sendGeneratedDraftHandler,
+  nothingWentOut,
+  DRAFT_SEND_LEASE_MS,
+  DRAFT_SEND_IN_FLIGHT,
+  DRAFT_SEND_UNCONFIRMED,
+  DRAFT_SEND_UNCONFIRMED_MESSAGE,
+} from '../src/admin/sendGeneratedDraft';
 import { deleteGeneratedDraftHandler } from '../src/admin/kinTaleDrafts';
 import { draftSendState, draftWentOut, draftMessageChannel } from '../src/lib/generatedDraftType';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
@@ -270,11 +277,14 @@ describe('sendGeneratedDraft: once per draft', () => {
     expect(docs['generated_drafts/d1']).toMatchObject({ generatedCopy: 'Old words.', approvedAt: '2026-11-01T10:00:00.000Z' });
   });
 
-  it('a send cut off after the provider may have taken it is never tried again', async () => {
+  it('a claim left by a call that died is never tried again, and is not called sent either', async () => {
     const stale = new Date(Date.now() - DRAFT_SEND_LEASE_MS - 1000).toISOString();
     db({ 'generated_drafts/d1': { ...EMAIL_DRAFT, status: 'approved', sendClaimedAt: stale }, ...HOUSEHOLD });
-    const res = await sendGeneratedDraftHandler(owner(emailArgs));
-    expect(res).toMatchObject({ outcome: 'already_sent', sentAt: '' });
+    await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: DRAFT_SEND_UNCONFIRMED_MESSAGE,
+      details: { code: DRAFT_SEND_UNCONFIRMED },
+    });
     expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
   });
 
@@ -327,6 +337,101 @@ describe('sendGeneratedDraft: when the provider says no', () => {
     mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('refused'));
     await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({ code: 'unavailable' });
     expect(docs['generated_drafts/d1']).not.toHaveProperty('status');
+  });
+
+  it('a connection that was never made sent nothing, so the draft is unsent again', async () => {
+    const { docs } = db({ 'generated_drafts/d2': { ...TEXT_DRAFT }, ...HOUSEHOLD });
+    mocks.twilioCreate.mockRejectedValueOnce(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }));
+    await expect(sendGeneratedDraftHandler(owner(textArgs))).rejects.toMatchObject({ code: 'unavailable' });
+    expect(draftSendState(docs['generated_drafts/d2']!)).toBe('unsent');
+    expect(docs['generated_drafts/d2']!['status']).toBe('pending');
+  });
+});
+
+describe('sendGeneratedDraft: when the send gets no answer', () => {
+  /** What `lib/email.ts` throws when the request left and no answer came back in time. */
+  const headersTimeout = () =>
+    Object.assign(new Error('smtp2go send timed out (code UND_ERR_HEADERS_TIMEOUT): fetch failed'), {
+      code: 'UND_ERR_HEADERS_TIMEOUT',
+    });
+
+  it('keeps the claim, marks the draft unconfirmed and says what is and is not known', async () => {
+    const { ctx, docs } = db({ 'generated_drafts/d1': { ...EMAIL_DRAFT }, ...HOUSEHOLD });
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(headersTimeout());
+
+    const err = await sendGeneratedDraftHandler(owner(emailArgs)).catch((e: unknown) => e as { code: string; message: string });
+
+    expect(err).toMatchObject({
+      code: 'failed-precondition',
+      message: DRAFT_SEND_UNCONFIRMED_MESSAGE,
+      details: { code: DRAFT_SEND_UNCONFIRMED },
+    });
+    // It says neither "sent" nor "failed", and never the provider's own words.
+    expect((err as { message: string }).message).not.toMatch(/smtp2go|UND_ERR|timed out|failed/i);
+    const after = docs['generated_drafts/d1']!;
+    expect(after['status']).toBe('approved');
+    expect(String(after['sendClaimedAt']) > '').toBe(true);
+    expect(String(after['sendUnconfirmedAt']) > '').toBe(true);
+    expect(after).not.toHaveProperty('sentAt');
+    expect(draftSendState(after)).toBe('sending');
+    expect(draftWentOut(after)).toBe(true);
+    // No send record is written for a send nobody can vouch for.
+    expect(ctx.adds.filter((a) => a.collection === 'external_messages')).toHaveLength(0);
+  });
+
+  it('every later call for that draft is refused the same way, at once, and sends nothing', async () => {
+    db({ 'generated_drafts/d1': { ...EMAIL_DRAFT }, ...HOUSEHOLD });
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(headersTimeout());
+    await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({ details: { code: DRAFT_SEND_UNCONFIRMED } });
+
+    // Seconds later, inside the lease: told the same thing, not "being sent right now".
+    await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: DRAFT_SEND_UNCONFIRMED },
+    });
+    await expect(sendGeneratedDraftHandler(owner({ ...emailArgs, body: 'Different words.' }))).rejects.toMatchObject({
+      details: { code: DRAFT_SEND_UNCONFIRMED },
+    });
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('a Text whose provider call timed out is held the same way', async () => {
+    const { docs } = db({ 'generated_drafts/d2': { ...TEXT_DRAFT }, ...HOUSEHOLD });
+    mocks.twilioCreate.mockRejectedValueOnce(Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' }));
+    await expect(sendGeneratedDraftHandler(owner(textArgs))).rejects.toMatchObject({ details: { code: DRAFT_SEND_UNCONFIRMED } });
+    expect(docs['generated_drafts/d2']!['status']).toBe('approved');
+    await expect(sendGeneratedDraftHandler(owner(textArgs))).rejects.toMatchObject({ details: { code: DRAFT_SEND_UNCONFIRMED } });
+    expect(mocks.twilioCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('an unconfirmed draft is kept: it cannot be deleted', async () => {
+    const { ctx } = db({ 'generated_drafts/d1': { ...EMAIL_DRAFT }, ...HOUSEHOLD });
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(headersTimeout());
+    await expect(sendGeneratedDraftHandler(owner(emailArgs))).rejects.toMatchObject({ details: { code: DRAFT_SEND_UNCONFIRMED } });
+    await expect(deleteGeneratedDraftHandler(owner({ draftId: 'd1' }))).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.deletes).toHaveLength(0);
+  });
+
+  it('nothingWentOut: only what proves no send lets a claim go', () => {
+    const unavailable = (details: Record<string, unknown>) => ({ code: 'unavailable', details });
+    // Refused before the provider was called.
+    expect(nothingWentOut({ code: 'failed-precondition' })).toBe(true);
+    expect(nothingWentOut({ code: 'invalid-argument' })).toBe(true);
+    expect(nothingWentOut(new Error('Firestore read failed'))).toBe(true);
+    // The provider answered, and the answer was no.
+    expect(nothingWentOut(unavailable({ providerStatus: 400, providerCode: 21211 }))).toBe(true);
+    expect(nothingWentOut(unavailable({ providerStatus: 503 }))).toBe(true);
+    // Answered no in the body, or never dialled: no transport code.
+    expect(nothingWentOut(unavailable({ channel: 'email' }))).toBe(true);
+    expect(nothingWentOut(unavailable({}))).toBe(true);
+    // The connection was never made.
+    for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']) {
+      expect(nothingWentOut(unavailable({ providerCode: code })), code).toBe(true);
+    }
+    // The request may have gone and nothing came back: not known.
+    for (const code of ['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'UND_ERR_SOCKET']) {
+      expect(nothingWentOut(unavailable({ providerCode: code })), code).toBe(false);
+    }
   });
 });
 
