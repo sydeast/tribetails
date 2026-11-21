@@ -299,6 +299,17 @@ describe('applyAccountCredit: what it refuses, in words for the field', () => {
     expect(err.details).toMatchObject({ reason: 'invoice_quote' });
   });
 
+  it('#2510: a draft marked only in the older status field, said in plain words', async () => {
+    const err = await refused({ invoice: { kinfolkId: 'fam1', invoiceStatus: 'draft', total: 100 } });
+    expect(err.code).toBe('failed-precondition');
+    expect(err.message).toBe('This invoice is a draft. Send it before you apply credit.');
+    expect(err.details).toMatchObject({ reason: 'invoice_draft' });
+  });
+  it('#2510: a quote marked only in the older status field, said in plain words', async () => {
+    const err = await refused({ invoice: { kinfolkId: 'fam1', invoiceStatus: 'quote', total: 100 } });
+    expect(err.message).toBe('This is a quote. Credit can be applied once it becomes an invoice.');
+    expect(err.details).toMatchObject({ reason: 'invoice_quote' });
+  });
   it('an archived invoice', async () => {
     const err = await refused({
       invoice: { kinfolkId: 'fam1', status: 'open', total: 100, archivedAt: '__TS__' },
