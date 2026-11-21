@@ -80,7 +80,7 @@ class KinSharedFieldsSaveTest {
 
     private fun captureKinChanges(): CapturingSlot<Map<String, Any>> {
         val changes = slot<Map<String, Any>>()
-        coEvery { repo.updateKinFields(any(), any(), capture(changes), any()) } returns Result.success(Unit)
+        coEvery { repo.updateKinFields(any(), capture(changes)) } returns Result.success(Unit)
         return changes
     }
 
@@ -107,7 +107,7 @@ class KinSharedFieldsSaveTest {
         val vm = editor()
         vm.saveKinChanges()
         advanceUntilIdle()
-        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any()) }
     }
 
     @Test
@@ -155,7 +155,7 @@ class KinSharedFieldsSaveTest {
         vm.updateEditKinDifferentVet(true)
         vm.saveKinChanges()
         advanceUntilIdle()
-        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any()) }
     }
 
     @Test

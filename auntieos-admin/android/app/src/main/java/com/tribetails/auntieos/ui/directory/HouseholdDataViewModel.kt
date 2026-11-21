@@ -419,24 +419,39 @@ class HouseholdDataViewModel(
             return
         }
 
-        // No document yet: the create path writes the whole record, because there
-        // is nothing on the server to clobber.
+        // No document was there when this screen loaded: the create path, which
+        // writes what was filled in to the household's one record (#2289).
         //
-        // THE NEW ID GOES STRAIGHT BACK INTO STATE. It used to be discarded, so
-        // the record kept a blank id and a second press of Save took this branch
-        // AGAIN, creating a SECOND `household_data` document for the same
-        // household; `getHouseholdData` then picked between the twins with
-        // `limit(1)`. Adopting the id is what routes the second save through the
-        // edit path, and moves the baseline with it so that save diffs against
-        // what was actually written.
+        // THE ID GOES STRAIGHT BACK INTO STATE. It used to be discarded, so the
+        // record kept a blank id and a second press of Save took this branch
+        // AGAIN. Adopting the id is what routes the second save through the edit
+        // path, and moves the baseline with it so that save diffs against what
+        // was actually written.
+        //
+        // #2289: THE RECORD IS READ BACK. The household may have made it since
+        // this screen loaded (its first vet pick in the portal does), and the
+        // save then joined that record instead of making a second one. What is
+        // stored is therefore more than this form: reading it back puts the vet
+        // the household picked on screen, and gives the next save the stored
+        // record to diff against. A read that fails falls back to the form,
+        // which is what was written.
         if (householdData.id.isBlank()) {
             viewModelScope.launch {
                 _uiState.value = _uiState.value.copy(isSaving = true, error = null)
                 repository.saveHouseholdData(householdData).onSuccess { createdId ->
-                    val created = householdData.copy(id = createdId)
+                    val stored = repository.getHouseholdData(householdData.kinfolkId).getOrNull()
+                    val created = stored ?: householdData.copy(id = createdId)
                     loadedHouseholdData = created
-                    _uiState.value = _uiState.value.copy(
+                    val current = _uiState.value
+                    _uiState.value = current.copy(
                         householdData = created,
+                        // Resolved again only from a catalog that loaded: a
+                        // failed catalog keeps its error on the card.
+                        vet = if (stored != null && current.vetError == null) {
+                            resolveHouseholdVet(created, current.clinics)
+                        } else {
+                            current.vet
+                        },
                         isSaving = false,
                         isSuccess = true,
                     )

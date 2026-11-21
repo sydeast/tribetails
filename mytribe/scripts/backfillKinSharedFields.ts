@@ -340,8 +340,12 @@ export async function applyPlan(db: Firestore, plan: Plan): Promise<number> {
   for (const h of plan.households) {
     if (h.move) {
       const move = h.move;
-      const data: Data = { primaryVetClinicId: move.clinicId, updatedAt: FieldValue.serverTimestamp() };
-      if (move.create) Object.assign(data, { kinfolkId: h.kinfolkId, createdAt: FieldValue.serverTimestamp() });
+      // #2445: ISO text, the type every other writer of `household_data`
+      // stores. Admin Android reads both as text, and a server timestamp here
+      // failed its whole read of the record.
+      const now = new Date().toISOString();
+      const data: Data = { primaryVetClinicId: move.clinicId, updatedAt: now };
+      if (move.create) Object.assign(data, { kinfolkId: h.kinfolkId, createdAt: now });
       ops.push((b) => b.set(db.doc(move.householdDataPath), data, { merge: true }));
     }
     if (h.dropRow) {
