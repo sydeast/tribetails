@@ -8,6 +8,8 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor } from '../lib/testMode';
 import { validateResponse } from '../lib/callableResponse';
+import { FALLBACK_BUSINESS_TIME_ZONE } from '../lib/businessHours';
+import { anyTimestamp, ledgerDateText, ONLINE_METHOD_FIELD, paymentMethodLabelOf } from '../lib/onlinePaymentMethod';
 import { CentsSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
   TIP_BASES,
@@ -206,14 +208,15 @@ const PaymentRowSchema = z
     appliedInvoiceId: z.string(),
     appliedInvoiceNumber: z.string(),
     method: z.string(),
+    /** #2334: the Method cell in plain words, the same rule as `getInvoiceLedger`'s. */
+    methodLabel: z.string(),
     reference: z.string(),
     /**
-     * FREE TEXT, and `''` on every Stripe row. `stripeWebhook.ts` writes a
-     * Timestamp into this field and `recordPayment.ts` writes a string; only
-     * strings are reported, exactly as `getInvoiceLedger` reports them, so the
-     * two readers of this collection cannot render the same field differently.
-     * Surfacing the webhook's timestamp is a follow-up on both readers at once,
-     * not a divergence introduced here.
+     * FREE TEXT where a person wrote it. `stripeWebhook.ts` writes a Timestamp
+     * into this field and `recordPayment.ts` writes a string; #2334 reads the
+     * Timestamp as its business day (`YYYY-MM-DD`) with the same function
+     * `getInvoiceLedger` uses, so the two readers of this collection still
+     * render the field identically.
      */
     date: z.string(),
     /**
@@ -332,6 +335,18 @@ export async function listPaymentsHandler(
   // row — the same shape `getInvoiceLedger` and `stripeWebhook` already use.
   let unresolvedAmountCount = 0;
 
+  // #2334: the business zone, read only when a row's `date` is a Timestamp.
+  let zone: string = FALLBACK_BUSINESS_TIME_ZONE;
+  if (anyTimestamp(page.map((d) => (d.data() as Record<string, unknown>)['date']))) {
+    try {
+      // Loaded on use, like every other caller: it is not in the eager graph.
+      const { businessTimeZoneReader } = await import('../lib/pastVisit.js');
+      zone = await businessTimeZoneReader()();
+    } catch {
+      // The settings read failing costs the day its zone, never the page.
+    }
+  }
+
   const payments = page.map((d) => {
     const raw = d.data() as Record<string, unknown>;
     // CENTS WIN OVER DOLLARS, but `amount`'s dollars-vs-cents reading also
@@ -369,8 +384,9 @@ export async function listPaymentsHandler(
       // it was written with a blank `appliedInvoiceId`.
       ...ledgerAppliedInvoiceOf(raw, money.appliedCents),
       method: str(raw['paymentMethod']),
+      methodLabel: paymentMethodLabelOf(raw['paymentMethod'], raw[ONLINE_METHOD_FIELD]),
       reference: str(raw['referenceNumber']),
-      date: str(raw['date']),
+      date: ledgerDateText(raw['date'], zone),
       notes: str(raw['notes']),
       recordedBy: strOrNull(raw['recordedBy']),
     };

@@ -28,6 +28,8 @@ import {
   type ApplyStep,
 } from '../lib/paymentApply';
 import { creditAccount } from '../lib/accountCredit';
+import { stageCreditInEvent } from '../lib/creditLedger';
+import { hiddenFromHousehold } from '../lib/quoteDecision';
 import { centsToDollars, formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 // #1005: money notices go to a member with billing access, not the last-synced account.
@@ -959,6 +961,29 @@ export async function recordPaymentHandler(
         })
       : null;
     creditAccount(db(), tx, { kinfolkId, cents: creditedToAccountCents });
+    // #1939: and the credit's line in the household's credit history, on the
+    // same transaction, so the history lists where this balance came from.
+    // The number is the one this transaction read off the invoice, never the
+    // caller's `invoiceNumber` (#2453: that is whatever the app sent), so the
+    // household's line reads "From a payment" when no invoice was read.
+    // The household reads this line, so a display link only lends its number
+    // when that invoice is this household's own and one it may see: an unsent
+    // draft (or a withdrawn or archived quote) is never named to it, and nor
+    // is an invoice stamped with no household. An apply already refuses both.
+    const householdLinkNumber =
+      linkedInvoice !== undefined && linkedInvoice['kinfolkId'] === kinfolkId && !hiddenFromHousehold(linkedInvoice)
+        ? linkedInvoiceNumber
+        : '';
+    stageCreditInEvent(db(), tx, {
+      kinfolkId,
+      source: 'payment',
+      sourceId: ref.id,
+      invoiceId: staged?.invoiceId || args.invoiceId,
+      invoiceNumber: staged?.invoiceNumber || householdLinkNumber,
+      amountCents: creditedToAccountCents,
+      actorUid: actor.uid,
+      atMs: Date.now(),
+    });
     // No `id` field inside the doc: Android's `@DocumentId` property is
     // excluded from serialization, so the direct write never stored one either.
     const row: Record<string, unknown> = {

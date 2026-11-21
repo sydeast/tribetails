@@ -27,6 +27,12 @@ export function paymentDayLabel(paidAt: string | null): string {
   return day === '' ? 'no date recorded' : day;
 }
 
+/** The stored method word for a checkout payment. Never shown. */
+const STORED_CHECKOUT_METHOD = 'stripe';
+
+/** #2334: what a checkout payment with no stored method reads as, the server's own words. */
+export const ONLINE_PAYMENT_LABEL = 'Online payment';
+
 /**
  * How a payment describes itself in one line: its method, or the honest absence
  * of one.
@@ -36,8 +42,14 @@ export function paymentDayLabel(paidAt: string | null): string {
  * a hurry is still a payment), and a row that renders as an empty cell reads as
  * a rendering bug rather than as a fact about the record.
  */
-export function paymentMethodLabel(method: string | null): string {
+export function paymentMethodLabel(method: string | null, methodLabel?: string | null): string {
+  // #2334: the server's plain words win (Card, Klarna, Affirm, "Online
+  // payment"). A server older than the field sends none, and the stored word
+  // for a checkout payment is never shown: it reads "Online payment".
+  const label = (methodLabel ?? '').trim();
+  if (label !== '') return label;
   const trimmed = (method ?? '').trim();
+  if (trimmed.toLowerCase() === STORED_CHECKOUT_METHOD) return ONLINE_PAYMENT_LABEL;
   return trimmed === '' ? 'no method recorded' : trimmed;
 }
 

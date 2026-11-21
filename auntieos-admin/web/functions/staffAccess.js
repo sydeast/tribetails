@@ -78,11 +78,12 @@ const AUNTIE_ALLOWED_ENDPOINTS = new Set([
 //   listAdmins         Reads the admin roster. Account administration, step 3.
 //   generateAuntieCopy Reads `dossiers/{kinfolkId}` and puts its rawSummary,
 //                      communicationStyle, householdNotes and
-//                      relationshipWithAuntie straight into the prompt and the
-//                      returned draft (generate.js:216-221, :359). Dossiers are
-//                      admin-only by the ruling, so opening this would launder a
-//                      dossier past the boundary through the copy generator.
-//                      Step 2, and it spends Anthropic credit besides.
+//                      relationshipWithAuntie into the prompt for every kind of
+//                      message, KinTales included as background since the
+//                      #2052 ruling (generate.js `buildUserMessage`,
+//                      `readTaleBackground`). Dossiers are admin-only by the
+//                      ruling, so this stays with the owner. Step 2, and it
+//                      spends Anthropic credit besides.
 //   writeDraft         The three n8n-era draft endpoints. Step 7: NO LIVE CALLER.
 //   getDraft           n8n is retired and nothing in any client tree calls
 //   getTrainingDoc     `/api/draft/write`, `/api/draft/get` or

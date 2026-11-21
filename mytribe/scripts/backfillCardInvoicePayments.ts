@@ -338,6 +338,9 @@ export function planInvoiceBackfill(
         sourcePaymentId: ledger.id,
         stripeEventId: str(ledger.data['stripeEventId']),
         ...(intent ? { stripePaymentIntentId: intent } : {}),
+        // #2334: the actual method, when the ledger row has one, so the two
+        // tables name one payment the same way.
+        ...(typeof ledger.data['onlineMethod'] === 'string' ? { onlineMethod: ledger.data['onlineMethod'] } : {}),
         backfilledBy: 'backfillCardInvoicePayments',
       },
     };

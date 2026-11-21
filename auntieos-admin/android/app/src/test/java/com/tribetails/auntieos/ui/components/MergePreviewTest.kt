@@ -30,12 +30,12 @@ class MergePreviewTest {
             AuntieOSTheme {
                 MergePreview(
                     subject = "Welcome",
-                    body = "Hi {{kinfolkName}}, see {{link}}.",
+                    body = "Hi {{kinfolkName}}, see {{score}}.",
                     sample = mapOf("kinfolkName" to "Sandy"),
                 )
             }
         }
-        compose.onNodeWithText("1 merge field has no sample value: link").assertIsDisplayed()
+        compose.onNodeWithText("1 merge field has no sample value: score").assertIsDisplayed()
     }
 
     @Test
@@ -70,10 +70,10 @@ class MergePreviewTest {
     fun `pluralizes and names every distinct key`() {
         compose.setContent {
             AuntieOSTheme {
-                MergePreview(subject = "Welcome", body = "{{link}} {{code}} {{link}}", sample = emptyMap<String, String>())
+                MergePreview(subject = "Welcome", body = "{{score}} {{code}} {{score}}", sample = emptyMap<String, String>())
             }
         }
-        compose.onNodeWithText("2 merge fields have no sample value: link, code").assertIsDisplayed()
+        compose.onNodeWithText("2 merge fields have no sample value: score, code").assertIsDisplayed()
     }
 
     @Test
@@ -123,10 +123,10 @@ class MergePreviewTest {
     fun `the standalone warning names the same fields without drawing a card`() {
         compose.setContent {
             AuntieOSTheme {
-                MergeFieldWarning(subject = "Hi", body = "see {{link}}", sample = ENRICHABLE_SAMPLE)
+                MergeFieldWarning(subject = "Hi", body = "see {{score}}", sample = ENRICHABLE_SAMPLE)
             }
         }
-        compose.onNodeWithText("1 merge field has no sample value: link").assertIsDisplayed()
+        compose.onNodeWithText("1 merge field has no sample value: score").assertIsDisplayed()
     }
 
     @Test
@@ -147,10 +147,10 @@ class MergePreviewTest {
                     subject = "Hi",
                     body = "Plain.",
                     sample = ENRICHABLE_SAMPLE,
-                    html = "<a href=\"{{link}}\">Account</a>",
+                    html = "<a href=\"{{score}}\">Account</a>",
                 )
             }
         }
-        compose.onNodeWithText("1 merge field has no sample value: link").assertIsDisplayed()
+        compose.onNodeWithText("1 merge field has no sample value: score").assertIsDisplayed()
     }
 }

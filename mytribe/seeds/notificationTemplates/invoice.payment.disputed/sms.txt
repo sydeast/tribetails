@@ -1,1 +1,1 @@
-{{Business}}: {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Reason: {{disputeReason}}.
+{{Business}}: {{disputeAmount}}{{#if invoiceNumber}} on invoice {{invoiceNumber}}{{/if}} is {{disputeStatus}} with the cardholder's bank. Reason: {{disputeReason}}.
