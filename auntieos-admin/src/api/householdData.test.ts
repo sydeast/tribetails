@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { addDoc, collection, doc, getDoc, getDocs, limit, query, updateDoc, where } = vi.hoisted(() => ({
+const { addDoc, collection, doc, getDoc, getDocs, limit, query, setDoc, updateDoc, where } = vi.hoisted(() => ({
   addDoc: vi.fn(),
   collection: vi.fn(),
   doc: vi.fn(),
@@ -8,6 +8,7 @@ const { addDoc, collection, doc, getDoc, getDocs, limit, query, updateDoc, where
   getDocs: vi.fn(),
   limit: vi.fn(),
   query: vi.fn(),
+  setDoc: vi.fn(),
   updateDoc: vi.fn(),
   where: vi.fn(),
 }));
@@ -19,6 +20,7 @@ vi.mock('firebase/firestore', () => ({
   getDocs,
   limit,
   query,
+  setDoc,
   updateDoc,
   where,
 }));
@@ -33,9 +35,11 @@ import {
 } from './householdData';
 
 beforeEach(() => {
-  for (const fn of [addDoc, collection, doc, getDoc, getDocs, limit, query, updateDoc, where]) fn.mockReset();
+  for (const fn of [addDoc, collection, doc, getDoc, getDocs, limit, query, setDoc, updateDoc, where]) fn.mockReset();
   collection.mockReturnValue('collection-ref');
-  doc.mockReturnValue('doc-ref');
+  // A ref that says where it points, so a test can tell WHICH document a write went to.
+  doc.mockImplementation((_db: unknown, ...segments: string[]) => ({ path: segments.join('/') }));
+  setDoc.mockResolvedValue(undefined);
   query.mockReturnValue('query-ref');
   where.mockImplementation((...args: unknown[]) => ({ where: args }));
   limit.mockImplementation((n: number) => ({ limit: n }));
@@ -110,29 +114,111 @@ describe('getDossierHouseholdNotes', () => {
 });
 
 describe('saveHouseholdSection', () => {
-  it('creates the full document when no record exists yet', async () => {
-    addDoc.mockResolvedValue({ id: 'hd-new' });
-    const saved = await saveHouseholdSection(blankHouseholdRecord('kf1'), {
-      primaryVetName: 'Barton Creek',
+  /**
+   * #2289: one record per household. The create used to be an `addDoc` under an
+   * auto id while the portal's vet pick made `household_data/{householdId}`,
+   * so a save from a screen that loaded with no record, after the household had
+   * picked a vet, made a second record.
+   */
+  describe('the first save for a household (#2289)', () => {
+    /** The document the create wrote to, and what it sent. */
+    function created() {
+      const call = setDoc.mock.calls[0] as [{ path: string }, Record<string, string>, { merge?: boolean }];
+      return { path: call[0].path, payload: call[1], options: call[2] };
+    }
+
+    it('creates the record at the household id, never under an auto id', async () => {
+      getDoc.mockResolvedValue({ exists: () => false });
+      const saved = await saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: 'Pantry' });
+
+      expect(addDoc).not.toHaveBeenCalled();
+      expect(setDoc).toHaveBeenCalledTimes(1);
+      expect(created().path).toBe('household_data/kf1');
+      expect(created().options).toEqual({ merge: true });
+      expect(saved._id).toBe('kf1');
     });
 
-    const payload = addDoc.mock.calls[0]?.[1] as Record<string, string>;
-    expect(payload['kinfolkId']).toBe('kf1');
-    expect(payload['primaryVetName']).toBe('Barton Creek');
-    // All 30 fields plus the three envelope fields, so android's toObject finds
-    // a complete document rather than a partial one.
-    expect(Object.keys(payload)).toHaveLength(35);
-    // `_id` is ours, not the document's. It must never be written into the body.
-    expect(payload).not.toHaveProperty('_id');
-    expect(saved._id).toBe('hd-new');
-  });
+    it('sends only what was filled in, so a blank form cannot wipe a field another side wrote', async () => {
+      getDoc.mockResolvedValue({ exists: () => false });
+      await saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: 'Pantry', treatLocation: '' });
 
-  it('stamps createdAt and updatedAt as parseable ISO strings on create', async () => {
-    addDoc.mockResolvedValue({ id: 'hd-new' });
-    await saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: 'Pantry' });
-    const payload = addDoc.mock.calls[0]?.[1] as Record<string, string>;
-    expect(Number.isNaN(Date.parse(payload['createdAt'] ?? ''))).toBe(false);
-    expect(Number.isNaN(Date.parse(payload['updatedAt'] ?? ''))).toBe(false);
+      const { payload } = created();
+      expect(Object.keys(payload).sort()).toEqual(['createdAt', 'foodLocation', 'kinfolkId', 'updatedAt']);
+      expect(payload['kinfolkId']).toBe('kf1');
+      // The field the portal's vet pick writes. A blank here is what erased it.
+      expect(payload).not.toHaveProperty('primaryVetClinicId');
+      // `_id` is ours, not the document's. It must never be written into the body.
+      expect(payload).not.toHaveProperty('_id');
+    });
+
+    it('stamps createdAt and updatedAt as parseable ISO strings on create', async () => {
+      getDoc.mockResolvedValue({ exists: () => false });
+      await saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: 'Pantry' });
+      const { payload } = created();
+      expect(Number.isNaN(Date.parse(payload['createdAt'] ?? ''))).toBe(false);
+      expect(Number.isNaN(Date.parse(payload['updatedAt'] ?? ''))).toBe(false);
+    });
+
+    it('the household picked a vet since this screen loaded: the save joins that record and the vet stands', async () => {
+      getDoc.mockResolvedValue({
+        exists: () => true,
+        data: () => ({ kinfolkId: 'kf1', primaryVetClinicId: 'clinic_riverside', createdAt: '2026-11-20T09:00:00.000Z' }),
+      });
+      const saved = await saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: 'Pantry' });
+
+      const { path, payload } = created();
+      expect(path).toBe('household_data/kf1');
+      expect(addDoc).not.toHaveBeenCalled();
+      // Nothing that could move the household's vet or the record's first date.
+      expect(payload).not.toHaveProperty('primaryVetClinicId');
+      expect(payload).not.toHaveProperty('createdAt');
+      expect(payload['foodLocation']).toBe('Pantry');
+      // And the screen is handed the vet it had not seen.
+      expect(saved).toMatchObject({
+        _id: 'kf1',
+        kinfolkId: 'kf1',
+        primaryVetClinicId: 'clinic_riverside',
+        foodLocation: 'Pantry',
+        createdAt: '2026-11-20T09:00:00.000Z',
+      });
+    });
+
+    it('a record is there and the save adds nothing: no write, and the record is handed back', async () => {
+      getDoc.mockResolvedValue({ exists: () => true, data: () => ({ kinfolkId: 'kf1', primaryVetClinicId: 'clinic_riverside' }) });
+      const saved = await saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: '' });
+      expect(setDoc).not.toHaveBeenCalled();
+      expect(saved).toMatchObject({ _id: 'kf1', primaryVetClinicId: 'clinic_riverside' });
+    });
+
+    it('with no signal the record cannot be looked up: the save still goes to the household id, without a first date', async () => {
+      getDoc.mockRejectedValue(new Error('Failed to get document because the client is offline.'));
+      const saved = await saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: 'Pantry' });
+
+      const { path, payload, options } = created();
+      expect(path).toBe('household_data/kf1');
+      expect(options).toEqual({ merge: true });
+      expect(Object.keys(payload).sort()).toEqual(['foodLocation', 'kinfolkId', 'updatedAt']);
+      expect(saved).toMatchObject({ _id: 'kf1', foodLocation: 'Pantry' });
+    });
+
+    it('the next save edits that same record', async () => {
+      getDoc.mockResolvedValue({ exists: () => false });
+      updateDoc.mockResolvedValue(undefined);
+      const saved = await saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: 'Pantry' });
+      await saveHouseholdSection(saved, { treatLocation: 'Jar' });
+
+      expect(setDoc).toHaveBeenCalledTimes(1);
+      expect((updateDoc.mock.calls[0]?.[0] as { path: string }).path).toBe('household_data/kf1');
+      expect(Object.keys(updateDoc.mock.calls[0]?.[1] as Record<string, string>).sort()).toEqual(['treatLocation', 'updatedAt']);
+    });
+
+    it('a refused create is reported, not swallowed', async () => {
+      getDoc.mockResolvedValue({ exists: () => false });
+      setDoc.mockRejectedValue(new Error('permission-denied'));
+      await expect(saveHouseholdSection(blankHouseholdRecord('kf1'), { foodLocation: 'Pantry' })).rejects.toThrow(
+        'permission-denied',
+      );
+    });
   });
 
   it('PATCHES an existing record: only the edited fields travel, never all 30', async () => {
@@ -186,5 +272,6 @@ describe('saveHouseholdSection', () => {
       /kinfolk id/i,
     );
     expect(addDoc).not.toHaveBeenCalled();
+    expect(setDoc).not.toHaveBeenCalled();
   });
 });

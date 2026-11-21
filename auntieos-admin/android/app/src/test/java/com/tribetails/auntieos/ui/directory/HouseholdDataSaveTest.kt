@@ -163,15 +163,15 @@ class HouseholdDataSaveTest {
     }
 
     /**
-     * The CREATE path still writes the whole document: there is no document yet,
-     * so there is nothing to clobber, and a complete one keeps android's
-     * `toObject(HouseholdData::class.java)` and the web reader happy. Same
-     * reasoning as the web port's create branch.
+     * The CREATE path hands the repository the form as the operator filled it.
+     * What goes on the wire is the repository's to choose
+     * ([householdCreateFields]: only what was filled in, merged into the
+     * household's one record), and `AuntieRepositoryHouseholdCreateTest` pins it.
      */
     @Test
-    fun `a household with no record yet still writes the whole document`() = runTest(testDispatcher) {
+    fun `a household with no record yet goes through the create path`() = runTest(testDispatcher) {
         val written = slot<HouseholdData>()
-        coEvery { repo.saveHouseholdData(capture(written)) } returns Result.success("hd_new")
+        coEvery { repo.saveHouseholdData(capture(written)) } returns Result.success("kf9")
         coEvery { repo.getHouseholdData("kf9") } returns Result.success(null)
 
         val vm = HouseholdDataViewModel(repository = repo)
@@ -184,6 +184,102 @@ class HouseholdDataSaveTest {
         assertEquals("kf9", written.captured.kinfolkId)
         assertEquals("pantry", written.captured.foodLocation)
         coVerify(exactly = 0) { repo.updateHouseholdFields(any(), any()) }
+    }
+
+    /**
+     * #2289, the issue's own sequence. The screen loaded with no record. The
+     * household then picked a vet in the portal, which made the record. The
+     * operator saves: that save joins the household's record, so what is stored
+     * holds a vet this form never had.
+     *
+     * The screen must show that vet, and it must become the baseline. With the
+     * form kept as the baseline, the vet card stayed empty until the screen was
+     * reopened.
+     */
+    @Test
+    fun `the household picked a vet while this screen sat open - the first save shows it and the next save leaves it alone`() = runTest(testDispatcher) {
+        val joined = HouseholdData(id = "kf9", kinfolkId = "kf9", primaryVetClinicId = "clinic_riverside", foodLocation = "pantry")
+        coEvery { repo.getHouseholdData("kf9") } returns Result.success(null) andThen Result.success(joined)
+        coEvery { repo.saveHouseholdData(any()) } returns Result.success("kf9")
+        val changes = captureChanges()
+
+        val vm = HouseholdDataViewModel(repository = repo)
+        vm.loadHouseholdData("kf9")
+        advanceUntilIdle()
+        vm.updateFoodLocation("pantry")
+        vm.saveHouseholdData()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.isSuccess)
+        assertEquals("kf9", vm.uiState.value.householdData.id)
+        assertEquals("clinic_riverside", vm.uiState.value.householdData.primaryVetClinicId)
+        assertEquals("pantry", vm.uiState.value.householdData.foodLocation)
+
+        vm.updateHouseholdRules("shoes off")
+        vm.saveHouseholdData()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repo.saveHouseholdData(any()) }
+        assertEquals(mapOf("householdRules" to "shoes off"), changes.captured)
+    }
+
+    /** The clinic list failed to load: the read-back must not swap that error for a vet resolved against nothing. */
+    @Test
+    fun `a first save keeps the clinic list error on the vet card`() = runTest(testDispatcher) {
+        val joined = HouseholdData(id = "kf9", kinfolkId = "kf9", primaryVetClinicId = "clinic_riverside", foodLocation = "pantry")
+        coEvery { repo.getVetClinicsOnce() } returns Result.failure(RuntimeException("offline"))
+        coEvery { repo.getHouseholdData("kf9") } returns Result.success(null) andThen Result.success(joined)
+        coEvery { repo.saveHouseholdData(any()) } returns Result.success("kf9")
+
+        val vm = HouseholdDataViewModel(repository = repo)
+        vm.loadHouseholdData("kf9")
+        advanceUntilIdle()
+        vm.updateFoodLocation("pantry")
+        vm.saveHouseholdData()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.isSuccess)
+        assertEquals("clinic_riverside", vm.uiState.value.householdData.primaryVetClinicId)
+        assertEquals(null, vm.uiState.value.vet)
+        assertTrue(vm.uiState.value.vetError.orEmpty().isNotBlank())
+    }
+
+    /** The read-back is a courtesy. When it fails, the save still succeeded and the form is what was written. */
+    @Test
+    fun `a first save whose read-back fails keeps the form and the new id`() = runTest(testDispatcher) {
+        coEvery { repo.getHouseholdData("kf9") } returns Result.success(null) andThen Result.failure(RuntimeException("offline"))
+        coEvery { repo.saveHouseholdData(any()) } returns Result.success("kf9")
+
+        val vm = HouseholdDataViewModel(repository = repo)
+        vm.loadHouseholdData("kf9")
+        advanceUntilIdle()
+        vm.updateFoodLocation("pantry")
+        vm.saveHouseholdData()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.isSuccess)
+        assertFalse(vm.uiState.value.isSaving)
+        assertEquals("kf9", vm.uiState.value.householdData.id)
+        assertEquals("pantry", vm.uiState.value.householdData.foodLocation)
+    }
+
+    @Test
+    fun `a first save the server refuses says so and keeps the edit`() = runTest(testDispatcher) {
+        coEvery { repo.getHouseholdData("kf9") } returns Result.success(null)
+        coEvery { repo.saveHouseholdData(any()) } returns Result.failure(RuntimeException("PERMISSION_DENIED"))
+
+        val vm = HouseholdDataViewModel(repository = repo)
+        vm.loadHouseholdData("kf9")
+        advanceUntilIdle()
+        vm.updateFoodLocation("pantry")
+        vm.saveHouseholdData()
+        advanceUntilIdle()
+
+        assertFalse(vm.uiState.value.isSuccess)
+        assertFalse(vm.uiState.value.isSaving)
+        assertTrue(vm.uiState.value.error.orEmpty().contains("PERMISSION_DENIED"))
+        assertEquals("pantry", vm.uiState.value.householdData.foodLocation)
+        assertEquals("", vm.uiState.value.householdData.id)
     }
 
     /**

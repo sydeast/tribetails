@@ -28,9 +28,9 @@ import com.tribetails.auntieos.domain.kinfolkScopeFilter
 import com.tribetails.auntieos.domain.scopedKinfolkId
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
 import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunFrom
-import com.tribetails.auntieos.ui.directory.familyKinPathStamp
 import com.tribetails.auntieos.ui.kintales.AskAuntieCopy
 import com.tribetails.auntieos.ui.kintales.GenerateFailure
+import com.tribetails.auntieos.ui.directory.householdCreateFields
 import com.tribetails.auntieos.ui.directory.restoredKinfolkStatusFrom
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.voice.VoiceAccessToken
@@ -698,13 +698,14 @@ class AuntieRepository(
         AuntieLog.i("Creating kin: ${kin.name} for kinfolk: ${kin.kinfolkId}")
         authGate.ensureAuthenticated()
         val docRef = firestore.collection("kin").add(kin).await()
-        // Additive FK for the MyTribe pet mirror (onFlatKinWrite). When the pet
-        // belongs to a known kinfolk, stamp kinfolkId + familyKinPath so the
-        // trigger can mirror this staff-created pet into the family tree at
-        // families/{kinfolkId}/kin/{kinId}. The kin doc id is only known after
-        // the add() resolves, so this is a follow-up merge that leaves the
-        // existing Kin field writes untouched.
-        stampFamilyKinPath(kinId = docRef.id, kinfolkId = kin.kinfolkId)
+        // #2290: NO link is written here. `familyKinPath`, the link to the
+        // household's copy of this Kin, is the server's to set: `onFlatKinWrite`
+        // ties a new Kin to the copy the household already has (stamped with
+        // this record, or an unlinked Kin of the same name) and only makes a
+        // copy when there is none. This used to follow the add with a write of
+        // `families/{kinfolkId}/kin/{this id}`, a copy nobody had made. That
+        // raced the server's name match and won either way: the household got a
+        // second copy of a Kin it already had.
         kin.copy(id = docRef.id).also {
             AuntieLog.i("Created kin with ID: ${it.id}")
         }
@@ -733,21 +734,19 @@ class AuntieRepository(
      * [com.tribetails.auntieos.ui.directory.KIN_DIFF_FIELDS] names what may be
      * written.
      *
-     * #2115: the link to the household's copy (`familyKinPath`) is left as it
-     * is. It used to be re-stamped on EVERY save as
-     * `families/{kinfolkId}/kin/{this id}`, which is right only for a Kin the
-     * office made first. A Kin the household added in the portal has its copy
-     * under another id, so one save re-pointed it at a copy that does not exist.
-     * [familyKinPath] is the link the Kin was loaded with: it is written only
-     * when that is blank; a link that is there is never changed, and null (not
-     * known) writes nothing.
-     * [familyKinPathStamp] decides.
+     * #2115, #2290: the link to the household's copy (`familyKinPath`) is
+     * NEVER written from here. It used to be re-stamped on every save as
+     * `families/{kinfolkId}/kin/{this id}` (#2115), then only when the loaded
+     * Kin had none. Both were wrong for the same reason: this client cannot
+     * know which household copy is the Kin's. A Kin just made here is held with
+     * a blank link while the server ties it to the copy the household already
+     * has, and a save from that stale copy pointed the record back at a copy
+     * that does not exist. The server sets the link (`onFlatKinWrite`), on this
+     * very write when the Kin has none.
      */
     suspend fun updateKinFields(
         documentId: String,
-        kinfolkId: String,
         changes: Map<String, Any>,
-        familyKinPath: String?,
     ): Result<Unit> = runCatchingCancellable {
         require(documentId.isNotBlank()) { "updateKinFields needs a kin document id" }
         require(changes.isNotEmpty()) { "updateKinFields called with no changed fields" }
@@ -756,14 +755,6 @@ class AuntieRepository(
         val payload: Map<String, Any> = changes + mapOf("updatedAt" to FieldValue.serverTimestamp())
         firestore.collection("kin").document(documentId)
             .set(payload, com.google.firebase.firestore.SetOptions.merge()).await()
-        // Additive FK for the MyTribe pet mirror (onFlatKinWrite), only where the
-        // Kin has no link yet (#2115). Leaves the
-        // field writes above untouched.
-        familyKinPathStamp(
-            kinId = documentId,
-            kinfolkId = kinfolkId,
-            existingFamilyKinPath = familyKinPath,
-        )?.let { stamp -> writeFamilyKinPathStamp(documentId, stamp) }
         AuntieLog.d("Update successful for kin: $documentId")
         Unit
     }.onFailure { AuntieLog.e("Failed to update kin $documentId", it) }
@@ -789,28 +780,6 @@ class AuntieRepository(
             ?: error("setKinArchived: non-map payload")
         raw["flatStatus"] as? String ?: if (archived) "archived" else "active"
     }.onFailure { AuntieLog.e("Failed to set kin $kinId archived=$archived", it) }
-    /**
-     * Additively stamps the MyTribe mirror FK (kinfolkId + familyKinPath) onto a
-     * flat kin/{kinId} doc. No-op when the pet has no known kinfolk. Used by
-     * createKin, whose new Kin has no household copy yet, so onFlatKinWrite can
-     * mirror staff pets into the family tree. SetOptions.merge() so only these
-     * two fields are written. An update goes through [familyKinPathStamp] first
-     * (#2115).
-     */
-    private suspend fun stampFamilyKinPath(kinId: String, kinfolkId: String) {
-        familyKinPathStamp(kinId, kinfolkId, existingFamilyKinPath = "")
-            ?.let { writeFamilyKinPathStamp(kinId, it) }
-    }
-
-    private suspend fun writeFamilyKinPathStamp(kinId: String, stamp: Map<String, String>) {
-        runCatchingCancellable {
-            firestore.collection("kin").document(kinId).set(
-                stamp,
-                com.google.firebase.firestore.SetOptions.merge(),
-            ).await()
-        }.onFailure { AuntieLog.e("Failed to stamp familyKinPath on kin $kinId", it) }
-    }
-
     suspend fun getDossier(kinfolkId: String): Result<Dossier?> = runCatchingCancellable {
         AuntieLog.d("Fetching dossier for kinfolk: $kinfolkId")
         authGate.ensureAuthenticated()
@@ -2262,39 +2231,45 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Failed to get household data for $kinfolkId", it) }
 
     /**
-     * CREATES the household's first record. Whole-document write, which is
-     * correct exactly here: there is no document yet, so there is nothing to
-     * clobber, and a complete one keeps `toObject(HouseholdData::class.java)`
-     * and the React reader happy. Same reasoning as the web port's create branch
-     * (`auntieos-admin/src/api/householdData.ts:141-150`).
+     * CREATES the household's first record, at `household_data/{kinfolkId}`
+     * (#2289): ONE record per household. The portal's vet pick makes its record
+     * at that same id (`writeHouseholdVetClinicId`), and this used to mint an
+     * auto id, so a save from a screen that loaded with no record, after the
+     * household had picked a vet, made a second record and the two sides read
+     * different ones. `firestore.rules` refuses a create at any other id.
+     *
+     * A MERGE of what the operator filled in ([householdCreateFields]), inside a
+     * transaction that reads the document first. A whole-model write here would
+     * put `primaryVetClinicId = ""` over the vet the household just picked.
+     * `toObject(HouseholdData::class.java)` and the React reader both read a
+     * missing field as blank.
      *
      * EDITING an existing record goes through [updateHouseholdFields]. This used
      * to take that path too, `.set(loadedModel.copy(updatedAt = now), merge())`,
      * and that whole-model write is what silently reverted concurrent web edits.
      * The non-blank id now fails loud rather than quietly re-opening it.
      *
-     * RETURNS THE NEW DOCUMENT ID, and that return value is load-bearing. It
-     * used to be `Result<Unit>`: the id was minted here and died here, so the
-     * caller's in-memory record kept a blank id and a second press of Save took
-     * this create branch AGAIN, writing a SECOND `household_data` document for
-     * the same household. [getHouseholdData] reads
-     * `whereEqualTo("kinfolkId").limit(1)`, so which of the two duplicates the
-     * app then shows is arbitrary, and every edit after that lands on whichever
-     * one the screen happened to hold. Handing the id back is what lets the
-     * caller switch to the edit path on the second save.
+     * RETURNS THE DOCUMENT ID, and that return value is load-bearing. It used
+     * to be `Result<Unit>`, so the caller's in-memory record kept a blank id and
+     * a second press of Save took this create branch AGAIN. Handing the id back
+     * is what lets the caller switch to the edit path on the second save.
      */
     suspend fun saveHouseholdData(data: HouseholdData): Result<String> = runCatchingCancellable {
         require(data.id.isBlank()) {
             "saveHouseholdData creates; edit ${data.id} through updateHouseholdFields"
         }
+        require(data.kinfolkId.isNotBlank()) { "saveHouseholdData needs the household's id" }
         authGate.ensureAuthenticated()
         val timestamp = getCurrentTimestamp()
-        val docRef = firestore.collection("household_data").document()
-        docRef.set(data.copy(
-            id = docRef.id,
-            createdAt = if (data.createdAt.isBlank()) timestamp else data.createdAt,
-            updatedAt = timestamp
-        )).await()
+        val docRef = firestore.collection("household_data").document(data.kinfolkId)
+        firestore.runTransaction { txn ->
+            val recordExists = txn.get(docRef).exists()
+            txn.set(
+                docRef,
+                householdCreateFields(data, timestamp, recordExists),
+                com.google.firebase.firestore.SetOptions.merge(),
+            )
+        }.await()
         docRef.id
     }.onFailure { AuntieLog.e("Failed to save household data for ${data.kinfolkId}", it) }
 
