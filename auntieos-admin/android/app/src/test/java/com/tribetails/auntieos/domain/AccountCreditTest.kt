@@ -2,10 +2,13 @@ package com.tribetails.auntieos.domain
 
 import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultCredit
 import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultCreditApplication
+import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultEarlierCredit
 import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultUse
+import com.tribetails.auntieos.data.contracts.decodeGetAccountCreditHistoryResult
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** Q6: the Give credit form and the credit history lines, shared wording with web and desktop. */
@@ -13,6 +16,37 @@ class AccountCreditTest {
 
     private val zone = ZoneId.of("America/Chicago")
     private fun ms(y: Int, m: Int, d: Int) = ZonedDateTime.of(y, m, d, 12, 0, 0, 0, zone).toInstant().toEpochMilli()
+
+    @Test
+    fun `#1939 earlier credit reads Not used yet, part applied, or All applied`() {
+        assertEquals("Not used yet", earlierCreditStatusLine(GetAccountCreditHistoryResultEarlierCredit(4200L, 4200L)))
+        assertEquals(
+            "$1,058.00 of $2,015.00 applied",
+            earlierCreditStatusLine(GetAccountCreditHistoryResultEarlierCredit(201_500L, 95_700L)),
+        )
+        assertEquals("All applied", earlierCreditStatusLine(GetAccountCreditHistoryResultEarlierCredit(4200L, 0L)))
+    }
+
+    @Test
+    fun `#1939 the history decodes earlier credit, and an older server without the key reads none`() {
+        val withEarlier = decodeGetAccountCreditHistoryResult(
+            mapOf(
+                "ok" to true,
+                "kinfolkId" to "fam1",
+                "accountBalanceCents" to 95_700,
+                "credits" to emptyList<Any>(),
+                "uses" to emptyList<Any>(),
+                "earlierCredit" to mapOf("amountCents" to 201_500, "remainingCents" to 95_700),
+            ),
+        )
+        assertEquals(GetAccountCreditHistoryResultEarlierCredit(201_500L, 95_700L), withEarlier.earlierCredit)
+        val older = decodeGetAccountCreditHistoryResult(
+            mapOf("ok" to true, "kinfolkId" to "fam1", "accountBalanceCents" to 0, "credits" to emptyList<Any>()),
+        )
+        assertNull(older.earlierCredit)
+        val explicitNull = decodeGetAccountCreditHistoryResult(mapOf("earlierCredit" to null))
+        assertNull(explicitNull.earlierCredit)
+    }
 
     @Test
     fun `the form refuses what the server would refuse`() {

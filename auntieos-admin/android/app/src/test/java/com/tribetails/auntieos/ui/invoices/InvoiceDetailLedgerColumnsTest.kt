@@ -166,7 +166,7 @@ class InvoiceDetailLedgerColumnsTest {
         // see only the ledger's own words (a failed credit read has its own
         // "Try again", pinned in InvoiceApplyCreditControllerTest).
         coEvery { invoiceRepo.getAccountCreditHistory(any()) } returns
-            Result.success(GetAccountCreditHistoryResult(true, "fam1", 0L, emptyList(), emptyList()))
+            Result.success(GetAccountCreditHistoryResult(true, "fam1", 0L, emptyList(), emptyList(), null))
         return InvoiceDetailViewModel(
             repository = repo,
             invoiceRepository = invoiceRepo,

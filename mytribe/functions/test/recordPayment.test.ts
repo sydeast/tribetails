@@ -484,6 +484,29 @@ describe('recordPayment: account credit is the amount the admin entered, into th
     expect(res.unappliedCents).toBe(12000);
     expect(res.creditedToAccountCents).toBe(0);
     expect(ctx.writes.find((w) => w.path === 'families/fam1')).toBeUndefined();
+    // #1939: and no line in the credit history either.
+    expect(ctx.writes.find((w) => w.path.startsWith('families/fam1/creditLedger/'))).toBeUndefined();
+  });
+  it('#1939: the credit kept lands in the household credit history beside the balance it raised', async () => {
+    const ctx = seed({ invoice: { ...invoice, invoiceNumber: '1020' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(req({ ...leftoverArgs, autoApply: true, creditToAccountCents: 1500 }));
+    const row = paymentWriteOf(ctx);
+    expect(row).toBeDefined();
+    const paymentId = row!.path.split('/')[1];
+    const ledger = ctx.writes.filter((w) => w.path.startsWith('families/fam1/creditLedger/'));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].path).toBe(`families/fam1/creditLedger/payment_${paymentId}`);
+    expect(ledger[0].data).toMatchObject({
+      kind: 'given',
+      source: 'payment',
+      amountCents: 1500,
+      reason: 'From a payment on invoice 1020',
+      sourcePaymentId: paymentId,
+      invoiceId: 'inv1',
+    });
+    // The balance still moves by the increment, exactly as before.
+    expect(ctx.writes.find((w) => w.path === 'families/fam1')?.data.accountBalanceCents).toEqual({ __increment: 1500 });
   });
   it('an explicit zero credits nothing, even with auto-apply ticked', async () => {
     const ctx = seed({ invoice });

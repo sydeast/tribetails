@@ -1,5 +1,6 @@
 import type {
   GetAccountCreditHistoryResultCredit,
+  GetAccountCreditHistoryResultEarlierCredit,
   GetAccountCreditHistoryResultUse,
 } from '../contracts/invoiceContracts.generated';
 import { parseDollarsToCents } from './invoiceMoneyInput';
@@ -72,4 +73,18 @@ export function creditApplicationLines(credit: GetAccountCreditHistoryResultCred
 /** "$25.00 on INV-1009, Oct 3, 2026". */
 export function creditUseLine(use: GetAccountCreditHistoryResultUse): string {
   return `${formatCentsUsd(use.amountCents)} on ${use.invoiceNumber ?? 'an invoice'}, ${formatCreditDate(use.usedAtMs)}`;
+}
+
+/**
+ * #1939: credit in the balance that no listed credit accounts for. Listed
+ * credits plus this, less every use, is the balance.
+ */
+export const EARLIER_CREDIT_LABEL = 'Earlier credit';
+
+/** "Not used yet", "$1,058.00 of $2,015.00 applied", or "All applied". */
+export function earlierCreditStatusLine(earlier: GetAccountCreditHistoryResultEarlierCredit): string {
+  if (earlier.remainingCents <= 0) return 'All applied';
+  const used = earlier.amountCents - earlier.remainingCents;
+  if (used > 0) return `${formatCentsUsd(used)} of ${formatCentsUsd(earlier.amountCents)} applied`;
+  return 'Not used yet';
 }

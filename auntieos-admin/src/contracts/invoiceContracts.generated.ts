@@ -905,6 +905,14 @@ export interface GetAccountCreditHistoryResultUse {
 }
 
 /**
+ * Nested in the `getAccountCreditHistory` contract.
+ */
+export interface GetAccountCreditHistoryResultEarlierCredit {
+  amountCents: number;
+  remainingCents: number;
+}
+
+/**
  * Response from the `getAccountCreditHistory` callable.
  */
 export interface GetAccountCreditHistoryResult {
@@ -913,6 +921,7 @@ export interface GetAccountCreditHistoryResult {
   accountBalanceCents: number;
   credits: GetAccountCreditHistoryResultCredit[];
   uses: GetAccountCreditHistoryResultUse[];
+  earlierCredit: GetAccountCreditHistoryResultEarlierCredit | null;
 }
 
 // ---------- listUnappliedPayments ----------

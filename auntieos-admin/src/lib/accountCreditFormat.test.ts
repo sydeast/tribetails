@@ -5,6 +5,7 @@ import {
   creditGivenNotice,
   creditStatusLine,
   creditUseLine,
+  earlierCreditStatusLine,
   formatCreditDate,
   giveCreditConfirmLine,
   parseGiveCreditForm,
@@ -100,5 +101,13 @@ describe('history lines', () => {
 
   it('the notice repeats the server figure', () => {
     expect(creditGivenNotice(3700)).toBe('Credit given. Balance is now $37.00.');
+  });
+});
+
+describe('earlierCreditStatusLine (#1939)', () => {
+  it('reads Not used yet, part applied, or All applied', () => {
+    expect(earlierCreditStatusLine({ amountCents: 4200, remainingCents: 4200 })).toBe('Not used yet');
+    expect(earlierCreditStatusLine({ amountCents: 201_500, remainingCents: 95_700 })).toBe('$1,058.00 of $2,015.00 applied');
+    expect(earlierCreditStatusLine({ amountCents: 4200, remainingCents: 0 })).toBe('All applied');
   });
 });

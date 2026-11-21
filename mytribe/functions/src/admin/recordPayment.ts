@@ -28,6 +28,7 @@ import {
   type ApplyStep,
 } from '../lib/paymentApply';
 import { creditAccount } from '../lib/accountCredit';
+import { stageCreditInEvent } from '../lib/creditLedger';
 import { centsToDollars, formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 // #1005: money notices go to a member with billing access, not the last-synced account.
@@ -959,6 +960,18 @@ export async function recordPaymentHandler(
         })
       : null;
     creditAccount(db(), tx, { kinfolkId, cents: creditedToAccountCents });
+    // #1939: and the credit's line in the household's credit history, on the
+    // same transaction, so the history lists where this balance came from.
+    stageCreditInEvent(db(), tx, {
+      kinfolkId,
+      source: 'payment',
+      sourceId: ref.id,
+      invoiceId: staged?.invoiceId || args.invoiceId,
+      invoiceNumber: staged?.invoiceNumber || linkedInvoiceNumber || invoiceNumberText(args.invoiceNumber),
+      amountCents: creditedToAccountCents,
+      actorUid: actor.uid,
+      atMs: Date.now(),
+    });
     // No `id` field inside the doc: Android's `@DocumentId` property is
     // excluded from serialization, so the direct write never stored one either.
     const row: Record<string, unknown> = {
