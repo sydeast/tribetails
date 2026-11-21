@@ -378,7 +378,7 @@ internal fun ChainIntegrityPanel(entryCount: Int, state: ChainState, onReverify:
 
     DenPanel(
         title    = "Hash chain",
-        subtitle = "writeAuditEntry seals each event into a SHA-256 chain.",
+        subtitle = "Each event is sealed into a SHA-256 chain.",
         trailing = {
             Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
