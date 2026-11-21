@@ -41,6 +41,7 @@ vi.mock('../src/notifications/dispatcher', () => ({
 }));
 
 import { recordPaymentHandler } from '../src/admin/recordPayment';
+import { balanceToSettle } from '../src/lib/paymentApply';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
 beforeEach(() => {
@@ -383,6 +384,36 @@ describe('recordPayment: the Apply box', () => {
       recordPaymentHandler(req({ ...feeArgs, apply: { invoiceId: 'inv1', amount: 100 } })),
     ).rejects.toMatchObject({ code: 'failed-precondition' });
     expect(ctx.writes).toHaveLength(0);
+  });
+  it('#2358: refuses an apply against a cancelled invoice in plain words, either spelling, and writes nothing', async () => {
+    for (const invoice of [
+      { kinfolkId: 'fam1', status: 'cancelled', total: 127.5, amountDue: 127.5 },
+      { kinfolkId: 'fam1', invoiceStatus: 'cancelled', total: 127.5, amountDue: 127.5 },
+    ]) {
+      const ctx = seed({ invoice });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const err = await recordPaymentHandler(req({ ...feeArgs, apply: { invoiceId: 'inv1', amount: 100 } })).catch(
+        (e) => e,
+      );
+      expect(err, JSON.stringify(invoice)).toMatchObject({ code: 'failed-precondition' });
+      expect(err.message).toBe('This invoice is cancelled, so a payment cannot be recorded against it.');
+      expect(ctx.writes).toHaveLength(0);
+    }
+  });
+  it('#2358: "settle the balance" on a cancelled invoice is refused the same way', () => {
+    for (const doc of [
+      { kinfolkId: 'fam1', status: 'cancelled', total: 40 },
+      { kinfolkId: 'fam1', invoiceStatus: 'cancelled', total: 40 },
+    ]) {
+      const res = balanceToSettle({ invoiceId: 'inv1', doc, existingPayments: [] }, 'fam1');
+      expect(res, JSON.stringify(doc)).toEqual({
+        ok: false,
+        refusal: {
+          code: 'apply_invoice_not_payable',
+          message: 'This invoice is cancelled, so a payment cannot be recorded against it.',
+        },
+      });
+    }
   });
   it("refuses an apply against another household's invoice", async () => {
     const ctx = seed({ invoice: { kinfolkId: 'fam2', status: 'open', total: 127.5 } });

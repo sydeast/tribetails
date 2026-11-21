@@ -97,8 +97,9 @@ export async function resolveAccess(user: User, forceRefresh = false): Promise<A
   setTestScope(access.status === 'testAdmin' ? access.testTribeId : null);
   // An Auntie lists only part of some collections, and her query has to say
   // which part or the rules refuse the whole read. Set here for the same reason
-  // as the sandbox pin above. See lib/caretakerScope.ts.
-  setCaretakerScope(access.status === 'caretaker');
+  // as the sandbox pin above. Her uid names the drafts that are hers (#2443).
+  // See lib/caretakerScope.ts.
+  setCaretakerScope(access.status === 'caretaker', user.uid);
   return access;
 }
 

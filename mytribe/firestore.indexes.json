@@ -457,6 +457,24 @@
       ]
     },
     {
+      "collectionGroup": "generated_drafts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "communication_type",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdBy",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdOn",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "notificationDispatch",
       "queryScope": "COLLECTION",
       "fields": [

@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { businessTimeZone, householdTimeContextFrom } from '../lib/bookingTimeBlocks';
 import { isInactiveKinStatus } from '../lib/kinStatus';
 import { formatUsd } from '../lib/invoiceMath';
+import { amountDueDollarsOf, type AmountDueDoc } from '../lib/amountDueRule';
 import { serviceDisplayName, serviceNameCatalogFrom } from '../lib/serviceDisplayName';
 import { getNotificationDef } from './catalog';
 import {
@@ -824,8 +825,20 @@ export async function enrichTemplateData(
     if (minor != null) amt = usd(minor / 100);
     if (!amt) {
       const inv = await loadInvoice();
+      // #2435: a stated balance never asks for more than the total less what
+      // has been applied (the stored `paidCents`), the figure the checkout
+      // charges.
+      const stated = num(inv?.amountDue);
+      const paidCents = num(inv?.paidCents);
+      const owed =
+        stated !== null && stated > 0 && inv && typeof inv.amountDue === 'number'
+          ? Math.min(
+              stated,
+              amountDueDollarsOf(inv as AmountDueDoc, paidCents !== null && Number.isInteger(paidCents) ? paidCents : null),
+            )
+          : stated;
       const dollars =
-        num(inv?.amountDue) ??
+        owed ??
         num(inv?.total) ??
         (num(inv?.amountMinor) != null ? num(inv?.amountMinor)! / 100 : null);
       if (dollars != null) amt = usd(dollars);

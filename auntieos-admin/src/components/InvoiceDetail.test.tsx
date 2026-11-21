@@ -141,6 +141,8 @@ import {
   archivedQuoteBannerText,
   parseOptionalMoney,
   quoteRestoreConfirmText,
+  quoteWithdrawHeldReason,
+  WITHDRAW_PAID_REASON,
   restoreNoticeText,
 } from './InvoiceDetail';
 import { CallableTimeoutError } from '../lib/fns';
@@ -3909,6 +3911,31 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
     expect(screen.getByText('What was billed')).toBeInTheDocument();
   });
 
+  it('#2358 a quote with a payment recorded on it holds Withdraw quote and says why; Turn into invoice stays', async () => {
+    const user = userEvent.setup();
+    getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult({ paidCents: 1500, amountDueCents: 2500 }));
+    render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);
+    const held = await screen.findByRole('button', { name: 'Withdraw quote', description: WITHDRAW_PAID_REASON });
+    expect(held).toHaveAttribute('aria-disabled', 'true');
+    await user.click(held);
+    // No confirm opens, and nothing is sent.
+    expect(screen.queryByText(/This withdraws the quote/)).toBeNull();
+    expect(withdrawQuote).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Turn into invoice' })).not.toHaveAttribute('aria-disabled');
+  });
+  it('#2358 the stored paid figure holds it too, before the ledger has loaded', () => {
+    getInvoiceLedger.mockReset().mockReturnValue(new Promise(() => undefined));
+    render(<InvoiceDetail invoice={{ ...sentQuote(), paidCents: 900 }} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Withdraw quote' })).toHaveAttribute('aria-disabled', 'true');
+  });
+  it('#2358 quoteWithdrawHeldReason: a payment from either source holds it, none does not', () => {
+    expect(quoteWithdrawHeldReason(sentQuote(), null)).toBeNull();
+    expect(quoteWithdrawHeldReason(sentQuote(), 0)).toBeNull();
+    expect(quoteWithdrawHeldReason(sentQuote(), 1)).toBe(WITHDRAW_PAID_REASON);
+    expect(quoteWithdrawHeldReason({ ...sentQuote(), paidCents: 500 }, 0)).toBe(WITHDRAW_PAID_REASON);
+    expect(quoteWithdrawHeldReason({ ...sentQuote(), paidCents: Number.NaN }, null)).toBeNull();
+    expect(WITHDRAW_PAID_REASON).toBe('A payment is recorded on this quote, so it cannot be withdrawn.');
+  });
   it('#2088 the quote saved unsent can be turned or withdrawn too', () => {
     render(<InvoiceDetail invoice={quoteDraft()} onClose={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Turn into invoice' })).toBeInTheDocument();

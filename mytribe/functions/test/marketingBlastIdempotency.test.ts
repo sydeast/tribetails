@@ -46,6 +46,8 @@ vi.mock('../src/notifications/prefs', () => ({
   loadBusinessOverride: mocks.loadBusinessOverride,
   resolveChannels: mocks.resolveChannels,
   streamForRecipient: () => 'kinfolk',
+  // #1834: the hold check asks only the operator's switch; none is off here.
+  notificationDisabledFor: () => null,
 }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');

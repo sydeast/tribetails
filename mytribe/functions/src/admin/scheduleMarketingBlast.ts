@@ -394,6 +394,33 @@ export async function scheduleMarketingBlastHandler(
 
   const audience = await resolveMarketingAudience(args);
   assertAudienceUsable(audience);
+  /**
+   * #1834 (ruling 2026-11-20): A MARKETING BLAST IS HELD WHILE NOTICES TO
+   * HOUSEHOLDS ARE OFF, or while its campaign is turned off in Settings. Held
+   * as a whole before the row is written, so nothing is queued to go later
+   * and the same key schedules it once notices are on again. A key that
+   * already scheduled a blast is answered from its row below, as before. A
+   * blast scheduled while notices were on and due after they were turned off
+   * is held at its send time by `notificationScheduledSweep`.
+   */
+  const { broadcastHeldError, broadcastHoldReason, recordBroadcastHeld } = await import(
+    '../notifications/sendSwitchRules.js'
+  );
+  const hold = await broadcastHoldReason(args.key);
+  if (hold !== null) {
+    const prior = args.idempotencyKey ? await blasts.doc(args.idempotencyKey).get() : null;
+    if (prior === null || !prior.exists) {
+      await recordBroadcastHeld({
+        what: 'a marketing blast',
+        key: args.key,
+        households: audience.uids.length,
+        reason: hold,
+        actorUid,
+        fn: 'scheduleMarketingBlast',
+      });
+      throw broadcastHeldError(hold, 'scheduleMarketingBlast');
+    }
+  }
 
   // The row goes first so its id can ride on every scheduled copy (see the
   // header docstring). `status` is not stored: it is derived on read from

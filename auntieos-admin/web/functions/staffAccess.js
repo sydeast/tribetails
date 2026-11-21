@@ -89,7 +89,8 @@ const AUNTIE_ALLOWED_ENDPOINTS = new Set([
 //                      `/api/training-doc`; the composer reaches
 //                      `generated_drafts` and `training_documents` as direct
 //                      client reads, under the rules. Those give a caretaker
-//                      KinTale drafts only (type exactly `visit_report`): a
+//                      the KinTale drafts she made only (type exactly
+//                      `visit_report`, `createdBy` her uid, #2443): a
 //                      draft is the owner's to create and delete, and every
 //                      other type is the owner's to read. These endpoints hand
 //                      back or write a draft of any type, so they stay with the

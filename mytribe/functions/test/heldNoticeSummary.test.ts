@@ -27,6 +27,7 @@ import { notificationsHeldSummaryWords } from '../src/lib/activityWords';
 import { runKincareReminderScan } from '../src/scheduled/kincareReminderCron';
 import { runInvoiceOverdueScan, runInvoiceRemindersScan } from '../src/scheduled/invoiceRemindersCron';
 import { scheduleMarketingBlastHandler } from '../src/admin/scheduleMarketingBlast';
+import { drainScheduledNotifications } from '../src/scheduled/notificationScheduledSweep';
 import type { CallableRequest } from 'firebase-functions/v2/https';
 
 /**
@@ -751,41 +752,120 @@ describe('#2340 a marketing blast with notices to households off', () => {
 
   const notSent = (writes: Write[]) => logLines(writes).filter((l) => l.actionType === 'NOTIFICATION_NOT_SENT');
 
-  it('writes one line for the whole blast, with a count, and no line per household', async () => {
+  // #1834 (ruling 2026-11-20): a blast is held as a whole before anything is
+  // queued, so the line names the blast and its households, not its copies.
+  it('#1834: held as a whole, one line for the blast, nothing queued to go later', async () => {
     const ctx = blastDb(3);
-    const res = await blast();
-    expect(res.suppressed).toBe(3);
+    await expect(blast()).rejects.toMatchObject({ code: 'failed-precondition', message: 'held_household_notices_off' });
     const lines = notSent(ctx.writes);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
       status: 'NOT_SENT',
       severity: 'info',
-      description: 'Held back 3 notices from a marketing blast: notices to households are turned off',
-      payload: { outcome: 'held', summary: true, job: 'marketingBlast', day: TODAY, count: 3 },
+      description: 'Held back a marketing blast to 3 households: notices to households are turned off. It will not be sent later',
+      payload: { key: 'newsletter.announcement', outcome: 'held', households: 3 },
     });
     expect(lines[0]).not.toHaveProperty('familyId');
     expect(mocks.perCopyLine).not.toHaveBeenCalled();
+    expect(ctx.writes.filter((w) => w.path.startsWith('scheduledNotifications/'))).toEqual([]);
+    expect(ctx.writes.filter((w) => w.path.startsWith('marketingBlasts/'))).toEqual([]);
   });
 
-  it('two blasts the same day are counted apart: a line each', async () => {
+  it('#1834: two held blasts the same day are a line each', async () => {
     const ctx = blastDb(2);
-    await blast();
-    await blast({ data: { subject: 'Second' } });
+    await expect(blast()).rejects.toBeTruthy();
+    await expect(blast({ data: { subject: 'Second' } })).rejects.toBeTruthy();
     expect(notSent(ctx.writes).map((l) => l.description)).toEqual([
-      'Held back 2 notices from a marketing blast: notices to households are turned off',
-      'Held back 2 notices from a marketing blast: notices to households are turned off',
+      'Held back a marketing blast to 2 households: notices to households are turned off. It will not be sent later',
+      'Held back a marketing blast to 2 households: notices to households are turned off. It will not be sent later',
     ]);
   });
 
-  it('the newsletter turned off in Settings, switch on: one "Did not send" line', async () => {
+  it('#1834: the newsletter turned off in Settings, switch on: held with one "Did not send" line', async () => {
     const ctx = blastDb(2, {
       [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: true },
       'businessSettings/notifications': { byKey: { 'newsletter.announcement': { enabled: false } } },
     });
-    await blast();
+    await expect(blast()).rejects.toMatchObject({ message: 'held_notice_turned_off' });
     expect(notSent(ctx.writes).map((l) => l.description)).toEqual([
-      'Did not send 2 notices from a marketing blast: this notification is turned off in Settings',
+      'Did not send a marketing blast to 2 households: this notification is turned off in Settings. It will not be sent later',
     ]);
+  });
+
+  it('#1834: scheduled while on, due after notices were turned off: held at its send time, one #2340 line', async () => {
+    const ctx = blastDb(2, {
+      [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: true },
+    });
+    const res = await blast();
+    expect(res.dispatched).toBe(2);
+    const queued = () => Object.keys(ctx.docs).filter((k) => k.startsWith('scheduledNotifications/') && ctx.docs[k]);
+    expect(queued()).toHaveLength(2);
+
+    ctx.docs[HOUSEHOLD_GATE_SETTINGS_PATH] = { timeZone: 'America/Chicago', householdNotificationsLive: false };
+    const drained = await drainScheduledNotifications(NOW + 2 * HOUR);
+
+    expect(drained).toEqual({ promoted: 0, held: 2 });
+    expect(queued()).toEqual([]);
+    expect(ctx.writes.filter((w) => w.path.startsWith('notifications/') || w.path.startsWith('notificationDispatch/'))).toEqual([]);
+    // One counted increment per held copy (the mock records an increment, it does not add it up).
+    const heldStamps = ctx.writes.filter((w) => w.path === `marketingBlasts/${res.blastId}` && 'heldAtSend' in w.data);
+    expect(heldStamps).toHaveLength(2);
+    expect(heldStamps.every((w) => w.merge && w.data.heldReason === 'off')).toBe(true);
+    expect(notSent(ctx.writes).map((l) => l.description)).toEqual([
+      'Held back 2 notices from a marketing blast: notices to households are turned off',
+    ]);
+
+    // Switching notices back on sends nothing: held means never sent later.
+    ctx.docs[HOUSEHOLD_GATE_SETTINGS_PATH] = { timeZone: 'America/Chicago', householdNotificationsLive: true };
+    expect(await drainScheduledNotifications(NOW + 3 * HOUR)).toEqual({ promoted: 0, held: 0 });
+  });
+
+  it('#1834 ERROR: settings that cannot be read at the send time neither send nor drop the copies', async () => {
+    const ctx = blastDb(2, {
+      [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: true },
+    });
+    await blast();
+    const queued = () => Object.keys(ctx.docs).filter((k) => k.startsWith('scheduledNotifications/') && ctx.docs[k]);
+    expect(queued()).toHaveLength(2);
+
+    const realDoc = ctx.db.doc.bind(ctx.db);
+    const spy = vi.spyOn(ctx.db, 'doc').mockImplementation(((path: string) =>
+      path.startsWith('business_settings/')
+        ? { get: () => Promise.reject(new Error('unavailable')) }
+        : realDoc(path)) as any);
+    expect(await drainScheduledNotifications(NOW + 2 * HOUR)).toEqual({ promoted: 0, held: 0 });
+    // Still queued, nothing sent, nothing counted as held, no line.
+    expect(queued()).toHaveLength(2);
+    expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toEqual([]);
+    expect(notSent(ctx.writes)).toEqual([]);
+
+    // The next tick reads the setting and the blast goes.
+    spy.mockRestore();
+    expect(await drainScheduledNotifications(NOW + 2 * HOUR)).toEqual({ promoted: 2, held: 0 });
+  });
+
+  it('#1834: switched on at its send time, the blast is promoted as before', async () => {
+    const ctx = blastDb(2, {
+      [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: true },
+    });
+    await blast();
+    expect(await drainScheduledNotifications(NOW + 2 * HOUR)).toEqual({ promoted: 2, held: 0 });
+    expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toHaveLength(2);
+  });
+
+  it('#1834: a notice that is not a blast is not held by the send-time check', async () => {
+    const ctx = blastDb(0, {
+      'scheduledNotifications/r1': {
+        key: 'invoice.reminder',
+        recipientUid: 'kin1',
+        stream: 'kinfolk',
+        fireAtMs: NOW,
+        channels: ['email'],
+        data: { invoiceId: 'inv1' },
+      },
+    });
+    expect(await drainScheduledNotifications(NOW + HOUR)).toEqual({ promoted: 1, held: 0 });
+    expect(notSent(ctx.writes)).toEqual([]);
   });
 
   it('a blast that goes out writes no "not sent" line', async () => {
