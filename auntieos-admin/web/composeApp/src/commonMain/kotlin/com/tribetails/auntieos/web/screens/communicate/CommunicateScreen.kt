@@ -710,9 +710,20 @@ fun CommunicateScreen(
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textPrimary,
                 )
-                Text(text = "Channel: ${confirmChannel.label}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                Text(
+                    text = "Channel: ${if (confirmChannel == ExternalChannel.Email) confirmChannel.label else "Text, kept short, with a link to MyTribe"}",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
                 if (confirmChannel == ExternalChannel.Email) {
                     Text(text = "Subject: ${subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                } else {
+                    // #2408: what the household is texted, not the draft it is cut from.
+                    Text(
+                        text = "Text: ${householdTextPreviewLine(editedCopy)}",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textPrimary,
+                    )
                 }
             }
         }

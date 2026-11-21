@@ -412,7 +412,7 @@ describe('approve', () => {
     expect(shown.textContent).toMatch(/\.\.\. More in MyTribe: \(link\)$/);
     expect(shown.textContent).not.toContain('See you on Friday morning');
     expect(shown.textContent!.length).toBeLessThanOrEqual('Text: '.length + 200 + ' More in MyTribe: (link)'.length);
-    expect(screen.getByText(/Text, kept short, with a link to the whole message in MyTribe/)).toBeInTheDocument();
+    expect(screen.getByText(/Text, kept short, with a link to MyTribe/)).toBeInTheDocument();
     expect(screen.queryByText('Message:')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Send now' }));
     await waitFor(() => expect(sendGeneratedDraft).toHaveBeenCalledTimes(1));

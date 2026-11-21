@@ -721,7 +721,7 @@ private fun ApproveSendConfirm(state: CommunicateUiState, channel: ExternalChann
                 color = c.textPrimary,
             )
             Text(
-                "Channel: ${if (channel == ExternalChannel.Email) "Email" else "Text, kept short, with a link to the whole message in MyTribe"}",
+                "Channel: ${if (channel == ExternalChannel.Email) "Email" else "Text, kept short, with a link to MyTribe"}",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )

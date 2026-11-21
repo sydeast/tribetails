@@ -863,7 +863,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       <strong>Channel:</strong>{' '}
                       {def.deliverable === 'email'
                         ? 'Email'
-                        : 'Text, kept short, with a link to the whole message in MyTribe'}
+                        : 'Text, kept short, with a link to MyTribe'}
                     </p>
                     {def.deliverable === 'email' && (
                       <p className="personalize__confirm-line">
