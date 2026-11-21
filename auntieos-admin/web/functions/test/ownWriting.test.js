@@ -259,6 +259,10 @@ describe('household specifics: an example is a style sample only', () => {
       'I set the alarm and locked up behind me.',
       'The lockbox is on the side of the house.',
       'The code changed, so I used the new one.',
+      'Your keychain is on the hook by the fridge.',
+      'I disarmed it on my way in and armed it again when I left.',
+      'The combo worked first try, all good.',
+      'The gatepost is a little wobbly again.',
     ],
     medicine: [
       'She took half a pill of gabapentin with her supper.',
@@ -291,6 +295,7 @@ describe('household specifics: an example is a style sample only', () => {
       'She loves the walk up Main Street in the morning.',
       'The new apartment is so bright and sunny.',
       'We met at the corner of the two big roads.',
+      'turned onto maple rd, see you soon',
     ],
   };
   for (const [kind, texts] of Object.entries(MUST_DROP)) {

@@ -306,7 +306,8 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
 const SPECIFIC_STEMS = {
   entry: [
     'door', 'lock', 'unlock', 'deadbolt', 'latch', 'alarm', 'keypad', 'keybox', 'keyless', 'keycard',
-    'passcode', 'password', 'garage', 'combination', 'security', 'camera', 'buzzer', 'intercom', 'concierge',
+    'passcode', 'password', 'garage', 'combination', 'combo', 'security', 'camera', 'buzzer', 'intercom',
+    'concierge', 'disarm', 'key', 'gate', 'code', 'zip',
   ],
   medicine: [
     'medic', 'capsule', 'dose', 'dosage', 'dosing', 'prescri', 'pharmac', 'antibiotic', 'steroid',
@@ -339,8 +340,8 @@ const SPECIFIC_STEMS = {
 };
 const SPECIFIC_WORDS = {
   entry: [
-    'key', 'keys', 'keyed', 'code', 'codes', 'coded', 'pin', 'pins', 'gate', 'gates', 'gated', 'fob', 'fobs',
-    'spare', 'entry', 'entrance', 'mailbox', 'wifi', 'wi-fi', 'hide-a-key',
+    'pin', 'pins', 'fob', 'fobs', 'armed', 'arming', 'spare', 'entry', 'entrance', 'mailbox', 'wifi', 'wi-fi',
+    'hide-a-key',
   ],
   medicine: [
     'med', 'meds', 'pill', 'pills', 'pilled', 'pilling', 'tablet', 'tablets', 'mg', 'mcg', 'ml', 'cc',
@@ -359,8 +360,8 @@ const SPECIFIC_WORDS = {
     'never let', 'keep (?:\\p{L}+ )?away',
   ],
   address: [
-    'street', 'streets', 'st', 'avenue', 'ave', 'blvd', 'pkwy', 'hwy', 'apt', 'unit', 'suite', 'condo',
-    'cul-de-sac', 'zip', 'cross street', 'corner of',
+    'street', 'streets', 'st', 'avenue', 'ave', 'blvd', 'pkwy', 'hwy', 'rd', 'ln', 'ct', 'cir', 'trl', 'apt',
+    'unit', 'suite', 'condo', 'cul-de-sac', 'cross street', 'corner of',
   ],
   time: ['noon', 'midnight', "o'clock", 'a\\.m\\.?', 'p\\.m\\.?'],
   money: ['dollar', 'dollars', 'bucks', 'cents'],
