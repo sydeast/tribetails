@@ -22,21 +22,33 @@ interface PushTemplate {
  * `listMyNotifications` hands it to the list as `fullMessage`.
  */
 export const HOUSEHOLD_MESSAGE_FIELD = 'householdMessage';
-
 /**
- * Writes the whole message onto the household's entry. `update`, not a merge:
- * an entry the office took back since (#2038) stays gone instead of coming
- * back as a stub. A refused write is logged and the push still goes; the
- * entry then reads as it did before, its facts line.
+ * The same for a cut text message (#2371). Its own field, because the text
+ * message is rendered from its own template and both senders run at the same
+ * time: one shared field would hold whichever finished last.
  */
-async function keepWholeMessage(entryId: string, message: string, key: string): Promise<void> {
+export const HOUSEHOLD_TEXT_MESSAGE_FIELD = 'householdTextMessage';
+/**
+ * Writes the whole message onto the household's entry, for the push sender and
+ * the text sender (`smsChannel.ts`). `update`, not a merge: an entry the office
+ * took back since (#2038) stays gone instead of coming back as a stub. A
+ * refused write is logged and the message still goes; the entry then reads as
+ * it did before, its facts line.
+ */
+export async function keepWholeMessage(
+  channel: 'push' | 'sms',
+  entryId: string,
+  message: string,
+  key: string,
+): Promise<void> {
+  const field = channel === 'push' ? HOUSEHOLD_MESSAGE_FIELD : HOUSEHOLD_TEXT_MESSAGE_FIELD;
   try {
-    await db().collection('notifications').doc(entryId).update({ [HOUSEHOLD_MESSAGE_FIELD]: message.trim() });
+    await db().collection('notifications').doc(entryId).update({ [field]: message.trim() });
   } catch (err) {
     logEvent({
       severity: 'error',
-      function: 'pushChannel',
-      event: 'notification.push.message_not_kept',
+      function: channel === 'push' ? 'pushChannel' : 'smsChannel',
+      event: `notification.${channel}.message_not_kept`,
       extra: { key, entryId, error: err instanceof Error ? err.message : String(err) },
     });
   }
@@ -135,7 +147,7 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
   // #2368: the entry the tap opens has to hold the rest of a cut line. Only
   // this sender has the message as rendered, so it writes it onto the entry,
   // before the push goes, so a tap never lands ahead of it.
-  if (cut && readInList?.entryId) await keepWholeMessage(readInList.entryId, renderedBody, def.key);
+  if (cut && readInList?.entryId) await keepWholeMessage('push', readInList.entryId, renderedBody, def.key);
   const dataRoute = readInList
     ? readInList.route
     : templateRoute || (household ? open?.route || HOUSEHOLD_NOTICE_ROUTE : undefined);

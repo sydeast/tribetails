@@ -120,6 +120,17 @@ export interface KinTaleDetailProps {
    * Delete at all (the same no-live-no-op rule as `onEdit`).
    */
   onDeleted?: () => void;
+  /**
+   * An Auntie is signed in, from the access the admin layout resolved before
+   * the screen drew. Two things here end in a refusal for her, so neither is
+   * drawn: Delete on an unsent draft (`deleteKinTaleReportDraft`, destructive,
+   * the owner's) and the Reaction panel (`getKinTaleReaction` and
+   * `toggleKinTaleLove` are not on her list, so the panel failed to load and
+   * its button could not work). The Custom fields panel is left out for the
+   * same reason: its labels come from `listFormSchemas`, which refuses her.
+   * The recap, the photos and Replies are hers.
+   */
+  isAuntie?: boolean;
   onClose: () => void;
 }
 
@@ -132,8 +143,11 @@ export function kinTaleStateTone(state: KinTaleState): DenTone {
     case 'sent':
       return 'success';
     case 'failed':
+    // #2452: a send that got no answer. Only a Communicate draft row takes it.
+    case 'unconfirmed':
       return 'error';
     case 'draft':
+    case 'sending':
       return 'neutral';
     case 'unknown':
       return 'warning';
@@ -145,7 +159,7 @@ function railWhen(iso: string): string {
   return formatWhenFull(kinTaleTimeOf(iso)) ?? 'Not recorded';
 }
 
-export function KinTaleDetail({ kinTaleId, onEdit, onDeleted, onClose }: KinTaleDetailProps) {
+export function KinTaleDetail({ kinTaleId, onEdit, onDeleted, isAuntie = false, onClose }: KinTaleDetailProps) {
   const reports = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const kin = useCollection<Kin>(KIN_QUERY);
   // Third bounded stream, and the same one `KinTaleCompose.tsx` already opens
@@ -189,7 +203,8 @@ export function KinTaleDetail({ kinTaleId, onEdit, onDeleted, onClose }: KinTale
           templateRows={templateRows}
           onClose={onClose}
           {...(onEdit ? { onEdit } : {})}
-          {...(onDeleted ? { onDeleted } : {})}
+          {...(onDeleted && !isAuntie ? { onDeleted } : {})}
+          isAuntie={isAuntie}
         />
       </div>
     );
@@ -221,12 +236,13 @@ interface KinTaleDetailBodyProps {
   templateRows: Async<Record<string, unknown>[]>;
   onEdit?: (kinTaleId: string) => void;
   onDeleted?: () => void;
+  isAuntie: boolean;
   onClose: () => void;
 }
 
 type DetailBanner = { tone: 'error' | 'success'; text: string };
 
-function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClose }: KinTaleDetailBodyProps) {
+function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, isAuntie, onClose }: KinTaleDetailBodyProps) {
   // Every read off `entry` is defaulted. KinTaleEntry is a CAST over raw
   // Firestore data, not a validation of it: `title` is absent on 89 of the 92
   // live kin_care_reports, and reading one blind throws through React's error
@@ -282,7 +298,10 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
   // lives) and `getFormSchema` returns the sections and fields the labels come
   // from.
   const formValues = useMemo(() => decodeFormValues(entry.formValues), [entry.formValues]);
-  const hasFormValues = Object.keys(formValues).length > 0;
+  // The schema list (`listFormSchemas`) is the owner's and refuses an Auntie,
+  // so for her the panel drew a failed load with a Retry that could not work.
+  // It is not drawn for her and the read is never started.
+  const hasFormValues = Object.keys(formValues).length > 0 && !isAuntie;
   const [schemas, setSchemas] = useState<Async<FormSchemaDetail[]>>({ status: 'loading' });
 
   const loadSchemas = useCallback(() => {
@@ -381,6 +400,13 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
 
   const loadReaction = useCallback(() => {
     let live = true;
+    // The server refuses an Auntie this read, and her screen draws no
+    // Reaction panel, so it is never asked.
+    if (isAuntie) {
+      return () => {
+        live = false;
+      };
+    }
     setReaction({ status: 'loading' });
     getKinTaleReaction(entry._id)
       .then((data) => live && setReaction({ status: 'ready', data }))
@@ -396,7 +422,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
     return () => {
       live = false;
     };
-  }, [entry._id]);
+  }, [entry._id, isAuntie]);
   useEffect(() => loadReaction(), [loadReaction]);
 
   const [isToggling, setIsToggling] = useState(false);
@@ -806,22 +832,24 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
             </DenPanel>
           )}
 
-          <DenPanel title="Reaction">
-            <AsyncRegion state={reaction} what="the reaction" isEmpty={() => false} empty={null}>
-              {(data) => (
-                <div className="kintale-detail__reaction-row">
-                  <PrimaryButton
-                    label={data.loved ? 'Loved' : 'Love this'}
-                    onClick={() => void handleToggleLove()}
-                    disabled={isToggling}
-                    busy={isToggling}
-                  />
-                  <span className="kintale-detail__reaction-summary">{loveSummaryLabel(data.loved, data.loveCount)}</span>
-                </div>
-              )}
-            </AsyncRegion>
-            {reactionError && <Banner tone="error">{reactionError}</Banner>}
-          </DenPanel>
+          {!isAuntie && (
+            <DenPanel title="Reaction">
+              <AsyncRegion state={reaction} what="the reaction" isEmpty={() => false} empty={null}>
+                {(data) => (
+                  <div className="kintale-detail__reaction-row">
+                    <PrimaryButton
+                      label={data.loved ? 'Loved' : 'Love this'}
+                      onClick={() => void handleToggleLove()}
+                      disabled={isToggling}
+                      busy={isToggling}
+                    />
+                    <span className="kintale-detail__reaction-summary">{loveSummaryLabel(data.loved, data.loveCount)}</span>
+                  </div>
+                )}
+              </AsyncRegion>
+              {reactionError && <Banner tone="error">{reactionError}</Banner>}
+            </DenPanel>
+          )}
 
           {/* The mock's "Replies": the thread, then the reply composer under it. */}
           <DenPanel title="Replies">

@@ -1,5 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
+import type { DocumentReference } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -37,12 +38,14 @@ import {
   hasDeliveredCopy,
   type ListedCopyDelivery,
 } from '../notifications/dispatcher';
+import type { HouseholdSendGateState } from '../notifications/householdSendGate';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import {
   PAYMENT_APPLIED_CLAIM_FIELD,
   SETTLEMENT_LEDGER_PENDING_AT_FIELD,
   SETTLEMENT_LEDGER_PENDING_FIELD,
+  SETTLEMENT_LEDGER_ROW_FIELD,
   SETTLEMENT_LEDGER_SWEEP_WRITER,
   SETTLEMENT_NOTICE_UID_FIELD,
   claimableMarkInvoicePaidOwner,
@@ -51,6 +54,7 @@ import {
   settlementLedgerRowId,
 } from '../lib/paymentAppliedOwner';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
+import { invoiceLeadName, invoiceNumberText } from '../lib/invoiceNaming';
 
 /**
  * Creates a row in the ROOT `payments` collection. W2-1 of ADR-0002
@@ -511,6 +515,18 @@ export async function recordPaymentHandler(
     }
   }
 
+  // ONE HOUSEHOLD. The invoice a payment is linked to belongs to the household
+  // the payment is recorded for, the rule `planApply` already holds an apply
+  // to. Checked here, ahead of every other guard, so the reason given is this
+  // one and not a sentence about credit or a leftover. It covers the display
+  // link beside an `apply` to a different invoice too. A link that names the
+  // very invoice being applied to is left to `planApply`, whose refusal code
+  // the clients already know. A retry of a stored row was answered above and
+  // never reaches this.
+  if (args.invoiceId !== '' && kinfolkId !== '' && args.apply?.invoiceId !== args.invoiceId) {
+    const linkSnap = await db().collection('invoices').doc(args.invoiceId).get();
+    if (linkSnap.exists) refuseLinkToAnotherHousehold((linkSnap.data() ?? {}) as Record<string, unknown>, kinfolkId);
+  }
   // EVERY FIGURE IN INTEGER CENTS, ONCE, HERE. The dollar floats the request
   // carries are the collection's legacy shape and are still stored verbatim
   // below; nothing downstream re-derives cents from them, so no two readers can
@@ -656,6 +672,10 @@ export async function recordPaymentHandler(
   // A credited balance whose payment row failed to write would be money from
   // nowhere, which is why the increment was already staged beside the row; it
   // still is, and now a replay stages neither.
+  // #2453: the number on the linked invoice as this transaction read it, for the
+  // Activity Log line. The caller's `invoiceNumber` is not used for that line: it
+  // defaults to '' and is whatever the app sent.
+  let linkedInvoiceNumber = '';
   const committed = await db().runTransaction(async (tx) => {
     // FIRESTORE REQUIRES EVERY READ BEFORE EVERY WRITE, which happens to be the
     // order the guard needs anyway.
@@ -666,6 +686,7 @@ export async function recordPaymentHandler(
         assertSameCaller(stored, actor.uid, 'recordedBy');
         return {
           replayed: stored,
+          replayedRef: ref as DocumentReference | null,
           application: null as ApplyOutcome | null,
           settlesInvoice: false,
           replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
@@ -738,6 +759,85 @@ export async function recordPaymentHandler(
     const linkedInvoice = linkedInvoiceSnap?.exists
       ? ((linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>)
       : undefined;
+    // The same rule as before the transaction, on this transaction's own read.
+    if (linkedInvoice) refuseLinkToAnotherHousehold(linkedInvoice, kinfolkId);
+    linkedInvoiceNumber = invoiceNumberText(linkedInvoice?.['invoiceNumber']);
+    // #2296: THE SETTLEMENT THIS CALL NAMES ALREADY HAS ITS LEDGER ROW. A call
+    // naming a settlement records that one payment's row, and a settlement is
+    // one payment. An older two-call build that sends its second step again
+    // with a new key (or none) is that same payment, so it is answered from
+    // the row the first call wrote: no second row, no second credit. Not
+    // refused, because those builds cannot read a new refusal and the payment
+    // is recorded. The settlement row carries the id
+    // (SETTLEMENT_LEDGER_ROW_FIELD) and every call naming it writes it below,
+    // so two such calls racing conflict on it and the second re-runs and
+    // finds the first's row. The sweep's stand-in row is not found this way:
+    // it is replaced, as below.
+    // Only for the household the invoice belongs to: a call for another
+    // household naming this settlement neither stamps it nor is answered
+    // from its row.
+    const namedSettlementRef =
+      linkedInvoiceRef !== null &&
+      args.settledByInvoicePaymentId !== undefined &&
+      twoStep?.known === true &&
+      kinfolkId !== '' &&
+      linkedInvoice?.['kinfolkId'] === kinfolkId
+        ? db().collection('invoices').doc(args.invoiceId).collection('payments').doc(args.settledByInvoicePaymentId)
+        : null;
+    const namedSettlementSnap = namedSettlementRef ? await tx.get(namedSettlementRef) : null;
+    if (namedSettlementSnap?.exists) {
+      const priorId = (namedSettlementSnap.data() ?? {})[SETTLEMENT_LEDGER_ROW_FIELD];
+      if (typeof priorId === 'string' && priorId !== '' && priorId !== ref.id) {
+        const priorRef = db().collection('payments').doc(priorId);
+        const priorSnap = await tx.get(priorRef);
+        const prior = (priorSnap.data() ?? {}) as Record<string, unknown>;
+        if (
+          priorSnap.exists &&
+          prior['settledByInvoicePaymentId'] === args.settledByInvoicePaymentId &&
+          prior['invoiceId'] === args.invoiceId &&
+          prior['kinfolkId'] === kinfolkId
+        ) {
+          return {
+            replayed: prior,
+            replayedRef: priorRef as DocumentReference | null,
+            application: null as ApplyOutcome | null,
+            settlesInvoice: false,
+            replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
+            possibleDuplicateOf: null as string | null,
+          };
+        }
+      }
+      // #2296 review: A ROW WRITTEN BEFORE THE STAMP EXISTED. A row from before
+      // this deploy names the settlement but the settlement does not name it
+      // back, so it is found by the settlement id it carries. Only
+      // `recordPayment` and the sweep write that id on a ledger row, and the
+      // sweep's stand-in is replaced below, not answered from. One equality
+      // filter, so no composite index; the rest is checked here.
+      const earlier = await tx.get(
+        db().collection('payments').where('settledByInvoicePaymentId', '==', args.settledByInvoicePaymentId),
+      );
+      const legacy = earlier.docs
+        .filter((d) => {
+          const r = (d.data() ?? {}) as Record<string, unknown>;
+          return (
+            d.id !== ref.id &&
+            r['invoiceId'] === args.invoiceId &&
+            r['kinfolkId'] === kinfolkId &&
+            r['recordedByServer'] !== SETTLEMENT_LEDGER_SWEEP_WRITER
+          );
+        })
+        .sort((a, b) => (a.createTime?.toMillis?.() ?? 0) - (b.createTime?.toMillis?.() ?? 0))[0];
+      if (legacy !== undefined) {
+        return {
+          replayed: (legacy.data() ?? {}) as Record<string, unknown>,
+          replayedRef: legacy.ref as DocumentReference | null,
+          application: null as ApplyOutcome | null,
+          settlesInvoice: false,
+          replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
+          possibleDuplicateOf: null as string | null,
+        };
+      }
+    }
     let claimedOwner = linkedInvoice
       ? claimableMarkInvoicePaidOwner(linkedInvoice, kinfolkId, args.settledByInvoicePaymentId, Date.now())
       : null;
@@ -993,23 +1093,54 @@ export async function recordPaymentHandler(
       );
     }
     if (replacedSweepRow !== null) tx.delete(db().collection('payments').doc(replacedSweepRow.id));
+    // #2296: this row is the settlement's ledger row now.
+    if (namedSettlementRef && namedSettlementSnap?.exists) {
+      tx.set(namedSettlementRef, { [SETTLEMENT_LEDGER_ROW_FIELD]: ref.id }, { merge: true });
+    }
     // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
     // write together are refereed by the server rather than by the read above.
     // A keyless call keeps `set`: its id is server-minted and cannot collide.
     if (args.idempotencyKey !== undefined) tx.create(ref, row);
     else tx.set(ref, row);
-    return { replayed: null, application: staged, settlesInvoice, replacedSweepRow, possibleDuplicateOf };
+    return {
+      replayed: null,
+      replayedRef: null,
+      application: staged,
+      settlesInvoice,
+      replacedSweepRow,
+      possibleDuplicateOf,
+    };
   });
 
-  if (committed.replayed !== null) {
-    logEvent({
-      severity: 'info',
-      function: 'recordPayment',
-      event: 'admin.payment.recorded.replay',
-      uid: actor.uid,
-      extra: { paymentId: ref.id, kinfolkId, idempotencyKey: args.idempotencyKey, raced: true },
-    });
-    return replayWithConfirmation(ref, committed.replayed, args.sendConfirmationEmail, actor.uid);
+  if (committed.replayed !== null && committed.replayedRef !== null) {
+    const answeredRef = committed.replayedRef;
+    if (answeredRef.id !== ref.id) {
+      // #2296: a second call for a settlement that has its row. Nothing was
+      // written, and any credit it asked for was not given.
+      logEvent({
+        severity: 'warn',
+        function: 'recordPayment',
+        event: 'settlement.ledger.second_call.answered',
+        uid: actor.uid,
+        extra: {
+          paymentId: answeredRef.id,
+          idempotencyKey: args.idempotencyKey ?? null,
+          kinfolkId,
+          invoiceId: args.invoiceId,
+          settledByInvoicePaymentId: args.settledByInvoicePaymentId ?? null,
+          creditToAccountCentsRequested: args.creditToAccountCents ?? null,
+        },
+      });
+    } else {
+      logEvent({
+        severity: 'info',
+        function: 'recordPayment',
+        event: 'admin.payment.recorded.replay',
+        uid: actor.uid,
+        extra: { paymentId: ref.id, kinfolkId, idempotencyKey: args.idempotencyKey, raced: true },
+      });
+    }
+    return replayWithConfirmation(answeredRef, committed.replayed, args.sendConfirmationEmail, actor.uid);
   }
   const application = committed.application;
   const replacedSweepRow = committed.replacedSweepRow;
@@ -1032,7 +1163,9 @@ export async function recordPaymentHandler(
   // entrypoint's cold start does not pay for the module.
   const duplicateWords =
     possibleDuplicateOf !== null
-      ? (await import('../lib/activityWords.js')).paymentPossibleDuplicateWords(args.invoiceNumber)
+      ? (await import('../lib/activityWords.js')).paymentPossibleDuplicateWords(
+          application?.invoiceNumber || linkedInvoiceNumber,
+        )
       : null;
   if (possibleDuplicateOf !== null) {
     logEvent({
@@ -1056,7 +1189,10 @@ export async function recordPaymentHandler(
       duplicateWords !== null
         ? duplicateWords
         : args.invoiceId
-          ? `Payment row recorded against invoice ${args.invoiceNumber || args.invoiceId}`
+          ? // #2453: the number on the invoice as this call read it. Never the id, and never what the caller sent.
+            (await import('../lib/activityWords.js')).paymentRowRecordedWords(
+              application?.invoiceNumber || linkedInvoiceNumber,
+            )
           : 'Standalone payment row recorded',
     payload: {
       paymentId: ref.id,
@@ -1271,14 +1407,16 @@ export async function recordPaymentHandler(
  * WHY THE SETTLEMENT ROW, AND NOT A REFUSAL OF `autoApply`. The row step 1 wrote
  * (`invoices/{invoiceId}/payments/{settledByInvoicePaymentId}`) records exactly
  * what was applied, in the units `paidCentsFromPayments` reads, and nothing ever
- * rewrites it. With it the leftover is exact, so a genuine overpayment ($200 in
+ * rewrites its amounts. With it the leftover is exact, so a genuine overpayment ($200 in
  * for a $127.50 bill and a $10 tip) still reaches the household's credit as she
  * asked. Refusing would throw that away, or throw away the ledger row with it,
  * and the ledger row is written after the money has already moved.
  *
  * Read OUTSIDE the transaction, for the reason the apply plan is: the row is
  * written once, by a `create`/`set` in `markInvoicePaid`'s own transaction, and
- * never updated, so there is nothing a transactional read would protect.
+ * its amounts are never updated, so there is nothing a transactional read would
+ * protect. (The one later write, #2296's `SETTLEMENT_LEDGER_ROW_FIELD`, is read
+ * and written in the transaction below.)
  *
  * `known: false` means the call is linked to an invoice and the applied part
  * could not be read: no `settledByInvoicePaymentId` (an install from before
@@ -1309,6 +1447,25 @@ async function twoStepAppliedCents(args: {
   return { known: true, appliedCents: paidCentsFromPayments([(snap.data() ?? {}) as PaymentAmount]) };
 }
 
+/** The `details.code` of a payment linked to an invoice of another household. */
+export const LINK_WRONG_HOUSEHOLD_CODE = 'link_wrong_household';
+/**
+ * Refuses a payment whose linked invoice belongs to a different household.
+ *
+ * The same test `planApply` makes for an apply: both households known and not
+ * the same one. A payment with no household, and an invoice that carries none
+ * (older rows), are left as they were. The sentence names the invoice by its
+ * number and never by its stored id.
+ */
+function refuseLinkToAnotherHousehold(invoice: Record<string, unknown>, kinfolkId: string): void {
+  const invoiceKin = typeof invoice['kinfolkId'] === 'string' ? invoice['kinfolkId'] : '';
+  if (kinfolkId === '' || invoiceKin === '' || invoiceKin === kinfolkId) return;
+  throw new HttpsError(
+    'failed-precondition',
+    `${invoiceLeadName(invoice['invoiceNumber'])} belongs to a different household than this payment.`,
+    { code: LINK_WRONG_HOUSEHOLD_CODE },
+  );
+}
 /** "$36.00" from integer cents, for a refusal an operator has to read. */
 function dollars(cents: number): string {
   return formatUsdCents(cents);
@@ -1660,6 +1817,12 @@ export interface ConfirmationOutcome {
    * from here.
    */
   householdDuplicate?: boolean;
+  /**
+   * #2343: the household copy was held back by the household send switch, and
+   * what the switch said. 'read-failed' is a failed read, not a choice: the
+   * copy is still owed and a retry may send it.
+   */
+  householdHeld?: HouseholdSendGateState;
   /** The office copy was enqueued: it rides every enqueue, unless its roster lookup failed. */
   office: boolean;
   /**
@@ -1783,6 +1946,9 @@ export async function sendPaymentConfirmation(input: {
     return {
       household,
       householdDuplicate: household && householdSuppressed?.reason === 'duplicate',
+      ...(recipientUid !== null && householdSuppressed?.reason === 'gate'
+        ? { householdHeld: householdSuppressed.gateState ?? 'off' }
+        : {}),
       // Per recipient: the office's channels are not the household's.
       // #1973: a list-only copy is app-only by construction.
       householdAppOnly: household && recipientUid !== null && (listOnly || reachedAppOnly(outcome, recipientUid)),

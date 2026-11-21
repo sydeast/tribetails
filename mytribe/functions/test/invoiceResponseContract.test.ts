@@ -83,6 +83,7 @@ function paymentMoney(over: Record<string, unknown> = {}): Record<string, unknow
 function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: 'inv1',
+    invoiceNumber: '1042',
     kinfolkId: 'fam1',
     kinfolkName: 'The Kims',
     client: 'Ada Kim',
@@ -112,6 +113,8 @@ function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown>
     // issued with. A believable invoice carries at least the card, because
     // the card needs nothing configured.
     payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
+    // #2410: null on an invoice that can be paid.
+    payBlockedReason: null,
     ...over,
   };
 }

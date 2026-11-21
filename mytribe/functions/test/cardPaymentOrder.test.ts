@@ -729,10 +729,10 @@ describe('#2344: the Activity Log sentence for a decline nobody is told about', 
       'A card was declined on invoice 1029, which was already paid. No notice was sent to the household.',
     );
     expect(cardDeclinedAfterPaymentWords(undefined, 'invoice-paid')).toBe(
-      'A card was declined on an invoice that was already paid. No notice was sent to the household.',
+      'A card was declined on an invoice with no number that was already paid. No notice was sent to the household.',
     );
     expect(cardDeclinedAfterPaymentWords('  ', 'payment-landed')).toBe(
-      'A card was declined on an invoice, and the payment from the same checkout went through. No notice was sent to the household.',
+      'A card was declined on an invoice with no number, and the payment from the same checkout went through. No notice was sent to the household.',
     );
   });
 });

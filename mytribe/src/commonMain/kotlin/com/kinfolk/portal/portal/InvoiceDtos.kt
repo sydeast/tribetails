@@ -71,6 +71,7 @@ enum class QuoteDecision { Accepted, Denied }
 enum class CreditTarget { AccountBalance, OriginalPaymentMethod }
 
 data class Invoice(
+    /** The stored key. It opens the invoice and is never shown; [invoiceName] is what a screen prints. */
     val id: String,
     val kinfolkId: String,
     val kinfolkName: String?,
@@ -138,6 +139,21 @@ data class Invoice(
      * `paidCents`). 0 when nothing is recorded or the server is older.
      */
     val paidCents: Long = 0L,
+    /**
+     * #2410: the server's sentence for an open bill with a balance that offers
+     * no way to pay, or null. `getMyInvoices` asks `payInvoice`'s own rule for
+     * each invoice the screens would otherwise offer Pay on (it states a
+     * balance while nothing is owed on its total), so this app does not work
+     * the rule out again. Null on every other invoice and from a server older
+     * than the field, which reads as not blocked.
+     */
+    val payBlockedReason: String? = null,
+    /**
+     * #1848: the number a Kinfolk can quote. `""` when the server says the
+     * invoice has none. Null when the server is older than the field and did
+     * not say; [invoiceName] then prints the bare noun.
+     */
+    val invoiceNumber: String? = null,
 )
 
 /** One covered visit on an invoice. All fields optional server-side. */

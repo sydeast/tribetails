@@ -306,11 +306,13 @@ describe('NotificationQuickActions for an Auntie (#2200 / #2201)', () => {
     expect(screen.getByRole('button', { name: 'Open' })).toBeInTheDocument();
   });
 
-  it('draws no Create quote for her on a fresh request, and keeps Approve', () => {
+  // #2313: Approve and Deny answer through a callable that refuses her.
+  it('draws no Create quote, Approve or Deny for her on a fresh request', () => {
     const e = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } });
     const { rerender } = render(<NotificationQuickActions entry={e} read={false} {...handlers()} isAuntie />);
     expect(screen.queryByRole('button', { name: 'Create quote' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
     rerender(<NotificationQuickActions entry={e} read={false} {...handlers()} />);
     expect(screen.getByRole('button', { name: 'Create quote' })).toBeInTheDocument();
   });

@@ -1041,6 +1041,50 @@ describe('KinTales screen: a draft is a KinTale', () => {
     expect(within(bucket('Unknown status')!).getByText('UNKNOWN')).toBeInTheDocument();
   });
 });
+describe('KinTales screen: a Communicate draft that went out (#2440)', () => {
+  const stamp = new Date().toISOString();
+  it('lists a sent Email, a Text an older version sent and a sent Push under Sent, never Unknown status', () => {
+    setDrafts([
+      draft({ _id: 'e', kinfolkName: 'The Okafors', communicationType: 'email', status: 'approved', sentAt: stamp }),
+      draft({ _id: 't', kinfolkName: 'The Ruiz Family', communicationType: 'sms', status: 'approved' }),
+      draft({ _id: 'p', kinfolkName: 'The Whitfields', communicationType: 'push', status: 'approved', pushOutcome: 'listed' }),
+    ]);
+    render(<KinTales />);
+    expect(bucket('Unknown status')).toBeNull();
+    expect(bucket('Drafts')).toBeNull();
+    const sent = bucket('Sent')!;
+    for (const household of ['The Okafors', 'The Ruiz Family', 'The Whitfields']) {
+      const row = within(sent).getByText(household).closest('.kintales__row') as HTMLElement;
+      expect(within(row).getByText('SENT')).toHaveClass('den-statuspill');
+    }
+    // The count on the bucket's rule includes them.
+    expect(within(sent).getByText('3')).toBeInTheDocument();
+  });
+  it('#2452 files a send that got no answer under Needs another look, as NOT CONFIRMED', () => {
+    setDrafts([
+      draft({
+        communicationType: 'email',
+        status: 'approved',
+        sendClaimedAt: '2026-11-01T16:00:00.000Z',
+        sendUnconfirmedAt: '2026-11-01T16:00:31.000Z',
+      }),
+    ]);
+    render(<KinTales />);
+    expect(bucket('Sent')).toBeNull();
+    expect(bucket('Drafts')).toBeNull();
+    expect(bucket('Unknown status')).toBeNull();
+    const row = within(bucket('Needs another look')!).getByText('The Okafors').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('NOT CONFIRMED')).toHaveClass('den-statuspill');
+    expect(within(row).queryByText('SENT')).toBeNull();
+  });
+  it('a send still running is listed under Drafts as SENDING', () => {
+    setDrafts([draft({ communicationType: 'sms', status: 'approved', sendClaimedAt: new Date().toISOString() })]);
+    render(<KinTales />);
+    expect(bucket('Sent')).toBeNull();
+    const row = within(bucket('Drafts')!).getByText('The Okafors').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('SENDING')).toBeInTheDocument();
+  });
+});
 describe('KinTales screen: the drafts read states what it is worth', () => {
   it('says the drafts read FAILED rather than reporting a confident 0 drafts', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'SENT' })]));

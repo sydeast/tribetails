@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { buildDbMock } from '../../functions/test/_helpers/mockDb';
 import {
+  applyPlan,
   parseArgs,
   planVetMigration,
   RETIRED_KINFOLK_VET_FIELDS,
@@ -185,5 +187,29 @@ describe('idempotence', () => {
     expect(second.householdUpdate).toEqual({});
     expect(second.clearKinfolk).toBe(false);
     expect(second.conflicts).toEqual([]);
+  });
+});
+/**
+ * #2289: one household record per household. A household with no record got
+ * one under an auto id here, while the portal's vet pick and the admin apps
+ * make it at the household's own id. The next save from either side then made a second record.
+ */
+describe('applyPlan: where a household record is written', () => {
+  it('a household with no record gets one at its own id', async () => {
+    const ctx = buildDbMock({ docs: {} });
+    await applyPlan(ctx.db as any, [
+      { kinfolkId: 'kf1', householdDocId: null, householdUpdate: { primaryVetClinicId: 'clinic_a' }, clearKinfolk: false },
+    ]);
+    const hd = ctx.writes.filter((w) => w.path.startsWith('household_data/'));
+    expect(hd.map((w) => w.path)).toEqual(['household_data/kf1']);
+    expect(hd[0]!.merge).toBe(true);
+    expect(hd[0]!.data).toEqual({ kinfolkId: 'kf1', primaryVetClinicId: 'clinic_a' });
+  });
+  it('a household whose record sits under an older id keeps that record', async () => {
+    const ctx = buildDbMock({ docs: {} });
+    await applyPlan(ctx.db as any, [
+      { kinfolkId: 'kf1', householdDocId: 'auto9', householdUpdate: { primaryVetClinicId: 'clinic_a' }, clearKinfolk: false },
+    ]);
+    expect(ctx.writes.filter((w) => w.path.startsWith('household_data/')).map((w) => w.path)).toEqual(['household_data/auto9']);
   });
 });

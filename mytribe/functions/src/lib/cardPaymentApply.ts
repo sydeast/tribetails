@@ -42,12 +42,32 @@
  *              asked for. So the invoice is marked paid as it always was, the
  *              card row is still written, and the reason is stamped on the
  *              invoice and the ledger row and logged, for the backfill report.
+ *              #2345: a card that paid less than the stated balance does not
+ *              mark the invoice paid on this landing either: the rest stays
+ *              owing, as on the planned one. And for every reason but
+ *              `STATED_BELOW_RECORDED` (nothing is wrong there) the owner gets
+ *              an Activity Log line saying the invoice was not in a state to
+ *              take the payment (`fallbackNeedsOwnerLine`). Since the lead
+ *              ruling of 2026-11-17 the webhook HOLDS every such payment for
+ *              the owner instead (`cardHoldReason`, below), so only
+ *              `STATED_BELOW_RECORDED` is applied on this landing.
  *   no-amount  neither Stripe nor the invoice gave a figure. No row: a row
  *              with no amount is not a payment. The invoice is marked paid and
- *              the ledger row is flagged, as before.
+ *              the ledger row is flagged, as before. Only an invoice with
+ *              something owed on its total gets here: `cardHoldReason` holds
+ *              the rest, figure or no figure.
  */
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { amountDueCentsOf } from './amountDueRule';
+import {
+  checkoutRoundOf,
+  duplicateCheckoutReason,
+  heldReasonForCardFallback,
+  invoiceCheckoutStateOf,
+  type DuplicateCheckoutReason,
+} from './invoiceCheckoutDedupe';
+import { invoiceStateOf } from './invoiceEditPolicy';
+import { PAID_INVOICE_REFUSAL } from './invoicePaidGate';
 import { invoiceTotalCentsOf, paidCentsFromPayments, settleInvoice, type PaymentAmount } from './invoiceMath';
 import { planApply, type ApplyStep } from './paymentApply';
 
@@ -87,6 +107,15 @@ export const PAID_EVENT_TYPES: readonly string[] = [
 
 /** The fallback reason for a stated balance lower than the payment rows leave owing. */
 export const STATED_BELOW_RECORDED = 'stated_balance_below_recorded_payments';
+/**
+ * #2345: whether the owner is told about a card payment that took the fallback
+ * landing. Every reason means the invoice was not in a state to be paid,
+ * except `STATED_BELOW_RECORDED`: an invoice brought over part paid and then
+ * paid off by card, where nothing is wrong and nothing needs saying.
+ */
+export function fallbackNeedsOwnerLine(reason: string | null | undefined): boolean {
+  return typeof reason === 'string' && reason !== '' && reason !== STATED_BELOW_RECORDED;
+}
 
 /**
  * The id of a card payment's `invoices/{id}/payments` row. One PaymentIntent
@@ -115,6 +144,12 @@ export type CardApplyDecision =
       tipCents: number;
       /** The invoice's rows after this one, for the invoice's `paidCents` and its state stamp. */
       paidCents: number;
+      /**
+       * #2345: what the stated balance still asks for after this card. 0 when
+       * the card covered it (or the invoice stated none), and only then is the
+       * invoice marked paid.
+       */
+      leftOwingCents: number;
     }
   | { kind: 'no-amount' };
 
@@ -141,6 +176,7 @@ export function decideCardApply(input: {
       appliedCents: 0,
       tipCents: 0,
       paidCents: existingPaidCents,
+      leftOwingCents: 0,
     };
   }
 
@@ -153,6 +189,7 @@ export function decideCardApply(input: {
   const fallback = (reason: string): CardApplyDecision => {
     // The stated balance is all there is to measure against here. What the
     // card paid over it is tip; with no stated balance it all goes on the bill.
+    // #2345: a card short of the stated balance leaves the rest owing.
     const appliedCents = statedDueCents > 0 ? Math.min(cardCents, statedDueCents) : cardCents;
     return {
       kind: 'fallback',
@@ -161,6 +198,7 @@ export function decideCardApply(input: {
       appliedCents,
       tipCents: cardCents - appliedCents,
       paidCents: existingPaidCents + appliedCents,
+      leftOwingCents: statedDueCents > 0 ? statedDueCents - appliedCents : 0,
     };
   };
 
@@ -188,7 +226,191 @@ export function decideCardApply(input: {
       appliedCents: cardCents,
       tipCents: 0,
       paidCents: existingPaidCents + cardCents,
+      leftOwingCents: 0,
     };
   }
   return { kind: 'planned', step: plan.step, appliedCents, tipCents: cardCents - appliedCents };
+}
+
+/**
+ * #2345 (lead ruling 2026-11-17): WHY A CARD PAYMENT IS HELD FOR THE OWNER AND
+ * NOT APPLIED, or null when it is applied. Pure. The card is already charged
+ * and there are no refunds, so a payment the invoice cannot take is recorded
+ * whole as an unapplied payment (the gross charge with the fee beside it),
+ * nothing goes on the invoice, no credit is given, and the household is sent
+ * nothing. The owner decides what it becomes (`resolveUnappliedPayment`), as
+ * for a second charge on a paid invoice (docket Q5) or one on a cancelled
+ * invoice (#2358).
+ *
+ * ASKED IN THIS ORDER, so the owner is given the reason that matters:
+ *
+ *   1. the invoice does not exist. Nothing to compare the payment against.
+ *   2. the invoice is another household's (`planApply`'s rule: both name a
+ *      household and they differ). Asked ahead of everything the invoice says
+ *      about itself: the payment is held for the household on the checkout,
+ *      and that invoice is not written at all.
+ *   3. cancelled or written off (`duplicateCheckoutReason`'s own first two).
+ *   4. a draft or a quote: not a bill yet. A credit, by its label or by a
+ *      negative balance or total (`invoiceStateOf`): money owed TO the
+ *      household. Ahead of the paid checks, which read a credit's balance as
+ *      "nothing owed" and would say it had already been paid.
+ *   5. the rest of `duplicateCheckoutReason`: a closed round, or nothing owed.
+ *   6. what the landing could not describe (`heldReasonForCardFallback`):
+ *      nothing owed on the invoice's total.
+ *
+ * None of 1 to 4 reads the amount, so a payment Stripe gave no figure for is
+ * held on those invoices too. So is one on an invoice with nothing owed on its
+ * total (6), which is asked without the landing when there is no figure.
+ */
+export function cardHoldReason(input: {
+  /** Null when the invoice document does not exist. */
+  doc: InvoiceDoc | null;
+  existingPayments: readonly PaymentAmount[];
+  /** The household on the checkout. */
+  kinfolkId: string;
+  /** `duplicateCheckoutReason`'s answer for this event. */
+  duplicate: DuplicateCheckoutReason;
+  /** `decideCardApply`'s answer for this event. */
+  landing: CardApplyDecision | null;
+}): DuplicateCheckoutReason {
+  const { doc } = input;
+  if (doc === null) return 'invoice-not-found';
+  if (invoiceOfAnotherHousehold(doc, input.kinfolkId)) return 'invoice-other-household';
+  if (input.duplicate === 'invoice-cancelled' || input.duplicate === 'invoice-written-off') return input.duplicate;
+  const paidCents = paidCentsFromPayments(input.existingPayments);
+  const state = invoiceStateOf(doc, paidCents);
+  if (state === 'draft' || state === 'quote') return 'invoice-not-sent';
+  if (state === 'credit' || state === 'redeemed') return 'invoice-credit';
+  if (input.duplicate !== null) return input.duplicate;
+  if (input.landing?.kind === 'fallback') return heldReasonForCardFallback(input.landing.reason);
+  // A payment with no figure has no landing to read, so the total is asked
+  // here by the fallback's own rule (`no_recorded_balance`): nothing owed on
+  // it is held with or without an amount.
+  if (input.landing?.kind === 'no-amount' && settleInvoice(invoiceTotalCentsOf(doc), paidCents).amountDueCents <= 0) {
+    return 'invoice-no-balance';
+  }
+  return null;
+}
+
+/**
+ * #2410: WHY NO CHECKOUT IS OPENED FOR THIS INVOICE, or null when one may be.
+ * Pure. The card is not charged yet, so this is the one moment a payment the
+ * invoice cannot take can still be refused, and there are no refunds.
+ *
+ * IT IS THE WEBHOOK'S OWN ANSWER, ASKED EARLY. `payInvoice` charges the balance
+ * the invoice states (`amountDueCentsOf`), so this takes that figure and asks
+ * the three functions the webhook asks, in the webhook's order, what a card
+ * payment of it made right now would become: `duplicateCheckoutReason` for a
+ * session of the invoice's current round, `decideCardApply` for where the
+ * money would land, and `cardHoldReason` over both. A reason means the webhook
+ * would keep that payment off the invoice, so the household is not sent to
+ * Stripe at all. The two sides cannot disagree, because there is one rule and
+ * this only calls it.
+ *
+ * WHAT IT REFUSES THAT `payInvoice` USED TO OPEN:
+ *
+ *   a balance with no total   the invoice states a balance and nothing is owed
+ *                             on its total (`invoice-no-balance`);
+ *   rows cover the total      the same reason: the payment rows already cover
+ *                             the total while a balance is still stated;
+ *   a credit                  one that states a positive balance
+ *                             (`invoice-credit`);
+ *   a quote                   one the household has not answered, or has
+ *                             declined (`invoice-not-sent`, #2264). An accepted
+ *                             quote is an open invoice and pays as one.
+ *
+ * WHAT IT DOES NOT REFUSE: an invoice brought over part paid, whose stated
+ * balance is lower than its rows leave owing. The webhook applies that one
+ * (`STATED_BELOW_RECORDED`), so it stays payable here.
+ *
+ * `existingPayments` are the invoice's own `payments` rows. `payInvoice` reads
+ * them for every call; `getMyInvoices` reads them for each invoice it would
+ * otherwise offer Pay on, so the screens hide Pay by this same answer.
+ */
+export function cardCheckoutRefusal(input: {
+  invoiceId: string;
+  doc: InvoiceDoc;
+  existingPayments: readonly PaymentAmount[];
+  /** The household the checkout would be opened for. */
+  kinfolkId: string;
+}): DuplicateCheckoutReason {
+  const { doc, existingPayments } = input;
+  const chargeCents = amountDueCentsOf(doc, paidCentsFromPayments(existingPayments));
+  const duplicate = duplicateCheckoutReason({
+    invoice: invoiceCheckoutStateOf(doc),
+    // No payment exists yet, and the session would be minted in the round the
+    // invoice is in now, so neither the same-payment nor the stale-round
+    // branch can answer for it.
+    paymentIntentId: null,
+    eventRound: checkoutRoundOf(invoiceCheckoutStateOf(doc).round),
+  });
+  const landing = decideCardApply({
+    invoiceId: input.invoiceId,
+    doc,
+    existingPayments,
+    cardCents: chargeCents > 0 ? chargeCents : null,
+    kinfolkId: input.kinfolkId,
+  });
+  return cardHoldReason({ doc, existingPayments, kinfolkId: input.kinfolkId, duplicate, landing });
+}
+
+/** `HttpsError` `details.code` when `payInvoice` refuses on `cardCheckoutRefusal`. */
+export const INVOICE_CANNOT_TAKE_PAYMENT_CODE = 'invoice_cannot_take_payment';
+
+/** The sentence for an invoice that states a balance it cannot be paid on. Printed by both portals. */
+export const INVOICE_CANNOT_TAKE_PAYMENT = 'This invoice cannot take a payment right now. Please ask your Auntie to check it.';
+
+/**
+ * #2410: the sentence the HOUSEHOLD is given for a `cardCheckoutRefusal`
+ * reason, by `payInvoice` when it refuses and by `getMyInvoices` beside an
+ * invoice it offers no way to pay. Plain words: nothing here names a field, a
+ * code or what the office does with a payment.
+ */
+export function cardCheckoutRefusalSentence(reason: Exclude<DuplicateCheckoutReason, null>): string {
+  switch (reason) {
+    case 'invoice-not-sent':
+      return 'This quote has not been accepted, so there is nothing to pay yet.';
+    case 'invoice-credit':
+      return 'This is a credit, not a bill, so there is nothing to pay.';
+    case 'invoice-marked-paid':
+      return PAID_INVOICE_REFUSAL;
+    case 'invoice-cancelled':
+    case 'invoice-written-off':
+    case 'invoice-not-owed':
+    case 'settled-by-other-intent':
+      return 'There is nothing to pay on this invoice.';
+    default:
+      return INVOICE_CANNOT_TAKE_PAYMENT;
+  }
+}
+
+/**
+ * Whether the invoice is another household's than the one on the checkout:
+ * both name a household and they differ (`planApply`'s rule). One that names
+ * none, on either side, is not another household's. Read by the held check
+ * above and by the webhook's decline check, so the two cannot disagree.
+ */
+export function invoiceOfAnotherHousehold(
+  doc: { kinfolkId?: unknown } | null | undefined,
+  checkoutKinfolkId: string,
+): boolean {
+  const invoiceKin = typeof doc?.kinfolkId === 'string' ? doc.kinfolkId : '';
+  return checkoutKinfolkId !== '' && invoiceKin !== '' && invoiceKin !== checkoutKinfolkId;
+}
+
+/**
+ * The held reasons that are `duplicateCheckoutReason`'s own: a second attempt
+ * at a payment the invoice already took, or one on a cancelled or written-off
+ * invoice. Only these name the payment that settled the invoice on the held
+ * row (`duplicateOfPaymentIntentId`); the others are not a duplicate of it.
+ */
+export function heldAsDuplicate(reason: DuplicateCheckoutReason): boolean {
+  return (
+    reason === 'stale-round' ||
+    reason === 'settled-by-other-intent' ||
+    reason === 'invoice-not-owed' ||
+    reason === 'invoice-marked-paid' ||
+    reason === 'invoice-cancelled' ||
+    reason === 'invoice-written-off'
+  );
 }

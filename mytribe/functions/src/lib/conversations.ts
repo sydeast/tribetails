@@ -2,6 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from './firestoreAdmin';
 import { sanitizeMessageBody, messagePlainText } from './richText';
+import { cutWhole } from './cutText';
 
 /**
  * Stage 2 step 7 (Inbox conversations / Message Auntie 16.4). Two-way threads
@@ -44,7 +45,7 @@ export type SenderRole = 'kinfolk' | 'auntie';
 /** Single-line preview for the thread list. Pure. Strips any markup, collapses whitespace + truncates. */
 export function previewOf(body: string): string {
   const oneLine = messagePlainText(body).replace(/\s+/g, ' ').trim();
-  return oneLine.length <= PREVIEW_MAX ? oneLine : `${oneLine.slice(0, PREVIEW_MAX - 1)}…`;
+  return oneLine.length <= PREVIEW_MAX ? oneLine : `${cutWhole(oneLine, PREVIEW_MAX - 1)}…`;
 }
 
 export interface AppendMessageArgs {

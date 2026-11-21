@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.admin
 import com.tribetails.auntieos.domain.completeRefusal
 import com.tribetails.auntieos.domain.KIN_TALES_TO_SEND_LABEL
 import com.tribetails.auntieos.domain.SEND_THE_KINTALE_LABEL
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.domain.offersSendKinTale
 import com.tribetails.auntieos.domain.splitKinTalesToSend
 import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
@@ -987,7 +988,7 @@ private fun KinCareCard(
             val notePreview = session.kinfolkNotes.ifBlank { session.notes }
             if (notePreview.isNotBlank()) {
                 Text(
-                    text = notePreview.take(120) + if (notePreview.length > 120) "…" else "",
+                    text = cutWhole(notePreview, 120) + if (notePreview.length > 120) "…" else "",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )

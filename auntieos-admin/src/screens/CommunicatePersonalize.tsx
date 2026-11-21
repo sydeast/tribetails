@@ -1,11 +1,11 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
 import { useDocById } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { type GeneratedDraftRow } from '../api/drafts';
 import { publishGeneratedDraft, deleteGeneratedDraft } from '../api/kinTaleDraftActions';
-import { draftBody, draftKinfolkId, draftHousehold, draftTitle, isPublishedDraft } from '../lib/kinTaleList';
+import { draftBody, draftKinfolkId, draftHousehold, draftTitle, isHeldPushDraft, isPublishedDraft, isUnansweredPushDraft } from '../lib/kinTaleList';
 import { GENERATE_COMMUNICATION_TYPES, type GenerateCommunicationType } from '../api/communicateGenerate';
 import {
   PERSONALIZE_MESSAGE_TYPES,
@@ -18,17 +18,23 @@ import {
   filterRecipients,
   generateBlocker,
   approveBlocker,
+  auntieKinTaleBlocker,
   buildGeneratePayload,
   draftSubtitle,
   type PersonalizeFormState,
 } from '../lib/personalizeCompose';
 import { generateDraft, draftOpening, type GenerateDraftResult } from '../api/communicateGenerate';
 import { approveGeneratedDraft, type ApproveDraftResult } from '../api/communicateApprove';
-import { sendExternalMessage } from '../api/externalSend';
+import { sendGeneratedDraft } from '../api/draftSend';
+import { alreadySentText, sendRefusedUnconfirmed, sentDraftOnOpen, unconfirmedSendText } from '../lib/draftSent';
+import { householdTextPreviewLine } from '../lib/householdText';
+import { useBusinessZone } from '../lib/useBusinessZone';
 import {
   sendHouseholdPush,
   householdPushResultText,
   householdPushRetryable,
+  personalizeDraftActions,
+  pushRefusalNeedsApproval,
   type HouseholdPushResult,
 } from '../api/householdPush';
 import { DenPanel, EmptyHint, StatusPill } from '../components/DenScreenKit';
@@ -66,10 +72,28 @@ const SUBJECT_MAX = 500;
  * `approveGeneratedDraft` owns the ordering: the Firestore write is a gate, the
  * audit entry follows it, and the send follows that. See `api/communicateApprove.ts`
  * for why that order and no other. This screen decides only ONE thing about it,
- * whether there is a `deliver` step at all: a Text or an Email goes out through
- * `sendExternalMessage`, while a KinTale report and a Blog post are promoted and
+ * whether there is a `deliver` step at all: a Push goes out through
+ * `sendHouseholdPush`, while a Social, Blog or General draft is promoted and
  * recorded but sent by nothing. A deliverable approve gets a confirm dialog
  * first, because it reaches a real household and is not undoable.
+ *
+ * ── AN EMAIL OR TEXT IS SENT BY THE SERVER, ONCE (#2428) ────────────────────
+ * Approving one calls `sendGeneratedDraft`, which approves the draft, sends it
+ * and marks it sent in one call. Before #2428 this screen approved the draft
+ * itself and then called `sendExternalMessage`, and nothing on the draft said
+ * it had gone: opened again it read "needs approval", and a second approve
+ * sent the household the same message twice.
+ *
+ * ── A DRAFT THAT ALREADY WENT OUT OPENS AS SENT (#2428) ─────────────────────
+ * #2408 (ruling 2026-11-14): an Email carries the whole message. A Text is
+ * sent short with a link to the whole message on the household's notifications
+ * list in MyTribe, and the confirm shows that short text
+ * (`lib/householdText.ts`), so what is approved is what arrives.
+ *
+ * A sent Email or Text, and a Push that reached the household's notifications
+ * list or their phone, open with what happened and neither button
+ * (`lib/draftSent.ts`). The server refuses a second send and a delete of one
+ * whatever a screen offers.
  *
  * ── A PUSH IS SENT BY THE SERVER, OR SAYS WHY NOT (#2061) ───────────────────
  * A Push draft's approved line goes to the household through
@@ -98,6 +122,15 @@ export interface CommunicatePersonalizeProps {
   draftId?: string | undefined;
   /** Opens the sent KinTale. Omitted, the success banner offers no link. */
   onOpenKinTale?: ((reportId: string) => void) | undefined;
+  /**
+   * #2444: an Auntie is signed in. She sends a stored KinTale draft and
+   * nothing else, so the generator form, the household context panel, Delete
+   * and every send that is not a KinTale are not drawn. The reasons, one per
+   * control, are in `Communicate.tsx`.
+   */
+  isAuntie?: boolean;
+  /** Opens the KinTales list, where her drafts are. */
+  onOpenKinTales?: (() => void) | undefined;
 }
 /** The composer chip a stored draft's `communication_type` selects. Blank or unknown reads as a KinTale, Home's own fallback. */
 function messageTypeOfDraft(draft: GeneratedDraftRow): GenerateCommunicationType {
@@ -106,7 +139,12 @@ function messageTypeOfDraft(draft: GeneratedDraftRow): GenerateCommunicationType
     ? (raw as GenerateCommunicationType)
     : 'visit_report';
 }
-export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: CommunicatePersonalizeProps = {}) {
+export function CommunicatePersonalize({
+  draftId: openDraftId,
+  onOpenKinTale,
+  isAuntie = false,
+  onOpenKinTales,
+}: CommunicatePersonalizeProps = {}) {
   const kinfolkState = useKinfolkRoster();
   // A by-id read, not a search of Home's 50-row drafts stream: a draft from
   // May can sit outside that window and still be the one the operator clicked.
@@ -137,6 +175,14 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   const [published, setPublished] = useState<{ reportId: string; alreadyPublished: boolean } | null>(null);
   // #2061: what the push send answered, for a Push draft.
   const [pushResult, setPushResult] = useState<HouseholdPushResult | null>(null);
+  // #2428: an Email or Text that had already gone out: the stored draft it was
+  // opened from, or `answered` when the server said so to a send from here.
+  // #2452: `unconfirmed` when the server said the send from here got no
+  // answer. The notice then takes the place of Approve and Delete at once, the
+  // way it does when the draft is opened again.
+  const [sentBefore, setSentBefore] = useState<GeneratedDraftRow | 'answered' | 'unconfirmed' | null>(null);
+  // #2440: the day in a sent notice is the business's day, never the browser's.
+  const businessZone = useBusinessZone();
   const [retryingPush, setRetryingPush] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -151,11 +197,15 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   const lengthLegendId = useId();
   const searchId = useId();
   const subjectId = useId();
+  const auntieTitleId = useId();
   const notesId = useId();
   const draftId = useId();
 
   const def = messageTypeDef(form.messageType);
   const busy = generating || approving || deleting || retryingPush;
+  // #2389: `busy` is state, so two taps in one frame both read it false. This
+  // is set before the first await and read by every send and delete.
+  const inFlight = useRef(false);
   useEffect(() => {
     if (stored.status !== 'ready' || stored.data === null) return;
     const row = stored.data;
@@ -180,14 +230,37 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
       warnings: [],
     });
     setDraftText(body);
-    setApproved(null);
-    setPushResult(null);
+    // #2293: a held Push draft opens where it was left, approved with its Try
+    // again, so it can be sent after the screen was closed.
+    if (isHeldPushDraft(row)) {
+      setApproved({ ok: true, auditWarning: null, providerId: null, delivered: true });
+      setPushResult({ outcome: 'held', reason: (str(row.pushReason).trim() || null) as HouseholdPushResult['reason'] });
+    } else if (isUnansweredPushDraft(row)) {
+      // #2381: approved, and the send never answered. Try again finds out.
+      setApproved({ ok: true, auditWarning: null, providerId: null, delivered: true });
+      setPushResult({ outcome: 'unanswered', reason: null });
+    } else {
+      setApproved(null);
+      setPushResult(null);
+    }
     setApproveError(null);
     setFormError(null);
     setDeleted(false);
     setPublished(
       isPublishedDraft(row) ? { reportId: str(row.publishedReportId).trim(), alreadyPublished: true } : null,
     );
+    // #2428: a draft that already went out opens as sent, with no Approve and
+    // no Delete. It used to open as "needs approval", and approving an Email or
+    // Text again sent it to the household a second time.
+    const went = sentDraftOnOpen(row, household, businessZone);
+    if (went !== null) {
+      setApproved({ ok: true, auditWarning: null, providerId: null, delivered: true });
+      setPushResult(went.push);
+    }
+    setSentBefore(went !== null && went.notice !== null ? row : null);
+    // `businessZone` is read here only to tell whether the draft went out at
+    // all, which no zone changes. The notice is worded again at render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stored, loadedDraftId]);
 
   function patch(next: Partial<PersonalizeFormState>) {
@@ -201,6 +274,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     setApproved(null);
     setPublished(null);
     setPushResult(null);
+    setSentBefore(null);
     setApproveError(null);
     setFormError(null);
   }
@@ -216,6 +290,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     setApproved(null);
     setPublished(null);
     setPushResult(null);
+    setSentBefore(null);
     setApproveError(null);
     setDeleted(false);
     setGenerating(true);
@@ -237,8 +312,22 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     }
   }
 
-  async function runApprove(kf: Kinfolk | undefined) {
-    if (busy) return;
+  /**
+   * #2389: an approved Push that has not gone out sends its approved words and
+   * no others. Editing them returns the draft to unapproved, so the next step
+   * is Approve and send, which stores the new words before it sends them.
+   */
+  function editDraftText(next: string) {
+    setDraftText(next);
+    if (approved !== null && pushResult !== null && householdPushRetryable(pushResult) && next !== draftText) {
+      setApproved(null);
+      setPushResult(null);
+      setApproveError(null);
+    }
+  }
+  async function runApprove() {
+    if (busy || inFlight.current) return;
+    inFlight.current = true;
     setApproving(true);
     setApproveError(null);
     try {
@@ -252,6 +341,23 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
           title: form.subject,
         });
         setPublished({ reportId: result.reportId, alreadyPublished: result.alreadyPublished });
+        setConfirmOpen(false);
+        return;
+      }
+      // #2428: an Email or Text is approved and sent by the server in one call,
+      // which marks the draft sent. No client-side approve write and no
+      // `sendExternalMessage`: that pair left nothing on the draft to say it
+      // had gone, so it could be approved and sent again.
+      if (def.deliverable === 'email' || def.deliverable === 'sms') {
+        const result = await sendGeneratedDraft({
+          draftId: draft?.draft_id ?? '',
+          kinfolkId: draft?.kinfolk_id ?? form.recipientId,
+          body: draftText,
+          ...(def.deliverable === 'email' ? { subject: form.subject } : {}),
+        });
+        setApproved({ ok: true, auditWarning: result.auditWarning, providerId: null, delivered: true });
+        setPushResult(null);
+        setSentBefore(result.outcome === 'already_sent' ? 'answered' : null);
         setConfirmOpen(false);
         return;
       }
@@ -272,17 +378,6 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
               });
               return null;
             }
-          : (def.deliverable === 'email' || def.deliverable === 'sms') && kf !== undefined
-          ? async () => {
-              const res = await sendExternalMessage({
-                channel: def.deliverable === 'email' ? 'email' : 'sms',
-                to: def.deliverable === 'email' ? str(kf.email) : str(kf.phoneNumber),
-                subject: form.subject,
-                body: draftText,
-                transactional: true,
-              });
-              return res.providerMessageId;
-            }
           : undefined;
 
       const result = await approveGeneratedDraft({
@@ -296,9 +391,19 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
       setPushResult(pushAnswer);
       setConfirmOpen(false);
     } catch (err) {
-      setApproveError(err instanceof Error ? err.message : 'Approve failed.');
       setConfirmOpen(false);
+      // #2452: the send got no answer, and the server keeps the draft closed.
+      // Told by the refusal's code, never its words. The screen stops offering
+      // Approve and Delete here, and says what is and is not known.
+      if (sendRefusedUnconfirmed(err)) {
+        setApproved({ ok: true, auditWarning: null, providerId: null, delivered: true });
+        setPushResult(null);
+        setSentBefore('unconfirmed');
+        return;
+      }
+      setApproveError(err instanceof Error ? err.message : 'Approve failed.');
     } finally {
+      inFlight.current = false;
       setApproving(false);
     }
   }
@@ -306,21 +411,29 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   /** #2061: send a held push again, once its cause is fixed. The draft is already approved. */
   async function retryPush() {
     const kinfolkId = draft?.kinfolk_id ?? (form.recipientId !== '' ? form.recipientId : '');
-    if (busy || kinfolkId === '' || !draft?.draft_id) return;
+    if (busy || inFlight.current || kinfolkId === '' || !draft?.draft_id) return;
+    inFlight.current = true;
     setRetryingPush(true);
     setApproveError(null);
     try {
       setPushResult(await sendHouseholdPush({ kinfolkId, draftId: draft.draft_id, body: draftText }));
     } catch (err) {
       setApproveError(err instanceof Error ? err.message : 'The push could not be sent.');
+      // #2389: the stored words are not these. Back to unapproved.
+      if (pushRefusalNeedsApproval(err)) {
+        setApproved(null);
+        setPushResult(null);
+      }
     } finally {
+      inFlight.current = false;
       setRetryingPush(false);
     }
   }
 
   async function runDelete() {
     const id = draft?.draft_id ?? '';
-    if (busy || id === '') return;
+    if (busy || inFlight.current || id === '') return;
+    inFlight.current = true;
     setDeleting(true);
     setDeleteError(null);
     try {
@@ -331,12 +444,18 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Delete failed.');
     } finally {
+      inFlight.current = false;
       setDeleting(false);
     }
   }
   function handleApproveClick(kf: Kinfolk | undefined) {
     if (busy) return;
-    const blocker = approveBlocker(form, kf, draft?.draft_id ?? null, draftText);
+    // #2444: an Auntie has no recipient picker, so her send is checked
+    // against the household the draft itself names.
+    const blocker =
+      isAuntie && def.deliverable === 'kintale'
+        ? auntieKinTaleBlocker(draft?.kinfolk_id ?? null, draftText)
+        : approveBlocker(form, kf, draft?.draft_id ?? null, draftText);
     if (blocker !== null) {
       setApproveError(blocker);
       return;
@@ -346,7 +465,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
       setConfirmOpen(true);
       return;
     }
-    void runApprove(kf);
+    void runApprove();
   }
 
   return (
@@ -367,6 +486,16 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
         const household = kf ? kinfolkDisplayName(kf) : (draft?.kinfolk_name ?? 'the household');
         // A sent draft is finished: no second send, no delete.
         const settled = published !== null || approved !== null;
+        // #2381: an approved Push that did not go out keeps its Delete.
+        const actions = personalizeDraftActions({
+          published: published !== null,
+          approved: approved !== null,
+          pushResult,
+        });
+        // #2444: the one send an Auntie can finish. Her rules read only
+        // KinTale drafts, so any other type on her screen is a draft the server
+        // will not let her act on, and it gets no button.
+        const auntieMaySend = isAuntie && def.deliverable === 'kintale';
 
         // `.communicate__main` is the left column of the two-column grid
         // `Communicate` draws (the mock's `.cols`); the confirm Dialog is
@@ -388,6 +517,19 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
               </Banner>
             )}
             {deleted && <Banner tone="success">Draft deleted.</Banner>}
+            {/* #2444: an Auntie with no draft open has nothing to act on here,
+                so she is pointed at the list her drafts are in. */}
+            {isAuntie && draft === null && stored.status !== 'loading' && (
+              <DenPanel title="KinTale drafts">
+                <EmptyHint>No draft is open.</EmptyHint>
+                {onOpenKinTales && (
+                  <div className="personalize__actions">
+                    <GhostButton label="Open KinTales" onClick={onOpenKinTales} />
+                  </div>
+                )}
+              </DenPanel>
+            )}
+            {!isAuntie && (
             <DenPanel
               title="Personalize"
               subtitle="A one-to-one note that uses the recipient's dossier and kin context."
@@ -577,12 +719,13 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                 </div>
               </div>
             </DenPanel>
+            )}
 
             {/* The context Auntie reads before drafting. Rendered for the types
                 that address a household; a Blog post has no recipient, so there
                 is no dossier to show and the panel would be a permanent empty
                 state taking up the screen. */}
-            {def.needsRecipient && <RecipientContextPanel kinfolkId={form.recipientId} />}
+            {def.needsRecipient && !isAuntie && <RecipientContextPanel kinfolkId={form.recipientId} />}
             {draft !== null && (
               // The mock's `.draft` card: purple rim and wash, "Auntie AI
               // draft" with the "needs approval" capsule on the header rule.
@@ -603,6 +746,26 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                     </Banner>
                   )}
 
+                  {/* #2444: the owner's Subject box is in the generator
+                      form, which an Auntie does not get. Her KinTale's title
+                      is edited here, beside the words it heads. */}
+                  {isAuntie && def.deliverable === 'kintale' && (
+                    <label className="personalize__field" htmlFor={auntieTitleId}>
+                      <span className="personalize__field-label">Title</span>
+                      <input
+                        id={auntieTitleId}
+                        type="text"
+                        className="personalize__text-input"
+                        value={form.subject}
+                        disabled={busy || settled}
+                        maxLength={SUBJECT_MAX}
+                        onChange={(e) => {
+                          patch({ subject: e.target.value });
+                          setSubjectTouched(true);
+                        }}
+                      />
+                    </label>
+                  )}
                   <label className="personalize__field" htmlFor={draftId}>
                     <span className="personalize__field-label">Edit before approving</span>
                     <textarea
@@ -611,7 +774,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       value={draftText}
                       disabled={busy}
                       rows={10}
-                      onChange={(e) => setDraftText(e.target.value)}
+                      onChange={(e) => editDraftText(e.target.value)}
                     />
                   </label>
 
@@ -643,7 +806,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                   {approved !== null && pushResult !== null && (() => {
                     // #2061: the push's own answer, never a generic "sent".
                     const words = householdPushResultText(pushResult, household);
-                    const tone = pushResult.outcome === 'held' ? 'warning' : 'success';
+                    const tone = householdPushRetryable(pushResult) ? 'warning' : 'success';
                     return (
                       <Banner tone={tone} title={words.title}>
                         {words.body}
@@ -666,7 +829,25 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       </Banner>
                     );
                   })()}
-                  {approved !== null && pushResult === null && (
+                  {approved !== null && pushResult === null && sentBefore !== null && (() => {
+                    // #2428: this one had already gone out. Say so, in place of
+                    // "Draft approved", which reads as something done just now.
+                    // #2452: a send that got no answer has its own words, and
+                    // the warning tone, whether it was opened that way or the
+                    // server just said so.
+                    const words =
+                      sentBefore === 'answered'
+                        ? alreadySentText(household)
+                        : sentBefore === 'unconfirmed'
+                          ? unconfirmedSendText(household, def.deliverable === 'email' || def.deliverable === 'sms' ? def.deliverable : null)
+                          : sentDraftOnOpen(sentBefore, household, businessZone)?.notice;
+                    return words ? (
+                      <Banner tone={words.tone} title={words.title}>
+                        {words.body}
+                      </Banner>
+                    ) : null;
+                  })()}
+                  {approved !== null && pushResult === null && sentBefore === null && (
                     <Banner tone="success" title="Draft approved">
                       {approved.delivered
                         ? // #1592: no provider message id; it is a support trace, not
@@ -684,15 +865,17 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       {deleteError}
                     </Banner>
                   )}
-                  {!settled && (
+                  {(auntieMaySend ? actions.approve : !isAuntie && (actions.approve || actions.remove)) && (
                     <div className="personalize__actions">
-                      <PrimaryButton
-                        label={approveLabel}
-                        busy={approving}
-                        disabled={busy}
-                        onClick={() => handleApproveClick(kf)}
-                      />
-                      {draft.draft_id !== null && draft.draft_id !== '' && (
+                      {actions.approve && (!isAuntie || auntieMaySend) && (
+                        <PrimaryButton
+                          label={approveLabel}
+                          busy={approving}
+                          disabled={busy}
+                          onClick={() => handleApproveClick(kf)}
+                        />
+                      )}
+                      {actions.remove && !isAuntie && draft.draft_id !== null && draft.draft_id !== '' && (
                         <GhostButton
                           label="Delete draft"
                           disabled={busy}
@@ -704,10 +887,12 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       )}
                     </div>
                   )}
-                  <p className="personalize__note">
-                    Approving saves this draft and records it in the activity log. Nothing goes out until that save
-                    succeeds.
-                  </p>
+                  {!isAuntie && (
+                    <p className="personalize__note">
+                      Approving saves this draft and records it in the activity log. Nothing goes out until that save
+                      succeeds.
+                    </p>
+                  )}
                 </div>
               </DenPanel>
             )}
@@ -724,7 +909,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                     <GhostButton label="Cancel" onClick={() => setConfirmOpen(false)} disabled={approving} />
                     <PrimaryButton
                       label={approving ? 'Sending…' : 'Send now'}
-                      onClick={() => void runApprove(kf)}
+                      onClick={() => void runApprove()}
                       disabled={approving}
                       busy={approving}
                     />
@@ -743,7 +928,9 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                 ) : def.deliverable === 'kintale' ? (
                   <>
                     <p className="personalize__confirm-line">
-                      <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'}
+                      {/* The draft's own household when the roster does not
+                          hold it: that is who the server sends it to. */}
+                      <strong>To:</strong> {household}
                     </p>
                     <p className="personalize__confirm-line">
                       <strong>Channel:</strong> KinTale, on their portal
@@ -761,7 +948,10 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       {def.deliverable === 'email' ? str(kf?.email) : str(kf?.phoneNumber)})
                     </p>
                     <p className="personalize__confirm-line">
-                      <strong>Channel:</strong> {def.deliverable === 'email' ? 'Email' : 'Text'}
+                      <strong>Channel:</strong>{' '}
+                      {def.deliverable === 'email'
+                        ? 'Email'
+                        : 'Text, kept short, with a link to MyTribe'}
                     </p>
                     {def.deliverable === 'email' && (
                       <p className="personalize__confirm-line">
@@ -770,9 +960,16 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                     )}
                   </>
                 )}
-                <p className="personalize__confirm-line">
-                  <strong>Message:</strong> {draftText}
-                </p>
+                {def.deliverable === 'sms' ? (
+                  // #2408: what the household is texted, not the draft it is cut from.
+                  <p className="personalize__confirm-line" data-testid="confirm-text-as-sent">
+                    <strong>Text:</strong> {householdTextPreviewLine(draftText)}
+                  </p>
+                ) : (
+                  <p className="personalize__confirm-line">
+                    <strong>Message:</strong> {draftText}
+                  </p>
+                )}
                 <p className="personalize__confirm-note">
                   This reaches a real household right now. It is not undoable.
                 </p>
@@ -797,7 +994,12 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                 }
               >
                 <p className="personalize__confirm-line">
-                  {household !== '' ? `The draft for ${household} has not been sent.` : 'This draft has not been sent.'}{' '}
+                  {/* #2381: an unanswered push may have gone out, so "not sent" is not said for it. */}
+                  {pushResult?.outcome === 'unanswered'
+                    ? ''
+                    : household !== ''
+                      ? `The draft for ${household} has not been sent. `
+                      : 'This draft has not been sent. '}
                   Deleting it cannot be undone.
                 </p>
                 {deleteError !== null && <Banner tone="error">{deleteError}</Banner>}

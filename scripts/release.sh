@@ -249,6 +249,26 @@ RELEASE_MIXED_WITH=""
 cleanup_client_env() {
   node "$ROOT/scripts/client-secrets.mjs" --clean >/dev/null 2>&1 || true
   rm -f "${RELEASE_GIT_ERR_FILE:-}" 2>/dev/null || true
+  cleanup_restored_voice
+}
+
+# 1 once step 1b has put Ask Auntie's voice files into this checkout from
+# Secret Manager (#2399). They hold real names, so they stay only as long as
+# the run that needed them. Every way out of this script goes through
+# cleanup_client_env (the EXIT trap, and the three places that call it and then
+# drop the trap), so that is where they are taken out again. Files that were
+# already in the checkout, the operator's Mac, never set this and are never
+# touched.
+VOICE_RESTORED=0
+cleanup_restored_voice() {
+  [ "${VOICE_RESTORED:-0}" = "1" ] || return 0
+  if node "$ROOT/scripts/voice-secret.mjs" clean >/dev/null 2>&1; then
+    VOICE_RESTORED=0
+    ylw "voice: the files restored for this run were removed from the checkout."
+  else
+    red "voice: COULD NOT REMOVE the files restored for this run. Delete"
+    red "  auntieos-admin/web/functions/voice/ by hand: it holds real names."
+  fi
 }
 
 # Any exit that is not the clean end of this script names the step it died in.
@@ -2218,6 +2238,200 @@ else
     fi
     grn "secrets: all $(printf '%s\n' "$DECLARED" | wc -l | tr -d ' ') declared secrets exist"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# 1b (continued). Ask Auntie's voice files, BEFORE anything deploys.
+# ---------------------------------------------------------------------------
+# The admin functions codebase uploads auntieos-admin/web/functions/voice/ with
+# it. generate.js refuses to draft from a samples file whose sample names it
+# cannot replace in full, so a file like that turns every Ask Auntie draft into
+# an error from the moment it ships. checkVoice.js asks the question
+# generate.js asks on its first request, here, where a no still costs nothing.
+#
+# The files are gitignored, because they hold real names and the repo is
+# public. A checkout without them (the hosted runner, a fresh clone) used to
+# upload the admin functions anyway, and Ask Auntie then answered every draft
+# with an error until the next release from the Mac (#2399).
+#
+# So a checkout with NONE of the files asks Secret Manager for the copy the
+# operator stored (scripts/voice-secret.mjs, secret AUNTIE_VOICE_FILES), and
+# there are four answers, which must not print the same:
+#
+#   restored      the stored copy passed the same check and is in the checkout
+#                 for this run. cleanup_client_env removes it at every exit.
+#   no copy       Secret Manager answered and holds no such secret. Reported,
+#                 and the release goes on, as it did before the copy existed.
+#   could not ask gcloud is missing, signed out or silent. Reported, goes on:
+#                 this run knows nothing about the copy either way.
+#   unusable      the copy is there and is empty, not a bundle, refused by
+#                 checkVoice.js, or its value could not be read. REFUSED. The
+#                 operator set this up, so shipping without the files would
+#                 break an Ask Auntie that works today.
+#
+# "Could not ask" goes on only when this run never reached Secret Manager at
+# all. When step 0c read it minutes ago (CLIENT_RC=0) and it does not answer
+# here, that is a dropped request, not a machine without gcloud: the copy may
+# well be there, and on the runner it is. REFUSED too, because going on would
+# ship a broken Ask Auntie behind one yellow line until the next release. A
+# rerun asks again.
+#
+# Files already in the checkout are checked as they are and never replaced.
+# That is the Mac, and its release ships them whatever Secret Manager holds.
+#
+# It does ask one thing, once its own files have passed: is the stored copy
+# these files? The scheduled release ships the stored copy, so an edit that
+# was released from the Mac and never stored is undone by the next scheduled
+# run, and nothing else would say so. `voice-secret.mjs compare` answers by
+# hash, in memory. THIS NEVER STOPS A RELEASE. A copy that differs, is
+# missing or is damaged, and a Secret Manager that does not answer (even one
+# that answered step 0c), each get a yellow warning with the command that
+# stores the files. The release in hand has its files and is not the one at
+# risk.
+#
+# Neither script prints a line of a voice file, only a reason and counts.
+STEP="checking Ask Auntie's voice files"
+if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
+  VOICE_CHECK="$ROOT/auntieos-admin/web/functions/checkVoice.js"
+  VOICE_RC=0
+  node "$VOICE_CHECK" || VOICE_RC=$?
+  # Why the files are still absent after asking: 3 no copy, 4 could not ask,
+  # 6 some of the files are here. Empty when nobody asked.
+  VOICE_RESTORE_RC=""
+  if [ "$VOICE_RC" = "3" ]; then
+    STEP="restoring Ask Auntie's voice files from Secret Manager"
+    VOICE_RESTORE_RC=0
+    node "$ROOT/scripts/voice-secret.mjs" restore --project "$PROJECT" || VOICE_RESTORE_RC=$?
+    # 1 when Secret Manager answered step 0c in this run and not this step.
+    VOICE_STORE_WENT_QUIET=0
+    if [ "$VOICE_RESTORE_RC" = "4" ] && [ "${CLIENT_RC:-}" = "0" ]; then
+      VOICE_STORE_WENT_QUIET=1
+    fi
+    case "$VOICE_RESTORE_RC:$VOICE_STORE_WENT_QUIET" in
+      0:*)
+        # Set before the check below, so a copy that fails it is still removed.
+        VOICE_RESTORED=1
+        STEP="checking Ask Auntie's voice files"
+        VOICE_RC=0
+        node "$VOICE_CHECK" || VOICE_RC=$?
+        # The script checked this copy before writing it. If the same check
+        # now disagrees, do not ship on either answer.
+        [ "$VOICE_RC" = "0" ] || VOICE_RC=1
+        ;;
+      3:*|4:0|6:*) ;;
+      *)
+        if [ "$VOICE_STORE_WENT_QUIET" = "1" ]; then
+          red "REFUSED: the stored copy of Ask Auntie's voice files could not be asked for"
+        else
+          red "REFUSED: the stored copy of Ask Auntie's voice files cannot be used"
+        fi
+        red "  (see the line above)."
+        red ""
+        red "  This checkout has no voice files, so the admin functions would ship"
+        red "  without them and Ask Auntie would answer every draft with an error."
+        red "  Refusing now, before any deploy. Nothing was written to the checkout."
+        red ""
+        if [ "$VOICE_STORE_WENT_QUIET" = "1" ]; then
+          red "  Secret Manager answered step 0c of this run and did not answer"
+          red "  here, so the copy was never looked at. Run the release again."
+        elif [ "$VOICE_RESTORE_RC" = "5" ]; then
+          red "  Secret Manager lists the copy and did not hand over its value. Run"
+          red "  the release again. If it stops here again, look at its versions:"
+          red "    gcloud secrets versions list AUNTIE_VOICE_FILES --project $PROJECT"
+        else
+          red "  Store a good copy from the Mac, from the repo root:"
+          red "    npm run sync:voice --prefix auntieos-admin/web/functions"
+          red "    node scripts/voice-secret.mjs push"
+        fi
+        exit 1
+        ;;
+    esac
+  fi
+  case "$VOICE_RC" in
+    0)
+      grn "voice: the files this release uploads are usable"
+      if [ "$VOICE_RESTORED" = "1" ]; then
+        grn "  They came from Secret Manager and leave the checkout when this run ends."
+      else
+        # The checkout's own files. Every arm below goes on, the catch-all
+        # included: see "THIS NEVER STOPS A RELEASE" above. The script prints
+        # which answer it was, and the yellow lines say what to do about it.
+        STEP="comparing Ask Auntie's voice files with the stored copy"
+        VOICE_COMPARE_RC=0
+        node "$ROOT/scripts/voice-secret.mjs" compare --project "$PROJECT" || VOICE_COMPARE_RC=$?
+        case "$VOICE_COMPARE_RC" in
+          0) ;;
+          3)
+            ylw "voice: NO COPY IS STORED for the scheduled release. This release ships"
+            ylw "  the files in this checkout. A scheduled release has none, so it would"
+            ylw "  ship the admin functions without them and Ask Auntie would answer"
+            ylw "  every draft with an error. Store them, from the repo root:"
+            ylw "    node scripts/voice-secret.mjs push"
+            ;;
+          7)
+            ylw "voice: THE STORED COPY IS NOT THESE FILES. This release ships the files"
+            ylw "  in this checkout. The scheduled release ships the stored copy, so its"
+            ylw "  next run would put that one back. To store the files in this"
+            ylw "  checkout, from the repo root:"
+            ylw "    node scripts/voice-secret.mjs push"
+            ;;
+          8)
+            ylw "voice: THE STORED COPY CANNOT BE USED (the line above). This release"
+            ylw "  ships the files in this checkout. A scheduled release would refuse at"
+            ylw "  this step. Store a good copy, from the repo root:"
+            ylw "    node scripts/voice-secret.mjs push"
+            ;;
+          *)
+            ylw "voice: NOT COMPARED with the copy stored for the scheduled release (the"
+            ylw "  line above). This release ships the files in this checkout either"
+            ylw "  way. If they changed since they were last stored, from the repo root:"
+            ylw "    node scripts/voice-secret.mjs push"
+            ;;
+        esac
+        STEP="checking Ask Auntie's voice files"
+      fi
+      ;;
+    3)
+      ylw "voice: NOT IN THIS CHECKOUT. The admin functions will ship without"
+      ylw "  auntieos-admin/web/functions/voice/, and Ask Auntie will answer every"
+      ylw "  draft with an error until a release that has the files."
+      case "$VOICE_RESTORE_RC" in
+        4)
+          ylw "  Secret Manager could not be asked for the stored copy (the line"
+          ylw "  above), so this run does not know whether one exists."
+          ;;
+        6)
+          ylw "  Some of the files are here and some are not, so nothing was"
+          ylw "  restored over them. Copy the full set in:"
+          ylw "    npm run sync:voice --prefix auntieos-admin/web/functions"
+          ;;
+        *)
+          ylw "  No copy is stored for a release to restore. To store one, on the"
+          ylw "  Mac, from the repo root:"
+          ylw "    npm run sync:voice --prefix auntieos-admin/web/functions"
+          ylw "    node scripts/voice-secret.mjs push"
+          ;;
+      esac
+      ;;
+    *)
+      red "REFUSED: Ask Auntie's voice files cannot be used (see the line above)."
+      red ""
+      red "  generate.js would refuse them too, on every draft, so shipping them"
+      red "  ships a broken Ask Auntie. Refusing now, before any deploy."
+      red ""
+      red "  Fix the sample-names block in auntieos-admin/voice/corpus/exemplars.md"
+      red "  (auntieos-admin/README.md, \"Names in the samples\"), then:"
+      red "    npm run sync:voice --prefix auntieos-admin/web/functions"
+      if [ "$VOICE_RESTORED" = "1" ]; then
+        red "  These files came from Secret Manager, so store the fixed copy too:"
+        red "    node scripts/voice-secret.mjs push"
+      fi
+      exit 1
+      ;;
+  esac
+else
+  ylw "voice: not looked at. RELEASE_INCLUDE_ADMIN_FUNCTIONS is off, so this run"
+  ylw "  does not upload Ask Auntie's voice files."
 fi
 
 # ---------------------------------------------------------------------------

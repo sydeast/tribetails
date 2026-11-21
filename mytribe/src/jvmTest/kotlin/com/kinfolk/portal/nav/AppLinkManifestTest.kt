@@ -90,4 +90,70 @@ class AppLinkManifestTest {
             .toSet()
         assertEquals(setOf("kinfolk.tribetails.com"), hosts)
     }
+
+    // ── #2401: the address Stripe returns a card payment to ──
+
+    private fun filters(): List<String> =
+        Regex("<intent-filter[^>]*>.*?</intent-filter>", RegexOption.DOT_MATCHES_ALL).findAll(manifest).map { it.value }.toList()
+
+    /** The one `<intent-filter>` that claims the https return address. */
+    private fun checkoutReturnFilter(): String =
+        filters().singleOrNull { it.contains("""android:pathPrefix="/app/invoices/"""") }
+            ?: fail("Exactly one intent-filter must claim /app/invoices/")
+
+    @Test
+    fun theCheckoutReturnIsClaimedOnThePortalHostOverHttpsAndVerified() {
+        val filter = checkoutReturnFilter()
+        assertTrue(filter.contains("""android:scheme="https""""), filter)
+        assertTrue(filter.contains("""android:host="kinfolk.tribetails.com""""), filter)
+        assertTrue(filter.contains("""android:autoVerify="true""""), "Without autoVerify the phone keeps the address in the browser:\n$filter")
+        assertTrue(filter.contains("android.intent.action.VIEW"), filter)
+        assertTrue(filter.contains("android.intent.category.BROWSABLE"), filter)
+        assertTrue(filter.contains("android.intent.category.DEFAULT"), filter)
+    }
+
+    /**
+     * A filter's `<data>` parts combine: a path added here would be matched
+     * against every host and scheme in the filter. So the return address has
+     * a filter to itself.
+     */
+    @Test
+    fun theCheckoutReturnFilterClaimsNothingElse() {
+        val filter = checkoutReturnFilter()
+        assertEquals(1, Regex("""android:(path|pathPrefix|pathPattern)=""").findAll(filter).count(), filter)
+        assertEquals(1, Regex("""android:scheme=""").findAll(filter).count(), filter)
+        assertEquals(1, Regex("""android:host=""").findAll(filter).count(), filter)
+    }
+
+    /**
+     * The web portal's own invoice page stays the browser's. Claiming it would
+     * pull the web portal's return from Stripe, and every invoice link in an
+     * email, into this app for anyone who has it installed.
+     */
+    @Test
+    fun theWebPortalsOwnInvoicePageIsNotClaimed() {
+        val claimed = Regex("""android:(?:path|pathPrefix|pathPattern)="([^"]+)"""").findAll(manifest).map { it.groupValues[1] }.toList()
+        assertTrue(claimed.none { it.startsWith("/invoices") }, "The manifest must not claim the web portal's /invoices pages: $claimed")
+        assertTrue(claimed.none { it == "/" || it == "/app/" || it == "/app" }, "The return claim must stay as narrow as /app/invoices/: $claimed")
+    }
+
+    /** The portal's signed-out return page opens the app through this one, which needs no verification. */
+    @Test
+    fun theAppsOwnSchemeOpensAnInvoiceToo() {
+        val own = filters().singleOrNull { it.contains("""android:scheme="mytribe"""") && it.contains("""android:host="invoices"""") }
+            ?: fail("Exactly one intent-filter must claim mytribe://invoices")
+        assertTrue(own.contains("android.intent.action.VIEW"), own)
+        assertTrue(own.contains("android.intent.category.BROWSABLE"), "A browser can only open a BROWSABLE link:\n$own")
+        assertTrue(own.contains("android.intent.category.DEFAULT"), own)
+        assertTrue(!own.contains("""android:scheme="https""""), "The own-scheme filter must not also claim https:\n$own")
+    }
+
+    /** `MainActivity` is where every link above is read. */
+    @Test
+    fun theReturnFiltersBelongToTheMainActivity() {
+        val activity = Regex("""<activity\s[^>]*android:name="\.MainActivity".*?</activity>""", RegexOption.DOT_MATCHES_ALL).find(manifest)?.value
+            ?: fail("No MainActivity in the manifest")
+        assertTrue(activity.contains("""android:pathPrefix="/app/invoices/""""))
+        assertTrue(activity.contains("""android:host="invoices""""))
+    }
 }

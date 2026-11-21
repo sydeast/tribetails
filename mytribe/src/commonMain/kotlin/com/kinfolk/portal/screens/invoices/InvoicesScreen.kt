@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -114,7 +115,10 @@ fun InvoicesScreen(
                     error = error,
                     payingId = controller.paying,
                     checkingId = controller.checkingPayment,
+                    notCheckedId = controller.paymentNotChecked,
+                    beingRecordedId = controller.paymentBeingRecorded,
                     onPay = { controller.startPay(it) },
+                    onCheckAgain = { controller.checkPaymentAgain(it.id) },
                     onOpenInvoice = onOpenInvoice,
                     viewerUid = viewerUid,
                 )
@@ -212,7 +216,10 @@ private fun OpenInvoicesCard(
     error: String?,
     payingId: String?,
     checkingId: String?,
+    notCheckedId: String?,
+    beingRecordedId: String?,
     onPay: (Invoice) -> Unit,
+    onCheckAgain: (Invoice) -> Unit,
     onOpenInvoice: (String) -> Unit,
     viewerUid: String?,
 ) {
@@ -235,7 +242,10 @@ private fun OpenInvoicesCard(
                         invoice = inv,
                         paying = payingId == inv.id,
                         checking = checkingId == inv.id,
+                        notChecked = notCheckedId == inv.id,
+                        beingRecorded = beingRecordedId == inv.id,
                         onPay = { onPay(inv) },
+                        onCheckAgain = { onCheckAgain(inv) },
                         onClick = { onOpenInvoice(inv.id) },
                         viewerUid = viewerUid,
                     )
@@ -276,7 +286,10 @@ private fun OpenInvoiceRow(
     invoice: Invoice,
     paying: Boolean,
     checking: Boolean,
+    notChecked: Boolean,
+    beingRecorded: Boolean,
     onPay: () -> Unit,
+    onCheckAgain: () -> Unit,
     onClick: () -> Unit,
     viewerUid: String?,
 ) {
@@ -297,13 +310,13 @@ private fun OpenInvoiceRow(
             KinCalendarBadge(calendarBadgeFromLabel(invoice.dueDate), accent = KinfolkBrand.KinfolkOrange)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    invoice.client ?: "${invoiceDocNoun(invoice)} #${invoice.id}",
+                    invoice.client ?: invoiceName(invoice),
                     style = type.sansBody.copy(fontWeight = FontWeight.SemiBold),
                 )
-                // With no client name the title is already "Invoice #id" — don't
+                // With no client name the title is already the invoice's name: don't
                 // repeat it; the due date below carries the meta line.
                 if (invoice.client != null) {
-                    Text("${invoiceDocNoun(invoice)} #${invoice.id}", style = type.sansMeta)
+                    Text(invoiceName(invoice), style = type.sansMeta)
                 }
                 Text(openRowMetaLabel(invoice, viewerUid), style = type.sansMeta)
             }
@@ -319,21 +332,42 @@ private fun OpenInvoiceRow(
         // `offersPayment`, not `isPayable` alone: a paid invoice takes no payment
         // whatever its status label says (operator ruling 2026-09-27, docket Q5).
         if (offersPayment(invoice)) {
+            // #2437: the server refused a Pay because a payment on this bill
+            // is still being recorded. Its sentence goes above the held button.
+            if (checking && beingRecorded) {
+                Text(
+                    PAYMENT_BEING_RECORDED,
+                    style = type.sansMeta,
+                    modifier = Modifier.fillMaxWidth().testTag("invoice-row-payment-being-recorded"),
+                )
+            }
             // #2366: held back while a payment just made is still landing.
+            // #2402: and after a check that could not read the bill at all,
+            // when the button checks again instead of paying.
+            val action = openRowAction(checking = checking, notChecked = notChecked, paying = paying, amountDue = invoice.amountDue)
             KinButton(
-                label = when {
-                    checking -> "Checking payment…"
-                    paying -> "Opening checkout…"
-                    else -> "Pay ${formatUsd(invoice.amountDue)}"
-                },
-                onClick = onPay,
+                label = action.label,
+                onClick = if (action.checksAgain) onCheckAgain else onPay,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !paying && !checking && invoice.amountDue > 0.0,
+                enabled = action.enabled,
             )
         }
     }
 }
 
+/** What an open row's button says and does. Pure, so every state is tested without drawing the row. */
+internal data class OpenRowAction(val label: String, val enabled: Boolean, val checksAgain: Boolean)
+/**
+ * Checking wins: nothing can be tapped while the bill is being read. Then the
+ * check that read nothing (#2402): the button checks again, and never pays on a
+ * copy from before the payment. Only after both does the row offer Pay.
+ */
+internal fun openRowAction(checking: Boolean, notChecked: Boolean, paying: Boolean, amountDue: Double): OpenRowAction = when {
+    checking -> OpenRowAction("Checking payment…", enabled = false, checksAgain = false)
+    notChecked -> OpenRowAction("Check payment again", enabled = true, checksAgain = true)
+    paying -> OpenRowAction("Opening checkout…", enabled = false, checksAgain = false)
+    else -> OpenRowAction("Pay ${formatUsd(amountDue)}", enabled = amountDue > 0.0, checksAgain = false)
+}
 @Composable
 private fun PaidInvoiceRow(invoice: Invoice, onClick: () -> Unit) {
     val type = LocalKinfolkTypography.current
@@ -349,12 +383,12 @@ private fun PaidInvoiceRow(invoice: Invoice, onClick: () -> Unit) {
         KinCalendarBadge(calendarBadgeFromLabel(invoice.date), accent = KinfolkBrand.KinTeal)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                invoice.client ?: "Invoice #${invoice.id}",
+                invoice.client ?: invoiceName(invoice),
                 style = type.sansBody.copy(fontWeight = FontWeight.SemiBold),
             )
             // Same de-duplication as OpenInvoiceRow: the paid date is the meta.
             if (invoice.client != null) {
-                Text("Invoice #${invoice.id}", style = type.sansMeta)
+                Text(invoiceName(invoice), style = type.sansMeta)
             }
             // #1330: the day with its year, the same label the web portal shows.
             Text(paidRowMetaLabel(invoice), style = type.sansMeta)
@@ -391,10 +425,10 @@ private fun CreditEntry(
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    invoice.client ?: "Invoice #${invoice.id}",
+                    invoice.client ?: invoiceName(invoice),
                     style = type.sansBody.copy(fontWeight = FontWeight.SemiBold),
                 )
-                Text("Credit • Invoice #${invoice.id}", style = type.sansMeta)
+                Text("Credit • ${invoiceName(invoice)}", style = type.sansMeta)
             }
             KinTintPill(
                 if (redeemed) "REDEEMED" else "CREDIT",
@@ -460,6 +494,21 @@ internal fun quoteActorLabel(invoice: Invoice, viewerUid: String?): String? = wh
  * "Quote"; an accepted one is an open invoice now and is an "Invoice". The same
  * rule as the web portal's `documentNoun`.
  */
+/**
+ * #1848: how the portal names one invoice, "Invoice #1042" or "Quote #1042".
+ * The stored id used to stand after the "#", a string nobody can quote. An
+ * invoice with no number reads "Invoice with no number" (or "Quote with no
+ * number"), the words the office's apps, the web portal and the server use.
+ *
+ * A server older than the field does not say (null). That is not "has no
+ * number", so the name is the bare noun: "Invoice".
+ */
+internal fun invoiceName(invoice: Invoice): String {
+    val noun = invoiceDocNoun(invoice)
+    val number = invoice.invoiceNumber?.trim() ?: return noun
+    return if (number.isEmpty()) "$noun with no number" else "$noun #$number"
+}
+
 internal fun invoiceDocNoun(invoice: Invoice): String =
     if (invoice.status == InvoiceStatus.Quote) "Quote" else "Invoice"
 
@@ -520,10 +569,39 @@ internal fun invoiceHeadline(invoice: Invoice): Pair<String, String> {
  * screen cannot offer different things.
  */
 internal fun offersPayment(invoice: Invoice): Boolean =
-    isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0
+    isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0 && invoice.payBlockedReason.isNullOrBlank()
+
+/**
+ * #2410: the server's sentence for an open bill with a balance that offers no
+ * way to pay, or null. [offersPayment] is false for it, so no screen draws a
+ * Pay button or a pay option; the invoice screen prints this where they would
+ * be, and the controller answers a stale tap with it. Null on anything that
+ * is not a bill waiting to be paid: a quote, a credit and a paid invoice
+ * already say what they are.
+ */
+internal fun payBlockedReason(invoice: Invoice): String? =
+    invoice.payBlockedReason
+        ?.takeIf { it.isNotBlank() }
+        ?.takeIf { isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0 }
 
 /** The sentence the server sends for a paid invoice; shown when a stale screen tries anyway. */
 internal const val PAID_INVOICE_REFUSAL = "This invoice is already paid, so it cannot take another payment."
+
+/**
+ * #2437: the sentence `payInvoice` refuses with while a payment on the invoice
+ * has finished at Stripe and is not recorded yet. Printed where Pay was while
+ * the bill is read again.
+ */
+internal const val PAYMENT_BEING_RECORDED = "A payment on this invoice is still being recorded. Check again in a minute."
+
+/**
+ * #2437: whether a failed `payInvoice` call is that refusal. Read off the
+ * sentence and not off the error's details: this app reaches the server three
+ * ways (Android, desktop, web) and each hands back the details in a different
+ * shape, while the message carries the sentence on all three.
+ */
+internal fun isPaymentBeingRecorded(t: Throwable): Boolean =
+    t.message?.contains(PAYMENT_BEING_RECORDED) == true
 
 /**
  * Whether this state is one the household can hand money over for.

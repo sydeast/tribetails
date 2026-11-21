@@ -258,6 +258,25 @@ export function approveBlocker(
 }
 
 /**
+ * Why an Auntie cannot send this stored KinTale draft yet, or null (#2444).
+ *
+ * Her screen has no recipient picker, so `approveBlocker`'s "Choose one before
+ * sending" would be a step she cannot take. The server sends a KinTale to the
+ * household the DRAFT names (`publishGeneratedDraft` reads it off the stored
+ * doc and takes none from the client), so that is what is checked here: a
+ * household missing from her roster read does not hold the send back. A draft
+ * that names no household cannot be sent by anyone until it is addressed, and
+ * addressing one is the owner's.
+ */
+export function auntieKinTaleBlocker(draftKinfolkId: string | null, draftText: string): string | null {
+  if (draftText.trim() === '') return 'The KinTale is empty. Write something before sending it.';
+  if ((draftKinfolkId ?? '').trim() === '') {
+    return 'This draft names no household, so it cannot be sent. The owner can address it.';
+  }
+  return null;
+}
+
+/**
  * The `POST /api/generate` body.
  *
  * `kinfolk_id` is the point of the typeahead. The archive picked a real

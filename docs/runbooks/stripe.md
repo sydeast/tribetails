@@ -63,8 +63,8 @@ and this is the whole list:
 | Permission | Access | The call that needs it |
 |---|---|---|
 | Checkout Sessions | write | `stripe.checkout.sessions.create` in `portal/payInvoice.ts:261` |
-| PaymentIntents | read | `stripe.paymentIntents.retrieve` in `billing/stripeWebhook.ts:455` and `billing/stripeDispute.ts:360` |
-| Charges | read | `stripe.charges.retrieve` in `billing/stripeDispute.ts:399` |
+| PaymentIntents | read | `stripe.paymentIntents.retrieve` in `billing/stripeWebhook.ts:455` and `billing/stripeDispute.ts:360`, and in `portal/payInvoice.ts` (`paymentBeingRecorded`, #2437) |
+| Charges | read | `stripe.charges.retrieve` in `billing/stripeDispute.ts:399`, and the `expand: ['latest_charge']` on `payInvoice`'s PaymentIntent retrieve (#2437). Without it that read fails, nothing is held, and `portal.invoice.checkout.recording.unreadable` is logged |
 | Balance transactions | read | the `expand: ['latest_charge.balance_transaction']` on that same retrieve at `billing/stripeWebhook.ts:455-456` |
 
 **Balance transactions is the one that fails silently, and it is the one people
@@ -225,6 +225,20 @@ true`), adds the event id to the invoice's `unappliedPaymentIds`, writes a
 by itself: account credit happens only when the admin enters an amount (#988),
 and there are no refunds. `report:duplicate-checkout-credits` lists the charges
 the old branch did credit.
+**While a finished payment is being recorded, Pay is refused** (#2437). Between
+the household paying at Stripe and the webhook landing, the invoice still reads
+owed. `payInvoice` opens no second checkout in that gap: it reads the invoice's
+stored checkouts back from Stripe, and when one is finished and paid with no
+`stripePayments/{paymentIntentId}` claim yet it answers "A payment on this
+invoice is still being recorded. Check again in a minute." (`details.code:
+payment_being_recorded`). The hold ends when the webhook writes the claim, or 15
+minutes after the card was charged, whichever comes first. Past 15 minutes
+`payInvoice` logs `portal.invoice.checkout.recording.overdue` at warn, with the
+invoice, session and PaymentIntent ids, and offers Pay again. That line means a
+paid event is late or is not arriving: open the endpoint's delivery log in the
+Stripe dashboard and resend the event. The webhook applies it whenever it
+comes, and a second payment made in the meantime is held for the owner like any
+other second charge.
 A cancelled invoice is held the same way (#2358). `payInvoice` opens no checkout
 for one, but a checkout page opened before the cancel can still be paid on:
 cancelling does not expire it. The charge is recorded as an unapplied payment
@@ -232,6 +246,44 @@ with `duplicateCheckoutReason: 'invoice-cancelled'`, the invoice stays cancelled
 with no payment row and no balance change, the household is sent nothing, and
 the owner sees it under Payments needing a decision as "Not applied because the
 invoice was cancelled."
+Since #2362 cancelling (or withdrawing a quote) expires the invoice's open
+checkout pages, as paying or writing it off does, so that hold should now be
+rare. A written-off invoice is held the same way with
+`duplicateCheckoutReason: 'invoice-written-off'` and reads "Not applied because
+the invoice was written off" (#2363). A held payment whose fee lookup failed
+writes the `stripe.fee.unresolved` warning like an applied one (#2370).
+A declined card on a cancelled or written-off invoice sends the household
+nothing and leaves the owner one Activity Log line (#2361), like a decline on a
+paid one.
+A card payment on an invoice that cannot take it for any other reason is held
+the same way (#2345): the whole charge on one unapplied row with the fee beside
+it, nothing on the invoice, no credit, nothing sent to the household. The
+reasons, as `duplicateCheckoutReason` stores them and as the owner reads them
+after "Not applied because":
+
+| Stored reason | The invoice | Sentence |
+| --- | --- | --- |
+| `invoice-not-sent` | is a draft or a quote | the invoice was a draft or a quote |
+| `invoice-credit` | is a credit (by its label, or a negative balance or total) | the invoice was a credit, not a bill |
+| `invoice-no-balance` | has nothing owed on its total (no total, or its payments already cover it) | nothing was owed on the invoice's total |
+| `invoice-other-household` | belongs to a different household than the checkout | the invoice belongs to a different household |
+| `invoice-not-found` | does not exist | the invoice could not be found |
+
+A checkout for one household's invoice is held for the household on the
+checkout, and listed under that household. The invoice it named is not written
+at all, and the owner's decision cannot put the money on it. In every other
+case the invoice gains only `unappliedPaymentIds` and the two
+`duplicateCheckout` fields, as a cancelled one does. A held payment on a draft
+can be applied to that invoice by the owner once it is sent. A payment Stripe
+gave no amount for is held on all of these too, with no figure on the row.
+A declined card touches only its own household's invoice: on a checkout whose
+invoice does not exist, or belongs to a different household than the checkout,
+the decline writes nothing to an invoice, sends no notice, and leaves the owner
+one Activity Log line.
+One invoice still takes a card payment the ordinary rules cannot describe: one
+brought over part paid, whose stated balance is lower than its payment rows
+leave. The household paid what it was shown, so the invoice is marked paid
+(`cardApplyFallback: stated_balance_below_recorded_payments`).
 
 **`disputeStatus` and `disputeFundsState` are two different facts, on purpose.**
 `disputeStatus` mirrors Stripe's dispute lifecycle (`needs_response`,

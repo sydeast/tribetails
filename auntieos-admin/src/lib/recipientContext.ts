@@ -1,4 +1,5 @@
 import { str } from './coerce';
+import { cutWhole } from './cutText';
 
 /**
  * The recipient context panel's logic: what Auntie reads about a household
@@ -36,7 +37,7 @@ export function summaryLine(tldr: string, rawSummary: string, max: number): stri
   const pick = str(tldr).trim() !== '' ? str(tldr).trim() : str(rawSummary).trim();
   if (pick === '') return '';
   if (pick.length <= max) return pick;
-  return `${pick.slice(0, max).trimEnd()}…`;
+  return `${cutWhole(pick, max).trimEnd()}…`;
 }
 
 /**
@@ -100,7 +101,7 @@ export function commsSnippet(row: CommsRow): string {
   }
   const trimmed = text.trim();
   if (trimmed.length <= SNIPPET_MAX) return trimmed;
-  return `${trimmed.slice(0, SNIPPET_MAX).trimEnd()}…`;
+  return `${cutWhole(trimmed, SNIPPET_MAX).trimEnd()}…`;
 }
 
 export interface LatestComm {

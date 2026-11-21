@@ -987,3 +987,68 @@ describe('KinTaleDetail: Delete draft (#1631)', () => {
     expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
   });
 });
+
+/**
+ * Two things on the detail ended in a refusal for an Auntie. The Reaction
+ * panel reads `getKinTaleReaction` and writes `toggleKinTaleLove`, neither on
+ * her callable list, so the panel failed to load. Delete on an unsent draft
+ * calls `deleteKinTaleReportDraft`, the owner's. She is drawn neither, and the
+ * reaction is never asked for. The recap and Replies stay hers.
+ */
+describe('KinTaleDetail: an Auntie gets no Reaction panel and no Delete draft', () => {
+  const draftRow = () => report({ status: 'DRAFT', sentAt: '', sentVia: '' });
+
+  it('draws no Reaction panel for her and never asks the server for it', async () => {
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Replies' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Reaction' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Love this|Loved/ })).toBeNull();
+    expect(getKinTaleReaction).not.toHaveBeenCalled();
+    expect(toggleKinTaleLove).not.toHaveBeenCalled();
+    await waitFor(() => expect(getKinTaleComments).toHaveBeenCalled());
+  });
+
+  it('draws her no Delete draft on an unsent draft, and keeps Edit', async () => {
+    mockStreams({ reports: { status: 'ready', data: [draftRow()] } });
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onEdit={vi.fn()} onDeleted={vi.fn()} onClose={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+    expect(deleteKinTaleReportDraft).not.toHaveBeenCalled();
+  });
+
+  it('keeps both for the owner', async () => {
+    mockStreams({ reports: { status: 'ready', data: [draftRow()] } });
+    render(
+      <ToastProvider>
+        <KinTaleDetail kinTaleId="tale1" onEdit={vi.fn()} onDeleted={vi.fn()} onClose={vi.fn()} />
+      </ToastProvider>,
+    );
+    expect(await screen.findByRole('button', { name: 'Delete draft' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Reaction' })).toBeInTheDocument();
+    await waitFor(() => expect(getKinTaleReaction).toHaveBeenCalledWith('tale1'));
+  });
+});
+
+/**
+ * The Custom fields panel takes its labels from `listFormSchemas`, which
+ * refuses an Auntie, so it drew her a failed load and a Retry that could not
+ * work. It is left out for her and the read is never started.
+ */
+describe('KinTaleDetail: an Auntie gets no Custom fields panel', () => {
+  it('draws no panel for her on a recap that stored answers, and reads no schema', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Replies' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Custom fields' })).toBeNull();
+    expect(screen.queryByText(/Custom fields failed to load/)).toBeNull();
+    expect(listFormSchemas).not.toHaveBeenCalled();
+    expect(getFormSchema).not.toHaveBeenCalled();
+  });
+
+  it('keeps the panel for the owner', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Custom fields' })).toBeInTheDocument();
+    await waitFor(() => expect(listFormSchemas).toHaveBeenCalled());
+  });
+});

@@ -11,6 +11,7 @@ import {
   filterRecipients,
   generateBlocker,
   approveBlocker,
+  auntieKinTaleBlocker,
   buildGeneratePayload,
   draftSubtitle,
   type PersonalizeFormState,
@@ -316,5 +317,21 @@ describe('draftSubtitle', () => {
 
   it('drops the pieces that are missing instead of printing null', () => {
     expect(draftSubtitle({ kinfolk_name: null, communication_type: 'blog_post', model: null, draft_id: null })).toBe('Blog');
+  });
+});
+
+describe('auntieKinTaleBlocker (#2444)', () => {
+  it('lets a draft that names a household through, whatever her roster holds', () => {
+    expect(auntieKinTaleBlocker('kf1', 'Biscuit had a good walk.')).toBeNull();
+  });
+
+  it('refuses an empty KinTale', () => {
+    expect(auntieKinTaleBlocker('kf1', '   ')).toBe('The KinTale is empty. Write something before sending it.');
+  });
+
+  it.each([null, '', '   '])('says a draft naming no household (%j) cannot be sent, without telling her to choose one', (id) => {
+    const text = auntieKinTaleBlocker(id, 'Biscuit had a good walk.');
+    expect(text).toBe('This draft names no household, so it cannot be sent. The owner can address it.');
+    expect(text).not.toMatch(/choose/i);
   });
 });

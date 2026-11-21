@@ -81,6 +81,7 @@ import com.tribetails.auntieos.config.LocalFeatureFlags
 import com.tribetails.auntieos.ui.theme.AuntieColors
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.domain.engagementSummary
+import com.tribetails.auntieos.domain.householdTextPreviewLine
 import com.tribetails.auntieos.domain.channelLabel
 import com.tribetails.auntieos.domain.isoDatePrefixOrNull
 
@@ -306,6 +307,7 @@ fun CommunicateScreen(
                     recipientName = state.selectedKinfolk?.displayName.orEmpty(),
                     subject = state.subject,
                     body = state.generatedCopy,
+                    textMessage = approveDeliveryChannel(state.commType) == ExternalChannel.Sms,
                 )
             }
 
@@ -479,6 +481,11 @@ private fun ComposePanel(
             if (state.generatedCopy.isNotBlank()) {
                 DraftCallout(
                     subtitle = draftCalloutSubtitle(state.generatedKinfolkName, state.generatedCommType),
+                    // #2428: a draft that was approved or sent no longer says it needs approval.
+                    needsApproval = draftNeedsApproval(
+                        sent = state.publishedReportId != null,
+                        approved = state.savedDraftId != null,
+                    ),
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                     AuntieFieldLabel(text = "Edit before approving")
@@ -511,12 +518,13 @@ private fun ComposePanel(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                     PrimaryButton(
-                        label = when {
-                            sent -> "Sent"
-                            state.savedDraftId != null -> "Approved"
-                            isKinTale || approveChannel != null || isPush -> "Approve and send"
-                            else -> "Approve draft"
-                        },
+                        // #2452: "Sent" only for a send somebody vouches for.
+                        label = approveButtonLabel(
+                            sent = sent,
+                            notice = state.sentNotice,
+                            approved = state.savedDraftId != null,
+                            sends = isKinTale || approveChannel != null || isPush,
+                        ),
                         onClick = { if (isKinTale) confirmSend = true else viewModel.requestApprove() },
                         enabled = state.draftId != null && state.savedDraftId == null && !sent &&
                             !state.isSaving && !state.isGenerating && !state.isDeletingDraft,
@@ -533,9 +541,9 @@ private fun ComposePanel(
                     Text(
                         text = when {
                             approveChannel != null ->
-                                "Approving saves the draft, logs it to the audit trail, then sends it to the household by " +
+                                "Approving sends this to the household by " +
                                     (if (approveChannel == ExternalChannel.Email) "email" else "text") +
-                                    ". Nothing sends unless the save lands."
+                                    ", marks the draft sent and logs it to the audit trail. A draft is sent once."
                             isKinTale -> "Approving sends this KinTale to the household's portal."
                             isPush -> "Approving saves the draft, logs it, then pushes it to the household. The line below says what reached them."
                             else -> "Approving saves the draft and logs it to the audit trail. This type sends nothing from here."
@@ -543,11 +551,12 @@ private fun ComposePanel(
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )
-                    if (state.draftId != null && !sent && state.savedDraftId == null) {
+                    // #2381: an approved Push that did not go out keeps its Delete.
+                    if (canDeleteDraft(state.draftId != null, sent, state.savedDraftId != null, state.pushNotice)) {
                         GhostButton(
                             label = if (state.isDeletingDraft) "Deleting…" else "Delete draft",
                             onClick = { confirmDelete = true },
-                            enabled = !state.isSaving && !state.isGenerating && !state.isDeletingDraft,
+                            enabled = !state.isSaving && !state.isGenerating && !state.isDeletingDraft && !state.isRetryingPush,
                         )
                     }
                 }
@@ -595,7 +604,7 @@ private fun ComposePanel(
                     },
                 ) {
                     Text(
-                        text = "It has not been sent. Deleting it cannot be undone.",
+                        text = deleteDraftConfirmLine(state.pushNotice),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )
@@ -608,6 +617,19 @@ private fun ComposePanel(
                 }
                 state.pushNotice?.let { notice ->
                     HouseholdPushNoticeBlock(notice = notice, retrying = state.isRetryingPush, onRetry = viewModel::retryHouseholdPush)
+                }
+                // #2428: an Email or Text that had already gone out says so here,
+                // where Approve would be.
+                state.sentNotice?.let { notice ->
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // #2452: a send nobody can vouch for is in the warning colour.
+                        Text(
+                            notice.title,
+                            style = AuntieTheme.typography.bodyMedium,
+                            color = if (notice.confirmed) c.textPrimary else c.warning,
+                        )
+                        Text(notice.body, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    }
                 }
             }
 
@@ -705,12 +727,19 @@ private fun ApproveSendConfirm(state: CommunicateUiState, channel: ExternalChann
                 color = c.textPrimary,
             )
             Text(
-                "Channel: ${if (channel == ExternalChannel.Email) "Email" else "Text"}",
+                "Channel: ${if (channel == ExternalChannel.Email) "Email" else "Text, kept short, with a link to MyTribe"}",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
             if (channel == ExternalChannel.Email) {
                 Text("Subject: ${state.subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            } else {
+                // #2408: what the household is texted, not the draft it is cut from.
+                Text(
+                    "Text: ${householdTextPreviewLine(state.generatedCopy)}",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textPrimary,
+                )
             }
         }
     }
@@ -1373,9 +1402,9 @@ private fun RecipientPicker(
     }
 }
 
-/** "Auntie AI draft · needs approval" callout above the editable copy. */
+/** "Auntie AI draft" callout above the editable copy, with "needs approval" until the draft is approved or sent. */
 @Composable
-private fun DraftCallout(subtitle: String) {
+private fun DraftCallout(subtitle: String, needsApproval: Boolean = true) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     Row(
@@ -1403,11 +1432,13 @@ private fun DraftCallout(subtitle: String) {
                 )
             }
         }
-        AuntieStatusPill(
-            label = "needs approval",
-            tone = AuntieStatusTone.Purple,
-            mono = true,
-        )
+        if (needsApproval) {
+            AuntieStatusPill(
+                label = "needs approval",
+                tone = AuntieStatusTone.Purple,
+                mono = true,
+            )
+        }
     }
 }
 
@@ -1417,7 +1448,7 @@ private fun DraftCallout(subtitle: String) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PreviewPanel(recipientName: String, subject: String, body: String) {
+private fun PreviewPanel(recipientName: String, subject: String, body: String, textMessage: Boolean = false) {
     val dims = AuntieTheme.dims
     DenPanel(
         title = "Live preview",
@@ -1425,7 +1456,17 @@ private fun PreviewPanel(recipientName: String, subject: String, body: String) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
-            AuntieEmailPreviewCard(
+            // #2408: a Text is sent short with a link to the whole message in
+            // MyTribe, so its preview is that text and not an email card.
+            if (textMessage) {
+                Text(
+                    text = body.takeIf { it.isNotBlank() }?.let(::householdTextPreviewLine)
+                        ?: "Generate a draft and it shows up here.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else AuntieEmailPreviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 // Author-typed subject (spec 19 item 3); computed placeholder only
                 // until the author types one. CTA stays placeholder.

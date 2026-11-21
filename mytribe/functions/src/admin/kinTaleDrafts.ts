@@ -5,7 +5,8 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { wrapCallable } from '../lib/wrapCallable';
-import { staffBypass } from '../lib/staffGate';
+import { isOwner, isOwnerClaim, staffBypass } from '../lib/staffGate';
+import { draftWentOut, isKinTaleDraft, messageDraftStanding } from '../lib/generatedDraftType';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -45,6 +46,11 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * and it is deliberately NOT `'catalog'` (`lib/kinTalePublishClaim.ts`), which
  * would tell `onKinTaleCreate` the client had already announced it and suppress
  * the household's notice.
+ *
+ * WHO SENDS WHAT. The owner sends any draft. An Auntie sends a KinTale draft
+ * only, one whose type is exactly `visit_report` (`lib/generatedDraftType.ts`),
+ * which is the same set of drafts the rules let her read. Any other draft is
+ * the owner's Communicate work, and to her it is not there.
  */
 
 /** Statuses that mean "sent as a KinTale". Written by this file only. */
@@ -104,6 +110,9 @@ export async function publishGeneratedDraftHandler(
 
   const token = (req.auth?.token ?? {}) as Record<string, unknown>;
   const authorDisplayName = (typeof token['name'] === 'string' ? token['name'].trim() : '') || 'Auntie';
+  // Anyone who is not the owner is held to KinTale drafts, so a caller this
+  // check has never heard of gets the narrower answer.
+  const callerIsOwner = isOwner(actorUid, isOwnerClaim(req.auth?.token), 'publishGeneratedDraft');
   const draftRef = db().collection('generated_drafts').doc(args.draftId);
   const reportRef = db().collection('kin_care_reports').doc();
   const now = new Date().toISOString();
@@ -120,6 +129,10 @@ export async function publishGeneratedDraftHandler(
       throw new HttpsError('not-found', 'This draft no longer exists. It may have been deleted.');
     }
     const draft = (draftSnap.data() ?? {}) as Record<string, unknown>;
+    // The same answer as a draft that is gone: this one is not hers to read.
+    if (!callerIsOwner && !isKinTaleDraft(draft)) {
+      throw new HttpsError('not-found', 'This draft no longer exists. It may have been deleted.');
+    }
 
     const already = typeof draft['publishedReportId'] === 'string' ? draft['publishedReportId'].trim() : '';
     if (already !== '') {
@@ -207,6 +220,11 @@ export async function publishGeneratedDraftHandler(
   return { ok: true, reportId: outcome.reportId, alreadyPublished: outcome.alreadyPublished };
 }
 
+/** #2452: why a draft whose send got no answer is not deleted. It claims neither a send nor a failure. */
+export const DRAFT_DELETE_UNCONFIRMED_MESSAGE =
+  'The send of this draft did not get an answer, so it is not known whether the message reached the household. ' +
+  'The draft is kept. Write a new one if it has to go again.';
+
 export async function deleteGeneratedDraftHandler(
   req: CallableRequest<unknown>,
 ): Promise<DeleteGeneratedDraftResult> {
@@ -231,6 +249,31 @@ export async function deleteGeneratedDraftHandler(
     const published = typeof draft['publishedReportId'] === 'string' ? draft['publishedReportId'].trim() : '';
     if (published !== '') {
       throw new HttpsError('failed-precondition', 'This draft has already been sent as a KinTale, so it is kept.');
+    }
+    // #2428: the same goes for every other draft a household was sent, or may
+    // have been: an approved Email or Text, and a Push that reached their
+    // notifications list or their phone (`draftWentOut`). Until now only a
+    // KinTale was kept, so deleting any of the others removed the one record
+    // of a message somebody received. A held Push, and one whose send never
+    // answered, reached nobody and are still deleted here.
+    // #2452: an Email or Text whose send got no answer is kept too, and the
+    // refusal says that. It used to say "already been sent" about a send
+    // nobody can vouch for. One still being sent says so.
+    const standing = messageDraftStanding(draft, Date.now());
+    if (standing === 'unconfirmed') {
+      throw new HttpsError('failed-precondition', DRAFT_DELETE_UNCONFIRMED_MESSAGE, {
+        code: 'draft_send_unconfirmed',
+      });
+    }
+    if (standing === 'in_flight') {
+      throw new HttpsError('failed-precondition', 'This message is being sent right now, so the draft is kept.', {
+        code: 'draft_send_in_flight',
+      });
+    }
+    if (draftWentOut(draft)) {
+      throw new HttpsError('failed-precondition', 'This draft has already been sent, so it is kept.', {
+        code: 'draft_already_sent',
+      });
     }
     tx.delete(draftRef);
     return either(draft['kinfolk_id'], draft['kinfolkId']);

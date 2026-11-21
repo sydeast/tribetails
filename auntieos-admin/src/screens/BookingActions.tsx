@@ -192,12 +192,22 @@ function actionsFor(state: BookingState): ActionDef[] {
 /**
  * #2199, operator ruling 2026-11-14: completing a visit is the owner's, and for
  * an Auntie the button "is disabled but visible". True for the one action she
- * is shown and cannot use. The server refuses her every transition
- * (`transitionBookingStatus` is not on her list); Approve, Reject and Cancel
- * wait on their own ruling (#2313) and are left as they were.
+ * is shown and cannot use.
  */
 function heldForAuntie(action: ActionDef, auntie: boolean): boolean {
   return auntie && action.kind === 'complete';
+}
+
+/**
+ * The actions drawn for whoever is signed in. The server refuses an Auntie
+ * every transition (`transitionBookingStatus` is not on her list), so Approve,
+ * Reject and Cancel were buttons that ended in a refusal (#2313). She is drawn
+ * none of them. Complete stays, held, because that one has a ruling of its own
+ * (#2199). Whether she may answer a request at all is still the operator's to
+ * rule (#2313); until then the screen matches what the server does.
+ */
+function actionsShownTo(actions: ActionDef[], auntie: boolean): ActionDef[] {
+  return auntie ? actions.filter((a) => a.kind === 'complete') : actions;
 }
 
 type Mode = { kind: 'detail' } | { kind: 'confirm'; action: ActionDef } | { kind: 'reschedule' };
@@ -279,8 +289,9 @@ export function BookingActions({ entry, onClose, isAuntie = false }: BookingActi
   const when = bookingWhen(booking);
   const kinfolkNotes = booking.kinfolkNotes ?? '';
   const noteText = kinfolkNotes.trim() !== '' ? kinfolkNotes : (booking.notes ?? '');
-  const actions = actionsFor(state);
-  const canReschedule = state === 'scheduled';
+  const actions = actionsShownTo(actionsFor(state), auntie);
+  // `rescheduleBooking` is the owner's too, so she gets no Reschedule.
+  const canReschedule = state === 'scheduled' && !auntie;
 
   const closeIfIdle = useCallback(() => {
     if (!busy) onClose();
@@ -493,7 +504,7 @@ export function BookingActions({ entry, onClose, isAuntie = false }: BookingActi
           </div>
         )}
       </dl>
-      {actions.length === 0 && (
+      {actions.length === 0 && actionsFor(state).length === 0 && (
         <p className="booking-actions__hint">
           {state === 'unknown'
             ? `This booking's status ("${booking.status}") isn't recognized, so no actions are offered.`
@@ -551,9 +562,9 @@ export interface BookingStatusActionsProps {
 export function BookingStatusActions({ entry, onDone, initialAction, isAuntie = false }: BookingStatusActionsProps) {
   const { showToast } = useToast();
   const state = bookingState({ status: entry.status ?? '' });
-  const actions = actionsFor(state);
+  const everyAction = actionsFor(state);
   const [posed, setConfirming] = useState<ActionDef | null>(
-    () => actions.find((a) => a.kind === initialAction) ?? null,
+    () => everyAction.find((a) => a.kind === initialAction) ?? null,
   );
   // #1608: Mark Completed checks the operator's arrival rule before it asks.
   const arrivalRule = useArrivalRule();
@@ -563,7 +574,8 @@ export function BookingStatusActions({ entry, onDone, initialAction, isAuntie = 
   // #2199: a Mark Completed question posed before her role was read (on mount,
   // from `initialAction`) is put away once it is, back to the row and its held
   // button.
-  const confirming = posed !== null && heldForAuntie(posed, auntie) ? null : posed;
+  const confirming = posed !== null && auntie ? null : posed;
+  const actions = actionsShownTo(everyAction, auntie);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // #1145: the override an Approve refusal offers, or null. Cleared once taken,
@@ -618,6 +630,10 @@ export function BookingStatusActions({ entry, onDone, initialAction, isAuntie = 
       if (action.kind === 'approve') setRetry(overridableScheduleRefusal(err, override !== null));
     }
   }
+
+  // A request or a visit whose only moves are the owner's: no panel for her,
+  // rather than one saying the booking has reached a final state.
+  if (auntie && actions.length === 0 && everyAction.length > 0) return null;
 
   return (
     <DenPanel title="Actions" subtitle="What this booking can move to from here." headingLevel={3}>

@@ -1912,7 +1912,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             <p
               className="invoice-detail__checkout"
               data-checkout-links="closed"
-              title={state === 'written_off' ? 'Stripe payment links that were still open when the balance was written off' : 'Stripe payment links that were still open when this invoice was paid'}
+              title={
+                state === 'written_off'
+                  ? 'Stripe payment links that were still open when the balance was written off'
+                  : state === 'cancelled'
+                    ? 'Stripe payment links that were still open when this invoice was cancelled'
+                    : 'Stripe payment links that were still open when this invoice was paid'
+              }
             >
               {`Open payment links closed (${checkoutClosure.closedCount})`}
             </p>
@@ -1990,7 +1996,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   href={pdfLink}
                   target="_blank"
                   rel="noopener noreferrer"
-                  download={`invoice-${invoice.invoiceNumber || invoice._id}.pdf`}
+                  download={invoice.invoiceNumber.trim() === '' ? 'invoice.pdf' : `invoice-${invoice.invoiceNumber.trim()}.pdf`}
                 >
                   Open PDF
                 </a>

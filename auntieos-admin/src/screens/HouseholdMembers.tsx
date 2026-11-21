@@ -138,6 +138,15 @@ export interface HouseholdMembersProps {
    * entry behind them and Back returns to that instead, whatever it was.
    */
   onBack: () => void;
+  /**
+   * An Auntie is signed in, from the access the admin layout resolved before
+   * the screen drew. She reads who is in the household (`listMembers`) and
+   * lists, adds and edits secondary kinfolk. Everything else here is the
+   * owner's and refused her, so none of it is drawn: Invite to portal, Swap
+   * primary, Remove, the permission switches, and the Invites panel, whose
+   * read (`listInvites`) is never asked for.
+   */
+  isAuntie?: boolean;
 }
 
 /** Invite groups, in the order the invites mock stacks them. */
@@ -187,7 +196,13 @@ function roleWord(role: MemberRole): string {
   return role === 'PRIMARY' ? 'Primary' : 'Secondary';
 }
 
-export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', onBack }: HouseholdMembersProps) {
+export function HouseholdMembers({
+  kinfolkId,
+  kinfolkName,
+  kinfolkEmail = '',
+  onBack,
+  isAuntie = false,
+}: HouseholdMembersProps) {
   const { showToast } = useToast();
   // #1589: never the database id. The route reads the household and passes its
   // name; a household with no name on file reads "This household".
@@ -249,6 +264,13 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
 
   const loadInvites = useCallback(() => {
     let live = true;
+    // The server refuses an Auntie this read, and her screen draws no Invites
+    // panel, so it is never asked.
+    if (isAuntie) {
+      return () => {
+        live = false;
+      };
+    }
     setInvites({ status: 'loading' });
     listHouseholdInvites(kinfolkId)
       .then((data) => {
@@ -266,7 +288,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
     return () => {
       live = false;
     };
-  }, [kinfolkId]);
+  }, [kinfolkId, isAuntie]);
 
   useEffect(() => loadMembers(), [loadMembers]);
   useEffect(() => loadInvites(), [loadInvites]);
@@ -449,28 +471,30 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
               {/* The mock's "Swap primary". Present only while there is a
                   primary to swap out: `executePrimaryRecovery` suspends
                   `oldUid`, and with nobody sitting there is nothing to do. */}
-              {sittingPrimary !== null && <GhostButton label="Swap primary" onClick={openRecovery} />}
+              {sittingPrimary !== null && !isAuntie && <GhostButton label="Swap primary" onClick={openRecovery} />}
               {/* The one admin invite. "Add secondary contact" sat beside it
                   under the 2026-09-12 ruling; the 2026-09-27 ruling (#829)
                   removed the contacts list, so the invite has the primary slot. */}
               {/* #1602: asks first, names the address, and is off with the
                   reason when it cannot succeed. It fired on one click before,
                   then said the household already had an account. */}
-              <PortalInviteButton
-                kinfolkId={kinfolkId}
-                householdName={householdName}
-                email={kinfolkEmail}
-                primary
-                hasActivePrimary={
-                  members.status === 'ready'
-                    ? members.data.some((m) => m.role === 'PRIMARY' && m.status === 'ACTIVE')
-                    : null
-                }
-                onSent={() => {
-                  loadInvites();
-                  loadMembers();
-                }}
-              />
+              {!isAuntie && (
+                <PortalInviteButton
+                  kinfolkId={kinfolkId}
+                  householdName={householdName}
+                  email={kinfolkEmail}
+                  primary
+                  hasActivePrimary={
+                    members.status === 'ready'
+                      ? members.data.some((m) => m.role === 'PRIMARY' && m.status === 'ACTIVE')
+                      : null
+                  }
+                  onSent={() => {
+                    loadInvites();
+                    loadMembers();
+                  }}
+                />
+              )}
             </div>
           }
         >
@@ -504,7 +528,14 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
           what="members"
           isEmpty={(rows) => !rows.some((m) => m.role === 'PRIMARY')}
           empty={
-            members.status === 'ready' && members.data.length === 0 ? (
+            isAuntie ? (
+              // She cannot send the invite, so the sentence does not point at it.
+              <EmptyHint>
+                {members.status === 'ready' && members.data.length === 0
+                  ? 'Nobody has claimed this household yet.'
+                  : 'This household has no active primary.'}
+              </EmptyHint>
+            ) : members.status === 'ready' && members.data.length === 0 ? (
               <EmptyHint>
                 Nobody has claimed this household yet. Invite to portal sends the claim link, and
                 this fills in once it is accepted.
@@ -525,6 +556,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
                   <MemberBlock
                     key={member.uid}
                     member={member}
+                    readOnly={isAuntie}
                     savingPerm={savingPerm}
                     onToggle={(key, next) => void togglePermission(member, key, next)}
                     onRemove={() => startRemove(member)}
@@ -559,6 +591,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
                   <MemberBlock
                     key={member.uid}
                     member={member}
+                    readOnly={isAuntie}
                     savingPerm={savingPerm}
                     onToggle={(key, next) => void togglePermission(member, key, next)}
                     onRemove={() => startRemove(member)}
@@ -580,10 +613,12 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
           kinfolkId={kinfolkId}
           reloadKey={secondaryKinfolkReloadKey}
           onCountChange={setNoPortalSecondaryCount}
+          canRemove={!isAuntie}
         />
 
       </DenPanel>
 
+      {!isAuntie && (
       <DenPanel
         className="d3"
         title="Invites"
@@ -629,8 +664,9 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
           )}
         </AsyncRegion>
       </DenPanel>
+      )}
 
-      {recoveryOpen && sittingPrimary !== null && (
+      {recoveryOpen && sittingPrimary !== null && !isAuntie && (
         <Dialog
           title="Who should the household go to?"
           onClose={() => {
@@ -758,11 +794,18 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
  */
 function MemberBlock({
   member,
+  readOnly,
   savingPerm,
   onToggle,
   onRemove,
 }: {
   member: HouseholdMember;
+  /**
+   * An Auntie is signed in. `removeMember` and `setMemberPermissions` are the
+   * owner's, so she gets no Remove and each permission reads On or Off
+   * instead of carrying a switch.
+   */
+  readOnly: boolean;
   savingPerm: string | null;
   onToggle: (key: PermissionKey, next: boolean) => void;
   onRemove: () => void;
@@ -806,9 +849,11 @@ function MemberBlock({
             </span>
           )}
         </div>
-        <div className="hmembers__member-actions">
-          <GhostButton label="Remove" onClick={onRemove} className="hmembers__danger" />
-        </div>
+        {!readOnly && (
+          <div className="hmembers__member-actions">
+            <GhostButton label="Remove" onClick={onRemove} className="hmembers__danger" />
+          </div>
+        )}
       </div>
 
       {byRole ? (
@@ -834,12 +879,22 @@ function MemberBlock({
                     </span>
                   )}
                   {locked && <StatusPill label="Locked on" tone="teal" size="compact" />}
-                  <Toggle
-                    checked={member.permissions[perm.key]}
-                    label={`${perm.label} for ${label}`}
-                    disabled={locked || savingPerm !== null}
-                    onChange={(next) => onToggle(perm.key, next)}
-                  />
+                  {readOnly ? (
+                    !locked && (
+                      <StatusPill
+                        label={member.permissions[perm.key] ? 'On' : 'Off'}
+                        tone={member.permissions[perm.key] ? 'success' : 'neutral'}
+                        size="compact"
+                      />
+                    )
+                  ) : (
+                    <Toggle
+                      checked={member.permissions[perm.key]}
+                      label={`${perm.label} for ${label}`}
+                      disabled={locked || savingPerm !== null}
+                      onChange={(next) => onToggle(perm.key, next)}
+                    />
+                  )}
                 </li>
               );
             })}

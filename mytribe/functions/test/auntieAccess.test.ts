@@ -178,6 +178,33 @@ describe('#944 wrapAdminCallable enforces the table', () => {
   });
 
   /**
+   * #2444: the Inbox Channels panel (the business line's voicemails, calls,
+   * texts and emails) is the owner's, and it is the only place a recording is
+   * listed. So the callable that plays one is the owner's too, the same line
+   * the rules draw on `voicemails` and `calls_log`. Pinned three ways: the
+   * name is off the table, the wrapper refuses her under it before the handler
+   * runs, and the deployed export is wrapped under that same name.
+   */
+  it('#2444: REFUSES an Auntie the business line recordings, and still admits the owner', async () => {
+    expect(AUNTIE_ALLOWED_CALLABLES.has('getRecordingAudio')).toBe(false);
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    const handler = vi.fn(async () => ({ ok: true }));
+    const wrapped = wrapAdminCallable('getRecordingAudio', handler);
+    await expect(wrapped({ auth: auntieAuth } as never)).rejects.toMatchObject({ code: 'permission-denied' });
+    // Refused at the gate: the handler, and so the read and the fetch in it, never ran.
+    expect(handler).not.toHaveBeenCalled();
+    await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    const src = readFileSync(resolve(__dirname, '../src/admin/getRecordingAudio.ts'), 'utf8');
+    expect(src).toContain("wrapAdminCallable('getRecordingAudio', getRecordingAudioHandler)");
+    // Her side of the Inbox, the household conversations, is untouched.
+    for (const name of ['listConversations', 'getConversationThread', 'replyToConversation', 'markConversationRead']) {
+      const hers = wrapAdminCallable(name, async () => ({ ok: true }));
+      await expect(hers({ auth: auntieAuth } as never)).resolves.toMatchObject({ ok: true });
+    }
+  });
+
+  /**
    * #2163, operator ruling 2026-11-13: an Auntie never sees Templates (email,
    * SMS, push). These three reads are called only by the Templates screens on
    * every client (web Templates, TemplateAssignments, CategoryBindingDialog;

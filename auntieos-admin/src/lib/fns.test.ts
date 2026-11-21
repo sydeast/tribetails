@@ -397,6 +397,30 @@ describe('call, the per-callable budget (#1567)', () => {
     expect(err.message).not.toMatch(/fail/i);
     expect(phaseOfError(err)).toBe('unknown');
   });
+  it.each([
+    'sendHouseholdPush',
+    'sendGeneratedDraft',
+    'sendExternalMessage',
+    'broadcastMessage',
+    'replyToConversation',
+    'sendKinTaleReport',
+    'publishGeneratedDraft',
+    'reviewAndSendDraftInvoice',
+    'sendInvoiceReminder',
+    'resendQuote',
+    'createQuote',
+  ])('#2434: %s reaches a household, so it waits the full 70s', async (name) => {
+    expect(callableTimeoutMs(name)).toBe(LONG_CALLABLE_TIMEOUT_MS);
+    httpsCallable.mockReturnValue(() => Promise.resolve({ data: { ok: true } }));
+    await call(name, {});
+    expect(httpsCallable).toHaveBeenLastCalledWith({}, name, { timeout: 70_000 });
+  });
+  it('#2434: a Push cut off on a cold server names 70 seconds, not 20', async () => {
+    rejectWith('functions/deadline-exceeded');
+    const err = (await call('sendHouseholdPush', {}).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(CallableTimeoutError);
+    expect(err.message).toContain('70 seconds');
+  });
   it('lists only callables the server really exports', () => {
     // A rename on the server would otherwise drop a send back to 20s silently.
     const index = readFileSync(

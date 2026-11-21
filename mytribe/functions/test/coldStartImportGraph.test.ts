@@ -312,8 +312,35 @@ const ALLOWED_EAGER_PACKAGES = [
  * `getFeatureFlags` used to carry inline, moved so the write and the screen
  * resolve the choose-Kin flag the same way). Everything else they import was
  * already here.
+ *
+ * 463 since #2323 (on top of #1822's 462): `lib/cutText.ts`, the one cut for
+ * text a person reads, so a preview, a push line or a text message never ends
+ * on half an emoji. `lib/richText.ts`, `lib/conversations.ts` and
+ * `notifications/templateParsers.ts` each cut by storage units before, and
+ * templateParsers carried its own copy. It is pure and imports nothing.
+ *
+ * 464 (on top of #2323's 463): `lib/generatedDraftType.ts`, the reading of a
+ * generated draft's type, used by `admin/kinTaleDrafts.ts` at file scope and by
+ * `admin/sendHouseholdPush.ts`. It is three pure functions and imports nothing.
+ *
+ * 465 (on top of 464): `lib/caretakerMedia.ts`, which media files an Auntie
+ * works with, used by `admin/setMediaProfilePhoto.ts` and
+ * `admin/saveMediaTags.ts`. It is one list and one pure function and imports
+ * nothing.
+ *
+ * 466 since #2437 (on top of 465): `lib/checkoutBeingRecorded.ts`, the rule
+ * `portal/payInvoice.ts` asks before it opens a checkout while a finished card
+ * payment is not on the invoice yet. It is pure, and the one module it imports
+ * (`lib/checkoutSessionSweep.ts`) was already here.
+ *
+ * 467 since #2453 (on top of #2437's 466): `lib/invoiceNaming.ts`, how the server names
+ * an invoice in a sentence a person reads (its number, or "an invoice with no
+ * number", never its id). `lib/paymentApply.ts`, `lib/invoicePdf.ts` and the
+ * invoice callables' "not found" refusals share it. It is three pure functions
+ * and two strings and imports nothing. `lib/activityWords.ts` reads it too and
+ * is still loaded with `await import()`.
  */
-const MAX_OWN_EAGER_MODULES = 462;
+const MAX_OWN_EAGER_MODULES = 467;
 
 interface Edge {
   spec: string;

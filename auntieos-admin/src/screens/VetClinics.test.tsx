@@ -577,3 +577,45 @@ describe('VetClinics: the mock shape (#755)', () => {
     expect(retire.textContent).toBe('');
   });
 });
+
+/**
+ * An Auntie may propose a clinic (`submitVetClinic` is hers) and read the
+ * bank. Curating it is the owner's: `updateVetClinic` and `archiveVetClinic`
+ * refuse her, so Approve, Edit, Reject, Retire and Restore each ended in a
+ * refusal. Her cards carry none of them.
+ */
+describe('VetClinics for an Auntie', () => {
+  it('draws no curating control on any card, and keeps Add clinic', async () => {
+    seed({ clinics: [RIVERSIDE, PENDING, RETIRED] });
+    render(<VetClinics isAuntie />);
+    expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
+    for (const name of ['Approve', 'Edit', 'Reject', 'Retire', 'Restore']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+    expect(document.querySelector('.vetcard-base .vetcard-actions')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add clinic' })).toBeEnabled();
+    expect(updateVetClinic).not.toHaveBeenCalled();
+    expect(archiveVetClinic).not.toHaveBeenCalled();
+  });
+
+  it('still lets her add a clinic', async () => {
+    seed();
+    render(<VetClinics isAuntie />);
+    await screen.findByText('Riverside Animal Hospital');
+    await user.click(screen.getByRole('button', { name: 'Add clinic' }));
+    await user.type(screen.getByLabelText('Name'), 'Oak Hill Veterinary');
+    await user.click(screen.getByRole('button', { name: 'Add to bank' }));
+    await waitFor(() => expect(submitVetClinic).toHaveBeenCalled());
+    expect(submitVetClinic.mock.calls[0]?.[0]).toMatchObject({ name: 'Oak Hill Veterinary' });
+  });
+
+  it('keeps the curating controls for the owner', async () => {
+    seed({ clinics: [RIVERSIDE, PENDING, RETIRED] });
+    render(<VetClinics />);
+    await screen.findByText('Riverside Animal Hospital');
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retire' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Edit' }).length).toBeGreaterThan(0);
+  });
+});

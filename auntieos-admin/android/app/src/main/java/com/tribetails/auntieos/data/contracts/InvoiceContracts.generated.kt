@@ -83,6 +83,7 @@ internal fun decodeInvoiceDtoPayMethod(raw: Map<String, Any?>?): InvoiceDtoPayMe
 /** `InvoiceDto`, shared across callables. */
 data class InvoiceDto(
     val id: String,
+    val invoiceNumber: String?,
     val kinfolkId: String,
     val kinfolkName: String?,
     val client: String?,
@@ -115,6 +116,7 @@ data class InvoiceDto(
     /** Null when the payload omits the key. */
     val lineItems: List<InvoiceLineItemDto>? = null,
     val payMethods: List<InvoiceDtoPayMethod>,
+    val payBlockedReason: String?,
 )
 
 /**
@@ -125,6 +127,7 @@ data class InvoiceDto(
 internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
     InvoiceDto(
         id = (raw?.get("id") as? String).orEmpty(),
+        invoiceNumber = raw?.get("invoiceNumber") as? String,
         kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
         kinfolkName = raw?.get("kinfolkName") as? String,
         client = raw?.get("client") as? String,
@@ -152,6 +155,7 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         writtenOffCents = (raw?.get("writtenOffCents") as? Number)?.toLong(),
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
         payMethods = (raw?.get("payMethods") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayMethod(nested) } },
+        payBlockedReason = raw?.get("payBlockedReason") as? String,
     )
 
 // ---------- acceptQuote ----------

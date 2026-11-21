@@ -26,6 +26,8 @@ import { heldMarkerPath } from '../src/notifications/noticeAudit';
 import { notificationsHeldSummaryWords } from '../src/lib/activityWords';
 import { runKincareReminderScan } from '../src/scheduled/kincareReminderCron';
 import { runInvoiceOverdueScan, runInvoiceRemindersScan } from '../src/scheduled/invoiceRemindersCron';
+import { scheduleMarketingBlastHandler } from '../src/admin/scheduleMarketingBlast';
+import type { CallableRequest } from 'firebase-functions/v2/https';
 
 /**
  * #2331: A TIMED JOB WRITES ONE ACTIVITY LOG LINE FOR THE NOTICES IT HELD BACK.
@@ -451,32 +453,6 @@ describe('#2331 what does not roll up', () => {
     expect(logLines(ctx.writes)).toHaveLength(2);
   });
 
-  it('inside a timed job, a notification turned off in Settings (switch ON) still writes a line per notice', async () => {
-    const rows = [1, 2].map((n) => ({
-      id: `inv${n}`,
-      data: { status: 'open', amountDue: 120, amountMinor: 12000, currency: 'usd', dueDate: '2026-11-15', kinfolkId: `fam${n}` },
-    }));
-    const ctx = buildDbMock({
-      docs: {
-        ...settings(true),
-        ...households(2),
-        'businessSettings/notifications': { byKey: { 'invoice.reminder': { enabled: false } } },
-      },
-      queryDocs: { invoices: rows },
-      writeThrough: true,
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-
-    expect(await runInvoiceRemindersScan(NOW, TODAY)).toBe(0);
-    const lines = logLines(ctx.writes);
-    expect(lines).toHaveLength(2);
-    expect(lines.map((l) => l.description)).toEqual([
-      expect.stringMatching(/^Did not send "[^"]+" to Person 1: this notification is turned off in Settings$/),
-      expect.stringMatching(/^Did not send "[^"]+" to Person 2: this notification is turned off in Settings$/),
-    ]);
-    expect(lines.every((l) => (l.payload as { summary?: boolean }).summary === undefined)).toBe(true);
-  });
-
   it('a send that failed stays one FAILURE line per notice', async () => {
     // Notices on: the timed job hands each reminder to its channels as before.
     const ctx = invoicesDb(2, '2026-11-15', true);
@@ -598,5 +574,226 @@ describe('#2331 the sentence', () => {
     ).toBe(
       'Held back 2 overdue invoice notices, 5 invoice reminders and 1 visit reminder: notices to households are turned off',
     );
+  });
+});
+
+/** Open invoices due soon, with `invoice.reminder` turned off in Settings when `off`. */
+function turnedOffDb(count: number, opts: { live?: boolean; off?: boolean } = {}) {
+  const rows = Array.from({ length: count }, (_, i) => ({
+    id: `inv${i + 1}`,
+    data: { status: 'open', amountDue: 120, amountMinor: 12000, currency: 'usd', dueDate: '2026-11-15', kinfolkId: `fam${i + 1}` },
+  }));
+  const docs: Docs = {
+    ...settings(opts.live ?? true),
+    ...households(count),
+    ...(opts.off ?? true ? { 'businessSettings/notifications': { byKey: { 'invoice.reminder': { enabled: false } } } } : {}),
+  };
+  const ctx = buildDbMock({ docs, queryDocs: { invoices: rows }, writeThrough: true });
+  mocks.dbFn.mockReturnValue(ctx.db);
+  return { ...ctx, docs };
+}
+
+describe('#2341 a notification turned off in Settings, inside a timed job', () => {
+  it('writes one line for the run, with a count, and no line per notice', async () => {
+    const ctx = turnedOffDb(3);
+    expect(await runInvoiceRemindersScan(NOW, TODAY)).toBe(0);
+    const lines = logLines(ctx.writes);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      actionType: 'NOTIFICATION_NOT_SENT',
+      status: 'NOT_SENT',
+      severity: 'info',
+      actorRole: 'SYSTEM',
+      description: 'Did not send 3 invoice reminders: this notification is turned off in Settings',
+      payload: {
+        outcome: 'turned_off',
+        summary: true,
+        job: 'invoiceRemindersCron',
+        day: TODAY,
+        count: 3,
+        kinds: { 'invoice.reminder': 3 },
+      },
+    });
+    expect(lines[0]).not.toHaveProperty('familyId');
+    expect(mocks.perCopyLine).not.toHaveBeenCalled();
+  });
+
+  it('a second scan the same day writes nothing more', async () => {
+    const ctx = turnedOffDb(2);
+    await runInvoiceRemindersScan(NOW, TODAY);
+    await runInvoiceRemindersScan(NOW + HOUR, TODAY);
+    expect(logLines(ctx.writes)).toHaveLength(1);
+  });
+
+  it('the day\'s count of one reason survives a line for another', async () => {
+    // Turned off in Settings with the switch on: counted as turned off.
+    const ctx = turnedOffDb(2);
+    await runInvoiceRemindersScan(NOW, TODAY);
+    // Notification back on, switch off: the same reminders are now held by the switch.
+    delete ctx.docs['businessSettings/notifications'];
+    ctx.docs[HOUSEHOLD_GATE_SETTINGS_PATH] = { timeZone: 'America/Chicago', householdNotificationsLive: false };
+    await runInvoiceRemindersScan(NOW + HOUR, TODAY);
+    // Turned off again, switch on: already counted today, so no third line.
+    ctx.docs['businessSettings/notifications'] = { byKey: { 'invoice.reminder': { enabled: false } } };
+    ctx.docs[HOUSEHOLD_GATE_SETTINGS_PATH] = { timeZone: 'America/Chicago', householdNotificationsLive: true };
+    await runInvoiceRemindersScan(NOW + 2 * HOUR, TODAY);
+    expect(logLines(ctx.writes).map((l) => l.description)).toEqual([
+      'Did not send 2 invoice reminders: this notification is turned off in Settings',
+      'Held back 2 invoice reminders: notices to households are turned off',
+    ]);
+  });
+
+  it('the overdue job rolls up the same way', async () => {
+    const rows = [1, 2].map((n) => ({
+      id: `inv${n}`,
+      data: { status: 'open', amountDue: 120, amountMinor: 12000, currency: 'usd', dueDate: '2026-11-01', kinfolkId: `fam${n}` },
+    }));
+    const ctx = buildDbMock({
+      docs: {
+        ...settings(true),
+        ...households(2),
+        'businessSettings/notifications': { byKey: { 'invoice.overdue': { enabled: false } } },
+      },
+      queryDocs: { invoices: rows },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await runInvoiceOverdueScan(NOW, TODAY);
+    expect(logLines(ctx.writes).map((l) => l.description)).toEqual([
+      'Did not send 2 overdue invoice notices: this notification is turned off in Settings',
+    ]);
+  });
+
+  it('a notice a person pressed, turned off in Settings, keeps its own line', async () => {
+    const ctx = visitsDb(1, true, {
+      'businessSettings/notifications': { byKey: { 'kincare.auntie.on_my_way': { enabled: false } } },
+    });
+    await enqueueNotificationDetailed({
+      key: 'kincare.auntie.on_my_way',
+      recipientUid: 'kin1',
+      data: { familyId: 'fam1', visitId: 'visit1' },
+    });
+    const lines = logLines(ctx.writes);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      familyId: 'fam1',
+      description: 'Did not send "Your Auntie is on the way" to Person 1: this notification is turned off in Settings',
+      payload: { outcome: 'turned_off', recipientUid: 'kin1' },
+    });
+  });
+});
+
+describe('#2346 the once-a-day rule for a pressed notice is the business day', () => {
+  const press = () =>
+    enqueueNotificationDetailed({
+      key: 'kincare.auntie.on_my_way',
+      recipientUid: 'kin1',
+      data: { familyId: 'fam1', visitId: 'visit1' },
+      dedupeKey: 'visit:visit1:on_my_way#a',
+    });
+
+  it('held at 5 PM and again at 8 PM Chicago, across the UTC midnight, is one line', async () => {
+    const ctx = visitsDb(1);
+    vi.setSystemTime(Date.UTC(2026, 10, 14, 23, 0, 0)); // 5 PM CST, Nov 14
+    await press();
+    vi.setSystemTime(Date.UTC(2026, 10, 15, 2, 0, 0)); // 8 PM CST, Nov 14; Nov 15 in UTC
+    await press();
+    expect(logLines(ctx.writes)).toHaveLength(1);
+  });
+
+  it('held at 11 PM and again at 1 AM Chicago, across the business midnight, is two lines', async () => {
+    const ctx = visitsDb(1);
+    vi.setSystemTime(Date.UTC(2026, 10, 15, 5, 0, 0)); // 11 PM CST, Nov 14
+    await press();
+    vi.setSystemTime(Date.UTC(2026, 10, 15, 7, 0, 0)); // 1 AM CST, Nov 15; same UTC day
+    await press();
+    expect(logLines(ctx.writes)).toHaveLength(2);
+  });
+
+  it('the line id follows the business zone, and the ruled Chicago zone when settings cannot be read', async () => {
+    const { noticeLineIdForEvent } = await import('../src/notifications/noticeAudit');
+    const ctx = visitsDb(1);
+    const fivePm = Date.UTC(2026, 10, 14, 23, 0, 0);
+    const eightPm = Date.UTC(2026, 10, 15, 2, 0, 0);
+    const nextMorning = Date.UTC(2026, 10, 15, 15, 0, 0);
+    const at5pm = await noticeLineIdForEvent('held', 'k', 'id', 'kin1', fivePm);
+    expect(await noticeLineIdForEvent('held', 'k', 'id', 'kin1', eightPm)).toBe(at5pm);
+    expect(await noticeLineIdForEvent('held', 'k', 'id', 'kin1', nextMorning)).not.toBe(at5pm);
+    ctx.db.doc(HOUSEHOLD_GATE_SETTINGS_PATH).get = vi.fn().mockRejectedValue(new Error('UNAVAILABLE'));
+    expect(await noticeLineIdForEvent('held', 'k', 'id', 'kin1', eightPm)).toBe(at5pm);
+  });
+});
+
+describe('#2340 a marketing blast with notices to households off', () => {
+  /** `count` households with a sign-in, each opted in to the newsletter. */
+  function blastDb(count: number, extra: Docs = {}) {
+    const docs: Docs = { ...settings(false), ...households(count), ...extra };
+    for (let n = 1; n <= count; n += 1) {
+      docs[`clients/kin${n}`] = {
+        ...(docs[`clients/kin${n}`] as Record<string, unknown>),
+        notificationPrefs: { marketingOptIn: { newsletter: true } },
+      };
+    }
+    const kinfolk = Array.from({ length: count }, (_, i) => ({
+      id: `fam${i + 1}`,
+      data: { status: 'active', tags: [], uid: `kin${i + 1}`, kinfolkName: `Household ${i + 1}` },
+    }));
+    const ctx = buildDbMock({ docs, queryDocs: { kinfolk }, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return { ...ctx, docs };
+  }
+
+  const blast = (over: Record<string, unknown> = {}) =>
+    scheduleMarketingBlastHandler({
+      data: { key: 'newsletter.announcement', fireAtMs: NOW + HOUR, data: { subject: 'Sample' }, criteria: { kind: 'all' }, ...over },
+      auth: { uid: 'admin1', token: { admin: true } },
+    } as unknown as CallableRequest<unknown>);
+
+  const notSent = (writes: Write[]) => logLines(writes).filter((l) => l.actionType === 'NOTIFICATION_NOT_SENT');
+
+  it('writes one line for the whole blast, with a count, and no line per household', async () => {
+    const ctx = blastDb(3);
+    const res = await blast();
+    expect(res.suppressed).toBe(3);
+    const lines = notSent(ctx.writes);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      status: 'NOT_SENT',
+      severity: 'info',
+      description: 'Held back 3 notices from a marketing blast: notices to households are turned off',
+      payload: { outcome: 'held', summary: true, job: 'marketingBlast', day: TODAY, count: 3 },
+    });
+    expect(lines[0]).not.toHaveProperty('familyId');
+    expect(mocks.perCopyLine).not.toHaveBeenCalled();
+  });
+
+  it('two blasts the same day are counted apart: a line each', async () => {
+    const ctx = blastDb(2);
+    await blast();
+    await blast({ data: { subject: 'Second' } });
+    expect(notSent(ctx.writes).map((l) => l.description)).toEqual([
+      'Held back 2 notices from a marketing blast: notices to households are turned off',
+      'Held back 2 notices from a marketing blast: notices to households are turned off',
+    ]);
+  });
+
+  it('the newsletter turned off in Settings, switch on: one "Did not send" line', async () => {
+    const ctx = blastDb(2, {
+      [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: true },
+      'businessSettings/notifications': { byKey: { 'newsletter.announcement': { enabled: false } } },
+    });
+    await blast();
+    expect(notSent(ctx.writes).map((l) => l.description)).toEqual([
+      'Did not send 2 notices from a marketing blast: this notification is turned off in Settings',
+    ]);
+  });
+
+  it('a blast that goes out writes no "not sent" line', async () => {
+    const ctx = blastDb(2, {
+      [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: true },
+    });
+    const res = await blast();
+    expect(res.dispatched).toBe(2);
+    expect(notSent(ctx.writes)).toEqual([]);
   });
 });

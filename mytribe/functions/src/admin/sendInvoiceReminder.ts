@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -281,7 +282,7 @@ export async function sendInvoiceReminderHandler(
   const claim = await db().runTransaction(async (tx): Promise<Claim> => {
     const snap = await tx.get(ref);
     if (!snap.exists) {
-      throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+      throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
     }
     const data = snap.data() as InvoiceDoc;
     const refusal = chaseRefusalOf(data, evidence);

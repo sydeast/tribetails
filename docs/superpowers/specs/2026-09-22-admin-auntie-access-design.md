@@ -410,16 +410,16 @@ listing a site that does not exist or omitting one that does.
 | 1073 | `location_checkpoints read+write` | `isStaff()` | her visits |
 | 1074 | `location_sharing_preferences` | read/write split | read isStaff(), write isOwner(): she must know if tracking is on, the switch is the household's |
 | 1075 | `media_albums read+write` | `isStaff()` | kin photos |
-| 1108 | `media_files read` | `isStaff()` | kin photos |
-| 1109 | `media_files create` | `isStaff()` | kin photos |
-| 1110 | `media_files update` | `isStaff()` | kin photos |
+| 1108 | `media_files read` | `isOwner()`; an Auntie by type | the owner reads every file; an Auntie reads a visit's KinTale photos, a Kin's photos and a household's photos (`entityType` `VISIT_LOG`, `KIN`, `KINFOLK`), plus her own account photo by id. Her list has to name those types |
+| 1109 | `media_files create` | `isOwner()`; an Auntie by type | she uploads the kinds she reads, and her own account photo |
+| 1110 | `media_files update` | `isOwner()`; an Auntie by type | she captions the kinds she reads; an update moves a file neither into nor out of them |
 | 1115 | `payments read` | `isOwner()` | money |
 | 1116 | `payments create` | `isOwner()` | money |
 | 1117 | `payments update` | `isOwner()` | money |
 | 1118 | `payments delete` | `isOwner()` | money |
 | 1120 | `sms_messages read+write` | `isOwner()` | business phone, unruled |
 | 1121 | `the_411` | read/write split | read isStaff(), write isOwner(): the ruling grants the read; the feed writes it on the Admin SDK |
-| 1126 | `training_documents read` | `isStaff()` | staff training material |
+| 1126 | `training_documents read` | `isOwner()` | the owner's Tribal Intel notes, the source text for dossiers, household banks and 411s |
 | 1127 | `users read+write` | `isOwner()`; read also an Auntie's own record | account administration; her own Home layout (#2215) |
 | 1128 | `visit_logs read+write` | `isStaff()` | her visits |
 | 1129 | `visit_routes read+write` | `isStaff()` | her visits |

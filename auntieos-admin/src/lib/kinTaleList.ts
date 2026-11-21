@@ -1,6 +1,7 @@
 import { str } from './coerce';
 import { tsToDate } from './time';
-import { kinTaleTimeOf } from './kinTaleFormat';
+import { kinTaleTimeOf, SENDING_STATUS, SEND_UNCONFIRMED_STATUS } from './kinTaleFormat';
+import { draftListPlace } from './draftSent';
 import type { KinTaleEntry } from '../api/kinTales';
 import type { GeneratedDraftRow } from '../api/drafts';
 
@@ -121,6 +122,10 @@ export function draftTypeLabel(draft: GeneratedDraftRow): string {
  * receipt. `unknown` rows still appear under the All tab, exactly as an
  * unrecognised `kin_care_reports` status does; they are simply not counted as
  * Sent, Drafts or Needs-another-look.
+ *
+ * #2440: that refusal stands for this function, which reads the status word
+ * alone. A Communicate draft that did go out is told by what the server
+ * stamps on it, and `rowFromDraft` asks `draftListPlace` before it gets here.
  */
 export function draftStatusAsKinTaleStatus(status: string): string {
   switch (str(status).trim().toLowerCase()) {
@@ -140,6 +145,56 @@ export function draftStatusAsKinTaleStatus(status: string): string {
  */
 export function isPublishedDraft(draft: GeneratedDraftRow): boolean {
   return str(draft.publishedReportId).trim() !== '';
+}
+/**
+ * #2293: an approved Push draft the server held back (household notices off,
+ * or message notices turned off). Nothing reached the household, so it is
+ * listed under Drafts again and opens with its Try again. Its own predicate:
+ * the pending counts on Home do not change.
+ */
+export function isHeldPushDraft(draft: GeneratedDraftRow): boolean {
+  return (
+    either(draft.communicationType, draft.communication_type).toLowerCase() === 'push' &&
+    str(draft.status).trim().toLowerCase() === 'approved' &&
+    str(draft.pushOutcome).trim() === 'held'
+  );
+}
+/**
+ * #2381: an approved Push draft with no answer on it. Its send was cut off
+ * (a dropped connection, a timeout) before the server could say what happened,
+ * so it is listed under Drafts and opens with Try again, like a held one.
+ */
+export function isUnansweredPushDraft(draft: GeneratedDraftRow): boolean {
+  return (
+    either(draft.communicationType, draft.communication_type).toLowerCase() === 'push' &&
+    str(draft.status).trim().toLowerCase() === 'approved' &&
+    str(draft.pushOutcome).trim() === ''
+  );
+}
+/**
+ * #2440: the list status of a draft row.
+ *
+ * A Communicate draft that went out (a Push the household was sent, an Email
+ * or Text stamped sent or sent by an older version of the app) is `SENT`. It
+ * was listed under "Unknown status" in the warning colour and left out of the
+ * Sent count, because only the status word was read and `approved` is not one
+ * the list knows. A held or unanswered Push is a draft again (#2293, #2381).
+ *
+ * #2452: an Email or Text whose send got no answer is never `SENT`. It has its
+ * own status, and one still being sent has another.
+ */
+export function draftRowStatus(draft: GeneratedDraftRow, nowMs: number): string {
+  if (isHeldPushDraft(draft) || isUnansweredPushDraft(draft)) return 'DRAFT';
+  switch (draftListPlace(draft, nowMs)) {
+    case 'sent':
+      return 'SENT';
+    case 'unconfirmed':
+      return SEND_UNCONFIRMED_STATUS;
+    case 'sending':
+      return SENDING_STATUS;
+    case null:
+      return draftStatusAsKinTaleStatus(str(draft.status));
+  }
 }
 /** The prefix `rowFromDraft` puts on a draft row's `_id`. */
 export const DRAFT_ROW_PREFIX = 'generated_drafts/';
@@ -180,7 +235,7 @@ export function rowFromReport(entry: KinTaleEntry): KinTaleListRow {
  * no `sessionId`. `createdAt` carries the draft's own creation instant so the
  * row dates itself through the same `kinTaleWhen` path every report uses.
  */
-export function rowFromDraft(draft: GeneratedDraftRow): KinTaleListRow {
+export function rowFromDraft(draft: GeneratedDraftRow, nowMs: number = Date.now()): KinTaleListRow {
   const type = draftTypeLabel(draft);
   return {
     _id: `${DRAFT_ROW_PREFIX}${draft._id}`,
@@ -189,7 +244,7 @@ export function rowFromDraft(draft: GeneratedDraftRow): KinTaleListRow {
     kinfolkName: draftHousehold(draft),
     title: draftTitle(draft),
     bodyCopy: draftBody(draft),
-    status: draftStatusAsKinTaleStatus(str(draft.status)),
+    status: draftRowStatus(draft, nowMs),
     createdAt: draftCreatedAt(draft),
     ...(type !== '' ? { draftType: type } : {}),
   };
@@ -370,12 +425,13 @@ export function kinTaleListRows(
   drafts: readonly GeneratedDraftRow[],
   options: DraftWindowOptions,
   legacy: { rows: readonly KinTaleEntry[]; hasMore: boolean } = { rows: [], hasMore: false },
+  nowMs: number = Date.now(),
 ): KinTaleListRow[] {
   const placedLegacy = legacyReportsInList(legacy.rows, reports, { ...options, hasMore: legacy.hasMore });
   return mergeByCreatedDesc(
     reportsNewestFirst([...reports, ...placedLegacy]).map(rowFromReport),
     draftsInWindow(drafts, options)
       .filter((d) => !isPublishedDraft(d))
-      .map(rowFromDraft),
+      .map((d) => rowFromDraft(d, nowMs)),
   );
 }

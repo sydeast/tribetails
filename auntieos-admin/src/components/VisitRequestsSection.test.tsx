@@ -1407,3 +1407,59 @@ describe('VisitRequestsSection opens the request a notice named (#2028)', () => 
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
+
+/**
+ * #2313: an Auntie reads the new booking requests (`listPendingBookingRequests`
+ * is hers) and answers none. Accept and Decline go through
+ * `manageBookingSeries`, which refuses her, and the reschedule and
+ * cancellation queues refuse her the read, which showed as a failed load.
+ */
+describe('VisitRequestsSection for an Auntie (#2313)', () => {
+  it('reads only the queue she is allowed, and reports no failed load for the other two', async () => {
+    listRescheduleRequests.mockRejectedValue(new Error('Admin claim required.'));
+    listCancelRequests.mockRejectedValue(new Error('Admin claim required.'));
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection isAuntie />);
+    await openQueue();
+    expect(await screen.findByText('New request')).toBeInTheDocument();
+    expect(listPendingBookingRequests).toHaveBeenCalled();
+    expect(listRescheduleRequests).not.toHaveBeenCalled();
+    expect(listCancelRequests).not.toHaveBeenCalled();
+    expect(screen.queryByText("One of these queues didn't load")).toBeNull();
+    expect(screen.queryByText(/Admin claim required/)).toBeNull();
+  });
+
+  it('draws no Accept or Decline on the card or in its detail', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection isAuntie />);
+    await openQueue();
+    await screen.findByText('New request');
+    expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+    await userEvent.click(screen.getByText('The Rivera Home'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getAllByRole('button', { name: 'Close' }).length).toBeGreaterThan(0);
+    expect(within(dialog).queryByRole('button', { name: 'Accept' })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: 'Decline' })).toBeNull();
+    expect(approveBookingRequest).not.toHaveBeenCalled();
+    expect(declineBookingRequest).not.toHaveBeenCalled();
+  });
+
+  it('says so when her one queue fails', async () => {
+    listPendingBookingRequests.mockRejectedValue(new Error('unavailable'));
+    render(<VisitRequestsSection isAuntie />);
+    expect(await screen.findByText("One of these queues didn't load")).toBeInTheDocument();
+    expect(screen.getByText(/New booking requests: unavailable/)).toBeInTheDocument();
+  });
+
+  it('keeps Accept and Decline, and all three reads, for the owner', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await screen.findByText('New request');
+    expect(screen.getByRole('button', { name: 'Accept' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeInTheDocument();
+    expect(listRescheduleRequests).toHaveBeenCalled();
+    expect(listCancelRequests).toHaveBeenCalled();
+  });
+});

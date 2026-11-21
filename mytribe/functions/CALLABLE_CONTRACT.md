@@ -354,6 +354,14 @@ A save leaves the doc at `reconcileStatus: 'pending'`. The nightly reconcile pas
 is what folds it into the household Dossier and the pet Kin411, so client copy
 must say "next reconcile pass", never "instantly".
 
+Create and update both stamp `documentKind: 'note'` on the stored doc. It is not
+a request field, and one a caller sends is dropped. The copy generator
+(`auntieos-admin/web/functions/generate.js`) sends a `training_documents` row to
+the model as a voice example only when the row carries
+`documentKind: 'voice_example'` and names no household, so nothing these
+callables write is ever one. `communicationType` is the label the list groups
+by and decides nothing about where a note is read.
+
 ### createTrainingDocument
 - req `{ title: string /* <=200 */, content: string /* <=20000 */, notes: string /* <=4000 */, communicationType: string /* <=120, clients send 'note' */, targetType: 'KINFOLK'|'KIN', targetKinfolkId: string /* 1..120 */, targetKinId?: string /* <=120, required when targetType is KIN */, attachments: Array<{ storageUrl: string /* url */, cloudinaryPublicId: string /* 1..300 */, fileType: string /* <=20 */, mimeType: string /* <=120 */, fileName: string /* <=300 */ }> /* <=25 */ }`
 - res `{ ok: true, docId: string }`
@@ -467,6 +475,52 @@ cancelled → excluded entirely. A doc with no readable stamp fail-softs to
 at warn (`portal.invoices.stampMissing`). Mirror:
 `mytribe/web/src/api/invoicesApi.ts` (updated field-for-field with the
 handler until ADR-0001 codegen replaces the hand-mirror).
+
+**No checkout for a payment the invoice could not take (#2410).** `payInvoice`
+asks `lib/cardPaymentApply.ts#cardCheckoutRefusal` before it touches Stripe:
+the webhook's own three decisions (`duplicateCheckoutReason`,
+`decideCardApply`, `cardHoldReason`) run on the balance it is about to charge.
+A reason means the webhook would keep that payment off the invoice, so the
+call is refused `failed-precondition` with `details.code`
+`invoice_cannot_take_payment` and a plain sentence, and no session is created,
+reused or stored. Refused this way: an invoice that states a balance while
+nothing is owed on its total (no total, or its payment rows already cover it),
+a credit that states a positive balance, and a quote the household has not
+accepted (#2264). The earlier refusals (written off, cancelled, paid, no
+balance) keep their order, sentences and codes. `payInvoice` now reads the
+`payments` subcollection on every call. `getMyInvoices` ships the same answer
+as `payBlockedReason: string | null` on each invoice: the sentence for an
+invoice that is stamped `open`, has a balance and is not paid but would be
+refused, with `payMethods: []` beside it; null on every other invoice. It reads
+the `payments` rows of those candidate invoices only, in parallel; a read that
+fails ships null and `payInvoice` still refuses. Both portals offer no way to
+pay and print the sentence when it is set, and read an absent key (an older
+server) as null.
+
+**No second checkout while a finished payment is being recorded (#2437).**
+After a household pays at Stripe, the invoice reads owed until the card webhook
+records the payment. In that gap `payInvoice` opens nothing. It reads the
+checkouts stored on the invoice back from Stripe (`pendingCheckoutSessionId`,
+then `openCheckoutSessionIds` newest first without the closed ones, at most 4,
+each read once and shared with the session reuse). When one is `complete` and
+`paid` for this invoice and no `stripePayments/{paymentIntentId}` claim exists
+yet, the call is refused `failed-precondition` with `details.code`
+`payment_being_recorded` and the message "A payment on this invoice is still
+being recorded. Check again in a minute." Nothing is created, reused or
+written. The claim is what the webhook writes with its decision, for a payment
+it put on the invoice and for one it held for the owner, so Pay works again for
+whatever is still owed once the webhook has landed. The hold lasts 15 minutes
+from the charge's own time at Stripe (`PAYMENT_RECORDING_WINDOW_MS`, one
+`paymentIntents.retrieve` made only for a finished, unclaimed payment). After
+that the checkout opens as before and `portal.invoice.checkout.recording.overdue`
+is logged at warn. A stored checkout that cannot be read, one that expired or
+finished unpaid, and a payment whose time cannot be read hold nothing. The
+check runs after every earlier refusal and before the session reuse.
+`getMyInvoices` does not ship this state, because it would cost a Stripe read
+on a list read. The portals learn it from the refusal: they hold Pay back,
+print the sentence in its place and read the bill again until the payment
+shows. A portal build from before the change prints the message where it
+prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
 
 ### createInvoice
 - req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[], lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int 0..10_000_000 */, discountCents?: number /* int >=0 */ }> /* max 100 */, invoiceDiscountCents?: number /* int >=0 */, idempotencyKey?: string /* #825, `inv_<millis>_<suffix>`; becomes the `invoices/{key}` document id, and a replay never reaches the number counter */ }`
@@ -954,6 +1008,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
     throw here would offer a retry that collects again.
   - Refuses `tip_exceeds_amount` (`invalid-argument`) and every `apply_*` code
     (`failed-precondition`) BEFORE writing anything.
+  - Refuses `link_wrong_household` (`failed-precondition`) BEFORE writing
+    anything when `invoiceId` names an invoice of a different household than
+    `kinfolkId`. A payment with no household and an invoice that carries none
+    are not refused.
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
 - res `{ ok: true, invoiceId: string, skipped: ''|'invoice_missing'|'invoice_not_collectable'|'no_household'|'no_credit', appliedCents: number, amountDueCents: number, accountBalanceCents: number }`
 - **DISABLED (#1872, operator ruling 2026-11-11).** Account credit is never
@@ -3338,6 +3396,76 @@ these two; none of them writes the send itself.
   draft, or the household doc is gone), `invalid-argument` (blank body).
 - Delete refuses a published draft (`failed-precondition`). Both write an
   audit entry: `KINTALE_DRAFT_PUBLISHED`, `KINTALE_DRAFT_DELETED`.
+- #2428: delete also refuses every other draft a household was sent
+  (`failed-precondition`, `details.code: 'draft_already_sent'`): an Email or
+  Text that is approved or stamped `sentAt`, and a Push whose `pushOutcome` is
+  `sent` or `listed`. A held Push and one with no `pushOutcome` are deleted.
+  `firestore.rules` refuses a direct delete of the same drafts.
+- #2452: an Email or Text whose send got no answer (a claim marked
+  `sendUnconfirmedAt`, or one older than 120 seconds) is kept as well, and the
+  refusal says the send was not confirmed and never that it was sent
+  (`failed-precondition`, `details.code: 'draft_send_unconfirmed'`). One whose
+  claim is under 120 seconds old is refused with
+  `details.code: 'draft_send_in_flight'`.
+
+## Communicate Email and Text drafts (#2428, owner)
+
+`src/admin/sendGeneratedDraft.ts`, exported from `src/admin/sendExternalMessage.ts`.
+Admin web, Android and the desktop console all call it to approve and send an
+Email or Text draft; none of them writes the approve or calls
+`sendExternalMessage` for a draft any more.
+
+| Callable | Input | Output | Gate |
+|---|---|---|---|
+| `sendGeneratedDraft` | `{ draftId, kinfolkId, body, subject? }` | `{ ok, outcome, channel, recipientRedacted, sentAt }` | admin only |
+
+- `outcome` is `sent` (this call sent it) or `already_sent` (it went out
+  before; nothing new was sent). `channel` is `email` or `sms`,
+  read from the draft's type. `recipientRedacted` and `sentAt` are blank on
+  `already_sent` for a draft an older client sent.
+- There is no address in the request. The server sends to `email` or
+  `phoneNumber` on `kinfolk/{kinfolkId}`, and refuses unless the draft was
+  written for that household (`permission-denied`).
+- One transaction checks the draft and claims it: `status: 'approved'`,
+  `generatedCopy` (the words in `body`), `subject` (Email), `approvedAt`,
+  `approvedBy`, `sendClaimedAt`. After the provider takes the message the draft
+  is stamped `sentAt`, `sentChannel`, `sentTo` (masked) and
+  `sentProviderMessageId`, and `sendClaimedAt` is removed.
+- A Text is sent short (#2408, ruling 2026-11-14): the household short line
+  (200 characters, cut between whole characters at the end of a word) and
+  `More in MyTribe:` with a link to `/notifications?entry=personal-text-{draftId}`.
+  The whole message is written to `notifications/personal-text-{draftId}`
+  (`key: 'message.reply'`, `householdLine`, `householdTextMessage`) for the
+  household's membership-checked sign-in, after the claim and before the text.
+  The entry is removed when it is known nothing went out and kept when the
+  send got no answer. A household with no MyTribe sign-in, or an entry that
+  could not be written, gets the short text with a link to `/notifications`.
+  An Email is sent whole and writes no entry. The draft keeps the whole
+  message in `generatedCopy` either way.
+- Only a draft that is not `approved` and has no `sentAt` is sent. A call for
+  a stamped draft, or one approved with no claim on it (an older client sent
+  it), answers `already_sent`. While a claim is under 120 seconds old the call
+  is `aborted` with `details.code: 'draft_send_in_flight'`.
+- When it is known nothing went out (the address is hard-bounced, the provider
+  answered no, or the connection was never made) the claim is let go, the
+  draft returns to the status it had with `sendFailedAt` set, and the error is
+  rethrown. Nothing else lets a claim go.
+- When the send got no answer (a timeout or a dropped connection after the
+  request left) the claim is kept and the draft is marked `sendUnconfirmedAt`.
+  That call, every later call for the draft, and a call that finds a claim
+  older than 120 seconds are refused with `failed-precondition`,
+  `details.code: 'draft_send_unconfirmed'`. Such a draft is never sent again.
+- Refusals: `not-found` (no draft), `permission-denied` (another household's
+  draft), `failed-precondition` (not an Email or Text, no address on file, an
+  address that cannot be sent to, the household doc is gone),
+  `invalid-argument` (blank words, an Email with no subject).
+- The send is recorded as `sendExternalMessage` records one:
+  `external_messages` and the `EXTERNAL_MESSAGE_SENT` audit entry, whose payload
+  also names `draftId` and `kinfolkId`. Like `sendExternalMessage`, it does not
+  read `householdNotificationsLive`.
+- `firestore.rules` refuses a client update to an Email or Text draft that is
+  `approved` or has `sentAt`, so a client that still approves with its own
+  write cannot approve, and so cannot send, the same draft twice.
 
 ## Notifications inbox (recipient or admin)
 

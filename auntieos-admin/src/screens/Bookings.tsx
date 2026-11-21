@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { BOOKINGS_QUERY, type BookingEntry } from '../api/bookings';
 import {
@@ -16,6 +16,7 @@ import {
 import { useWorkSettingsRead } from '../lib/useWorkSettings';
 import { WorkSettingsNotice } from '../components/WorkSettingsNotice';
 import { useCollection, useDocById } from '../lib/firestore';
+import type { Async } from '../lib/async';
 import { DenScreenHeading, EmptyHint, InfoTip, StatusPill, type DenTone } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -63,6 +64,7 @@ import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/busi
 import { navKicker } from '../lib/nav';
 import { isOverdueSession } from '../lib/sessionFormat';
 import { localDateIso } from '../lib/invoiceFormat';
+import { cutWhole } from '../lib/cutText';
 import './Bookings.css';
 
 /**
@@ -309,6 +311,23 @@ interface BookingsProps {
   focusRequest?: FocusRequest;
 }
 
+/**
+ * #2397: the list page with the opened booking's visits added where the page
+ * does not hold them. The page is the 200 most recently created visits of
+ * every household, so an older booking's visits are not on it, and the banner
+ * that counts them as highlighted would point at nothing. A visit the page
+ * does hold keeps the page's copy. While the page is loading or has failed it
+ * is passed through as it is. Pure; unit-tested.
+ */
+export function withFocusedRows(
+  page: Async<BookingEntry[]>,
+  focused: readonly BookingEntry[],
+): Async<BookingEntry[]> {
+  if (page.status !== 'ready' || focused.length === 0) return page;
+  const onPage = new Set(page.data.map((r) => r._id));
+  const missing = focused.filter((r) => !onPage.has(r._id));
+  return missing.length === 0 ? page : { status: 'ready', data: [...page.data, ...missing] };
+}
 /** One row's derived display facts, computed once per render pass. */
 interface RowView {
   entry: BookingEntry;
@@ -365,7 +384,7 @@ export function Bookings({
   isAuntie = false,
 }: BookingsProps) {
   const navigate = useNavigate();
-  const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
+  const page = useCollection<BookingEntry>(BOOKINGS_QUERY);
   // History is open like every other section, and grows a page at a time. It
   // used to be closed behind "Show N finished", which the mock does not do.
   const [historyShown, setHistoryShown] = useState(HISTORY_PAGE_SIZE);
@@ -375,10 +394,18 @@ export function Bookings({
    * `focusedIds` are those visits, highlighted on the list until dismissed.
    */
   const [batchFocus, setBatchFocus] = useState<FocusRequest | null>(null);
-  const [focusedIds, setFocusedIds] = useState<ReadonlySet<string>>(new Set());
+  const [focusedRows, setFocusedRows] = useState<readonly BookingEntry[]>([]);
+  const focusedIds = useMemo<ReadonlySet<string>>(() => new Set(focusedRows.map((r) => r._id)), [focusedRows]);
+  /**
+   * #2397: what the list draws, and what every action on it reads: the page,
+   * plus the opened booking's visits the page does not hold. Selecting, bulk
+   * actions and the detail sheet all read this, so a visit drawn from outside
+   * the page opens and acts like any other card.
+   */
+  const rows = useMemo(() => withFocusedRows(page, focusedRows), [page, focusedRows]);
   function dismissBatchFocus() {
     setBatchFocus(null);
-    setFocusedIds(new Set());
+    setFocusedRows([]);
   }
   // The overlay's own selection state, used only when no external
   // onSelectBooking is supplied (see BookingsProps's doc above). Seeded from the
@@ -479,6 +506,26 @@ export function Bookings({
   // CANCEL is not undoable and the per-row surface asks first, so this asks too
   // rather than making "many at once" the one path with no second thought.
   const [confirmAction, setConfirmAction] = useState<BatchBookingAction | null>(null);
+  /**
+   * #2397: a picked visit that was drawn from outside the page leaves the
+   * selection when it leaves the list: on Dismiss, or when the booking no
+   * longer holds it. The bulk bar counts what is picked, and must never count
+   * a card that is no longer on screen. Judged only while the page is read, so
+   * a page that is loading again takes nothing out of the selection.
+   */
+  const drawnFromOutside = useRef<readonly string[]>([]);
+  useEffect(() => {
+    if (rows.status !== 'ready' || page.status !== 'ready') return;
+    const listed = new Set(rows.data.map((r) => r._id));
+    const left = drawnFromOutside.current.filter((id) => !listed.has(id));
+    drawnFromOutside.current = rows.data.slice(page.data.length).map((r) => r._id);
+    if (left.length === 0) return;
+    setSelectedIds((prev) => {
+      const kept = [...prev].filter((id) => !left.includes(id));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+    setConfirmAction(null);
+  }, [rows, page]);
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<BulkOutcome | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -669,7 +716,9 @@ export function Bookings({
   // #1607: the picked rows' states, so the bulk bar offers only what fits them.
   const selectedStates: BookingState[] =
     rows.status === 'ready' ? rows.data.filter((r) => selectedIds.has(r._id)).map((r) => bookingState(r)) : [];
-  const selectToggle = (
+  // Every bulk action is the owner's (`batchUpdateBookings`, and the bulk
+  // Reschedule's `rescheduleBooking`), so an Auntie gets no Select (#2313).
+  const selectToggle = isAuntie ? null : (
     <GhostButton
       label="Select"
       pressed={selecting}
@@ -741,13 +790,15 @@ export function Bookings({
           mock puts the three status sections directly under the heading and a
           queue that is usually empty was pushing the first one to y=580. */}
       <VisitRequestsSection
+        isAuntie={isAuntie}
         refreshKey={requestsRefresh}
         {...(focusRequest ? { focusRequest, onFocusNotWaiting: () => setBatchFocus(focusRequest) } : {})}
       />
       {batchFocus !== null && (
         <BookingBatchFocus
           focus={batchFocus}
-          onHighlight={(ids) => setFocusedIds(new Set(ids))}
+          listStatus={page.status}
+          onHighlight={setFocusedRows}
           onDismiss={dismissBatchFocus}
         />
       )}
@@ -801,7 +852,9 @@ export function Bookings({
               onSelectBooking={handleSelectBooking}
               // The card's own transition buttons open THIS screen's sheet at
               // the confirm step, so they exist only while the screen owns it.
-              onAct={onSelectBooking ? undefined : openDetail}
+              // #2313: a card's Approve, Reject and Cancel are refused for an
+              // Auntie, so her cards carry none. The card still opens the visit.
+              onAct={onSelectBooking || isAuntie ? undefined : openDetail}
               selecting={selecting}
               selectedIds={selectedIds}
               onTogglePick={toggleRow}
@@ -892,6 +945,7 @@ export function Bookings({
             entry={detailEntry}
             businessZone={businessZone}
             catalog={catalog}
+            isAuntie={isAuntie}
             onClose={closeDetail}
             actions={
               <BookingStatusActions
@@ -1368,7 +1422,7 @@ function BookingRow({
           <StatusPill label="OVERDUE" tone="error" />
         )}
         {notePreview.trim() !== '' && (
-          <span className="bookings__row-note">Note: {notePreview.slice(0, 120)}</span>
+          <span className="bookings__row-note">Note: {cutWhole(notePreview, 120)}</span>
         )}
       </span>
     </>

@@ -4,7 +4,6 @@ import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.GenerateResponse
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
-import com.tribetails.auntieos.data.repository.ExternalSendResult
 import com.tribetails.auntieos.data.repository.RecentComms
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -26,10 +25,14 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * #1625: approving a Text or Email draft on Android sends it through
- * `sendExternalMessage`, after a confirm and after the approve write lands, the
- * way the web admin does. Before this, the approve only stamped the draft and
- * the household never got the message.
+ * #1625: approving a Text or Email draft on Android sends it, after a confirm,
+ * the way the web admin does. Before this, the approve only stamped the draft
+ * and the household never got the message.
+ *
+ * #2428: the send is the server's `sendGeneratedDraft`, which approves, sends
+ * and stamps the draft in one call. The approve write followed by
+ * `sendExternalMessage` left nothing on the draft to say it had gone, so the
+ * same draft could be approved and sent again.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CommunicateApproveSendTest {
@@ -65,23 +68,26 @@ class CommunicateApproveSendTest {
         return vm
     }
 
-    @Test fun `an Email approve asks first, then approves, then sends to the household`() = runTest(testDispatcher) {
-        coEvery { repo.sendExternalMessage(any(), any(), any(), any(), any(), any()) } returns
-            Result.success(ExternalSendResult("email", "pm1", "r***@example.com"))
+    @Test fun `an Email approve asks first, then the server sends it and the activity entry follows`() = runTest(testDispatcher) {
+        coEvery { repo.sendGeneratedDraft(any(), any(), any(), any()) } returns
+            Result.success(DraftSendResult("sent", "r***@example.com"))
         val vm = draftFor("email")
 
         vm.requestApprove()
         assertTrue(vm.uiState.value.approveConfirmOpen)
-        coVerify(exactly = 0) { repo.approveDraft(any(), any(), any()) }
-        coVerify(exactly = 0) { repo.sendExternalMessage(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repo.sendGeneratedDraft(any(), any(), any(), any()) }
 
         vm.approveDraft()
         advanceUntilIdle()
 
+        // The draft, the household and the words. No address: the server reads the household's own.
         coVerifyOrder {
-            repo.approveDraft("d1", "Hi Rosa, Biscuit did great today.", "kf1")
-            repo.sendExternalMessage("email", "rosa@example.com", "Visit update", "Hi Rosa, Biscuit did great today.", true, false)
+            repo.sendGeneratedDraft("d1", "kf1", "Hi Rosa, Biscuit did great today.", "Visit update")
+            repo.logActivity(match { it.actionType == "DRAFT_APPROVED" && it.targetId == "d1" })
         }
+        // #2428: no approve write of its own, and never the external send, which knows nothing of the draft.
+        coVerify(exactly = 0) { repo.approveDraft(any(), any(), any()) }
+        coVerify(exactly = 0) { repo.sendExternalMessage(any(), any(), any(), any(), any(), any()) }
         val s = vm.uiState.value
         assertEquals("d1", s.savedDraftId)
         assertFalse(s.approveConfirmOpen)
@@ -91,22 +97,42 @@ class CommunicateApproveSendTest {
         assertFalse(s.successMessage!!, s.successMessage!!.contains("d1"))
     }
 
-    @Test fun `a Text approve sends an SMS to the household phone, no subject`() = runTest(testDispatcher) {
-        coEvery { repo.sendExternalMessage(any(), any(), any(), any(), any(), any()) } returns
-            Result.success(ExternalSendResult("sms", "SM1", "***0001"))
+    @Test fun `a Text approve sends through the server with no subject`() = runTest(testDispatcher) {
+        coEvery { repo.sendGeneratedDraft(any(), any(), any(), any()) } returns
+            Result.success(DraftSendResult("sent", "+1******0001"))
         val vm = draftFor("sms", subject = "ignored for text")
 
         vm.requestApprove()
         vm.approveDraft()
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { repo.sendExternalMessage("sms", "555-0001", null, any(), true, false) }
+        coVerify(exactly = 1) { repo.sendGeneratedDraft("d1", "kf1", any(), null) }
         assertTrue(vm.uiState.value.successMessage!!.contains("sent by text"))
     }
 
-    @Test fun `a refused send keeps the draft approved and says the household did not get it`() = runTest(testDispatcher) {
-        coEvery { repo.sendExternalMessage(any(), any(), any(), any(), any(), any()) } returns
-            Result.failure(RuntimeException("recipient_opted_out"))
+    @Test fun `a refused send leaves the draft unapproved, says why and logs nothing`() = runTest(testDispatcher) {
+        coEvery { repo.sendGeneratedDraft(any(), any(), any(), any()) } returns
+            Result.failure(RuntimeException("recipient_hard_bounced"))
+        val vm = draftFor("email")
+
+        vm.requestApprove()
+        vm.approveDraft()
+        advanceUntilIdle()
+
+        val s = vm.uiState.value
+        // #2428: the server let go of the draft, so Approve and send is still there.
+        assertNull(s.savedDraftId)
+        assertFalse(s.isSaving)
+        assertTrue(s.error!!, s.error!!.startsWith("This address bounced"))
+        assertNull(s.successMessage)
+        assertNull(s.sentNotice)
+        coVerify(exactly = 0) { repo.logActivity(any()) }
+    }
+
+    @Test fun `a sent message whose activity entry failed says both`() = runTest(testDispatcher) {
+        coEvery { repo.sendGeneratedDraft(any(), any(), any(), any()) } returns
+            Result.success(DraftSendResult("sent", "r***@example.com"))
+        coEvery { repo.logActivity(any()) } returns Result.failure(RuntimeException("audit chain busy"))
         val vm = draftFor("email")
 
         vm.requestApprove()
@@ -115,20 +141,8 @@ class CommunicateApproveSendTest {
 
         val s = vm.uiState.value
         assertEquals("d1", s.savedDraftId)
-        assertTrue(s.error!!.startsWith("The draft is approved, but the send failed"))
-        assertNull(s.successMessage)
-    }
-
-    @Test fun `a failed approve write sends nothing`() = runTest(testDispatcher) {
-        coEvery { repo.approveDraft(any(), any(), any()) } returns Result.failure(RuntimeException("PERMISSION_DENIED"))
-        val vm = draftFor("email")
-
-        vm.requestApprove()
-        vm.approveDraft()
-        advanceUntilIdle()
-
-        coVerify(exactly = 0) { repo.sendExternalMessage(any(), any(), any(), any(), any(), any()) }
-        assertNull(vm.uiState.value.savedDraftId)
+        assertTrue(s.successMessage!!, s.successMessage!!.contains("sent by email to r***@example.com."))
+        assertTrue(s.successMessage!!, s.successMessage!!.contains("The audit entry could not be written: audit chain busy"))
     }
 
     @Test fun `a KinTale approve takes the #1563 portal path, never an email or text`() = runTest(testDispatcher) {
@@ -141,7 +155,7 @@ class CommunicateApproveSendTest {
         assertFalse(vm.uiState.value.approveConfirmOpen)
         assertEquals("r1", vm.uiState.value.publishedReportId)
         coVerify(exactly = 1) { repo.publishGeneratedDraft("d1", any(), any()) }
-        coVerify(exactly = 0) { repo.sendExternalMessage(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repo.sendGeneratedDraft(any(), any(), any(), any()) }
     }
 
     @Test fun `an Email approve with no subject is refused before anything is written`() = runTest(testDispatcher) {
@@ -152,7 +166,7 @@ class CommunicateApproveSendTest {
 
         assertEquals("Email needs a subject.", vm.uiState.value.error)
         assertFalse(vm.uiState.value.approveConfirmOpen)
-        coVerify(exactly = 0) { repo.approveDraft(any(), any(), any()) }
+        coVerify(exactly = 0) { repo.sendGeneratedDraft(any(), any(), any(), any()) }
     }
 
     @Test fun `cancelling the confirm writes and sends nothing`() = runTest(testDispatcher) {
@@ -161,7 +175,7 @@ class CommunicateApproveSendTest {
         vm.cancelApproveConfirm()
         advanceUntilIdle()
         assertFalse(vm.uiState.value.approveConfirmOpen)
-        coVerify(exactly = 0) { repo.approveDraft(any(), any(), any()) }
+        coVerify(exactly = 0) { repo.sendGeneratedDraft(any(), any(), any(), any()) }
     }
 
     // ── the pure rules ─────────────────────────────────────────────────────

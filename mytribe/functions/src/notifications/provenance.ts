@@ -728,7 +728,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // carries the office's own words, so no template is read.
       trigger: 'The office approves a Push draft for one household in Communicate.',
       source: 'src/admin/sendHouseholdPush.ts',
-      dataKeys: ['kinfolkId'],
+      // #2295: the notice names the draft it was sent from.
+      dataKeys: ['kinfolkId', 'draftId'],
     },
   ],
   'pets.updated': [
@@ -1096,6 +1097,7 @@ export const MERGE_FIELD_LABELS: Readonly<Record<string, string>> = {
   disputeId: 'Dispute reference',
   disputeReason: 'Dispute reason',
   disputeStatus: 'Dispute status',
+  draftId: 'Draft reference',
   dueDate: 'Due date',
   email: 'Email address',
   etaMinutes: 'Minutes until arrival',

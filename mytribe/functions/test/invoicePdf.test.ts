@@ -49,9 +49,9 @@ describe('renderInvoicePdf (pure)', () => {
     expect(String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3])).toBe('%PDF');
   });
 
-  it('invoiceForPdf maps fields + falls back to id for missing invoiceNumber', () => {
+  it('invoiceForPdf maps fields, and a missing invoiceNumber stays empty: the id never stands in (#2453)', () => {
     const inv = invoiceForPdf('i9', { total: 5, amountDue: 5 });
-    expect(inv.invoiceNumber).toBe('i9');
+    expect(inv.invoiceNumber).toBe('');
     expect(inv.total).toBe(5);
     expect(inv.client).toBe('');
   });

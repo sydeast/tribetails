@@ -25,6 +25,7 @@ vi.mock('firebase/firestore', () => ({
 
 import { usePagedCollection, type PagedCollectionSpec } from './usePagedCollection';
 import { setTestScope } from './testScope';
+import { setCaretakerScope } from './caretakerScope';
 
 interface Row {
   _id: string;
@@ -73,6 +74,7 @@ beforeEach(() => {
   vi.mocked(where).mockClear();
   vi.mocked(startAfter).mockClear();
   setTestScope(null);
+  setCaretakerScope(false);
 });
 
 describe('usePagedCollection: the first page', () => {
@@ -395,5 +397,22 @@ describe('usePagedCollection: the sandbox scope', () => {
     expect(getDocs).not.toHaveBeenCalled();
     expect(result.current.state).toEqual({ status: 'ready', data: [] });
     expect(result.current.hasMore).toBe(false);
+  });
+});
+
+describe('usePagedCollection: an Auntie\'s drafts list', () => {
+  const DRAFTS: PagedCollectionSpec = { path: 'generated_drafts', order: ['createdOn', 'desc'], pageSize: 2 };
+  it('names the KinTale type for an Auntie, exactly as useCollection does', async () => {
+    setCaretakerScope(true);
+    getDocs.mockResolvedValue(snap('a', 1));
+    renderHook(() => usePagedCollection<Row>(DRAFTS));
+    await settle();
+    expect(where).toHaveBeenCalledWith('communication_type', '==', 'visit_report');
+  });
+  it('carries no type for the owner', async () => {
+    getDocs.mockResolvedValue(snap('a', 1));
+    renderHook(() => usePagedCollection<Row>(DRAFTS));
+    await settle();
+    expect(where).not.toHaveBeenCalled();
   });
 });

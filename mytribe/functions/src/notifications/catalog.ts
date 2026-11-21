@@ -618,7 +618,7 @@ const CATALOG_LIST: NotificationDef[] = [
     // refund). BUSINESS-ONLY for the dispute key's reason: every honest thing
     // to tell the household depends on that decision.
     key: 'invoice.payment.unapplied',
-    label: 'Card payment not applied (invoice paid or cancelled)',
+    label: 'Card payment not applied (held for a decision)',
     audience: 'business',
     audiences: { business: true },
     category: 'invoice',
@@ -630,7 +630,10 @@ const CATALOG_LIST: NotificationDef[] = [
     deliveryMode: 'trigger',
     recipientResolver: 'businessAdmins',
     templates: { email: 'invoice.payment.unapplied', push: 'invoice.payment.unapplied' },
-    description: 'A card payment arrived for an invoice that was already paid or was cancelled, and was held for a decision.',
+    // #2345: also an invoice that could not take the payment at all (a draft,
+    // a quote, a credit, nothing owed on its total, another household's).
+    description:
+      'A card payment arrived for an invoice that could not take it (already paid, cancelled, a draft or a quote, a credit) and was held for a decision.',
   },
   {
     key: 'quote.accepted',

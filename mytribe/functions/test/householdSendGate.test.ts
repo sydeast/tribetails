@@ -242,7 +242,39 @@ describe('householdSendGate: the dispatcher chokepoint', () => {
       recipientUid: 'kinUid',
       data: { bookingId: 'b1', kinfolkId: 'kf1' },
     });
-    expect(reads.mock.calls.length, 'one read for the whole fan-out').toBe(1);
+    // One read for the gate, for the whole fan-out. The household copy it held
+    // writes its "not sent" line, and that line is dated by the business day
+    // (#2346), read from the same settings document: the second read.
+    expect(reads.mock.calls.length, 'one gate read for the fan-out, one for the held line').toBe(2);
+  });
+
+  it('a failed business-day read for the held line changes nothing about the gate (#2346)', async () => {
+    const ctx = buildDbMock({ docs: { [SETTINGS_PATH]: settings(false) } });
+    const settingsRef = ctx.db.doc(SETTINGS_PATH);
+    const realGet = settingsRef.get.bind(settingsRef);
+    // The gate's read succeeds; every later read of the same doc (the held
+    // line's business day) fails.
+    settingsRef.get = vi
+      .fn()
+      .mockImplementationOnce(() => realGet())
+      .mockRejectedValue(new Error('UNAVAILABLE'));
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const outcome = await enqueueNotificationDetailed({
+      key: 'invoice.overdue',
+      recipientUid: 'kinUid',
+      data: { kinfolkId: 'kf1', invoiceId: 'inv1' },
+    });
+
+    expect(settingsRef.get, 'the failing second read did happen').toHaveBeenCalledTimes(2);
+    expect(outcome.written).toEqual([]);
+    expect(outcome.suppressed[0]).toMatchObject({ reason: 'gate', gateState: 'off' });
+    expect(ctx.writes.filter((w) => !w.path.startsWith('activity_log'))).toEqual([]);
+    // The line is still written (dated by the ruled Chicago day) and still says "turned off".
+    const line = ctx.writes.find((w) => w.path.startsWith('activity_log/'))?.data as Record<string, unknown>;
+    expect(line).toMatchObject({ actionType: 'NOTIFICATION_NOT_SENT', status: 'NOT_SENT' });
+    expect(String(line.description)).toMatch(/: notices to households are turned off$/);
+    expect(events()).not.toContain('household.send.gate.read.failed');
   });
 });
 

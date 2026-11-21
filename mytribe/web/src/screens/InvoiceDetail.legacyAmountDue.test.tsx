@@ -78,7 +78,7 @@ vi.mock('../api/portal', () => ({
  * Before #902 the same document arrived here with `amountDue: 0`.
  */
 const LEGACY_INVOICE: GetMyInvoicesResult['open'][number] = {
-  id: 'inv-legacy',
+  id: 'inv-legacy', invoiceNumber: '1042',
   kinfolkId: 'kin-fam-1',
   kinfolkName: 'The Test Family',
   client: 'The Test Family',
@@ -104,6 +104,8 @@ const LEGACY_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditTarget: null,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  // #2410: null on an invoice that can be paid.
+  payBlockedReason: null,
   payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 

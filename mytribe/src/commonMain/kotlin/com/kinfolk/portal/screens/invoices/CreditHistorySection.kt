@@ -78,9 +78,9 @@ fun creditStatusLine(c: GivenCredit, timeZone: TimeZone = TimeZone.currentSystem
     return "${usd(applied)} of ${usd(c.amountCents)} applied ($dates)"
 }
 
-/** "$X on INV-1009, Sep 27, 2026", or "on an invoice" when it has no number. */
+/** "$X on INV-1009, Sep 27, 2026", or "on an invoice with no number". */
 fun creditUseLine(u: CreditUse, timeZone: TimeZone = TimeZone.currentSystemDefault()): String {
-    val target = u.invoiceNumber?.takeIf { it.isNotBlank() } ?: "an invoice"
+    val target = u.invoiceNumber?.takeIf { it.isNotBlank() } ?: "an invoice with no number"
     return "${usd(u.amountCents)} on $target, ${creditDateLabel(u.usedAtMs, timeZone)}"
 }
 

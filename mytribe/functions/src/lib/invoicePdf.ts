@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { businessLabel, loadBusinessName } from './businessName';
+import { cutWhole } from './cutText';
 import {
   METHOD_SPECS,
   isMethodEnabled,
@@ -11,6 +12,7 @@ import { getAdmin } from './firestoreAdmin';
 import { formatUsd, formatUsdCents, lineAmountCents } from './invoiceMath';
 import { invoiceIsPaid } from './invoicePaidGate';
 import { isWrittenOff } from './invoiceArchive';
+import { invoiceLeadName } from './invoiceNaming';
 
 /**
  * Stage 3 / 16.2 - server-side invoice PDF.
@@ -137,7 +139,8 @@ export function invoiceForPdf(id: string, data: Record<string, unknown>): Invoic
   const lineItems = lineItemsForPdf(data['lineItems']);
   return {
     id,
-    invoiceNumber: str('invoiceNumber') || id,
+    // #2453: `''` when the invoice has no number. The id is never printed in its place.
+    invoiceNumber: str('invoiceNumber').trim(),
     kinfolkName: str('kinfolkName'),
     client: str('client'),
     address: str('address'),
@@ -223,6 +226,17 @@ export function pdfHeadings(status: string): PdfHeadings {
 }
 
 /**
+ * #2453: the line under the title, "Invoice #: 1042". An invoice with no
+ * number prints "Invoice with no number" (or "Quote with no number"), where it
+ * used to print its stored id after the "#". PURE.
+ */
+export function pdfNumberLine(status: string, invoiceNumber: string): string {
+  const number = invoiceNumber.trim();
+  if (number !== '') return `${pdfHeadings(status).numberLabel}: ${number}`;
+  return invoiceLeadName('', status.trim().toLowerCase() === 'quote' ? 'quote' : 'invoice');
+}
+
+/**
  * Renders the invoice to PDF bytes. Pure (no IO): deterministic given the input,
  * so it is unit-testable on its own. Single Letter-size page, Helvetica.
  */
@@ -254,7 +268,7 @@ export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> 
   line(headings.title, { size: 14, f: bold, color: dim });
   gap(28);
 
-  line(`${headings.numberLabel}: ${inv.invoiceNumber}`, { f: bold });
+  line(pdfNumberLine(inv.status, inv.invoiceNumber), { f: bold });
   gap();
   // #2090: the stored key is never printed; a written-off invoice says so in words.
   const writtenOff = inv.status.trim().toLowerCase() === 'written_off';
@@ -289,7 +303,7 @@ export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> 
     for (const li of inv.lineItems) {
       // The description is the only unbounded field on the row, so it is the
       // only one truncated. Truncating a number would misstate money.
-      const desc = li.description.length > 46 ? `${li.description.slice(0, 45)}…` : li.description;
+      const desc = li.description.length > 46 ? `${cutWhole(li.description, 45)}…` : li.description;
       line(desc, { size: 10 });
       line(formatQty(li.qty), { size: 10, x: qtyX });
       line(usdCents(li.unitCents), { size: 10, x: unitX });

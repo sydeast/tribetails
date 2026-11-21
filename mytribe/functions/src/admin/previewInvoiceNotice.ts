@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { initSentry } from '../lib/sentry';
@@ -94,7 +95,7 @@ export async function previewInvoiceNoticeHandler(req: CallableRequest<unknown>)
   const actor = resolveInvoiceWriteActor(req, 'previewInvoiceNotice');
 
   const snap = await db().collection('invoices').doc(args.invoiceId).get();
-  if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+  if (!snap.exists) throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
   const invoice = (snap.data() ?? {}) as Record<string, unknown>;
   const kinfolkId = str(invoice['kinfolkId']);
   if (!testOwnsDoc(actor.testMode, kinfolkId)) {

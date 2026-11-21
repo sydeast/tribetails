@@ -9,6 +9,7 @@
  * PR24 established for the portal response. Nothing here changes that
  * contract; it only changes where the value comes from.
  */
+import { CARETAKER_MEDIA_TYPES } from './caretakerMedia';
 
 /** Same shape getMyKinTaleMedia's MediaItem / getMyKinTales' TaleThumb return. */
 export interface TaleThumb {
@@ -21,16 +22,44 @@ export interface TaleThumb {
 export const MAX_THUMBS_PER_TALE = 8;
 
 /**
+ * Is this stored media file one a KinTale shows?
+ *
+ * A tale's photos are a visit's (`VISIT_LOG`, what every composer uploads), and
+ * a Kin's or a household's photo is the same kind of thing: the files in
+ * `lib/caretakerMedia.ts`. A file stored as any other kind (company media, a
+ * Tribal Intel attachment, an account photo, a kind added later) hangs off
+ * something that is not a visit, a Kin or a household, and a tale does not show
+ * it to the household, on a share link or in a preview, whatever ids the tale
+ * carries.
+ *
+ * A file with NO stored kind stays. Every uploader has always stamped
+ * `entityType`, so a row without one is older or seeded data (the sandbox
+ * household's own tale photo is one), and leaving it out would take photos off
+ * tales that have always shown them. A blank string reads as no kind.
+ *
+ * The kind is compared as stored, with no case folding, like the rule and the
+ * list it shares.
+ */
+export function taleShowsMedia(data: Record<string, unknown> | undefined): boolean {
+  if (!data) return false;
+  const kind = data['entityType'];
+  if (kind === undefined || kind === null || kind === '') return true;
+  return typeof kind === 'string' && CARETAKER_MEDIA_TYPES.includes(kind);
+}
+
+/**
  * Turns one `media_files/{id}` doc into the portal's `{id, url, contentType}`
  * shape. This is the SAME mapping `getMyKinTaleMedia` and the old per-read
  * `getMyKinTales` resolver used (storageUrl -> url, mimeType -> contentType).
- * A doc with no `storageUrl` produces no thumb — never a placeholder.
+ * A doc with no `storageUrl` produces no thumb, never a placeholder. Neither
+ * does a file a tale does not show (`taleShowsMedia`).
  */
 export function mediaDocToThumb(
   id: string,
   data: Record<string, unknown> | undefined,
 ): TaleThumb | null {
   if (!data) return null;
+  if (!taleShowsMedia(data)) return null;
   const url = typeof data['storageUrl'] === 'string' ? (data['storageUrl'] as string) : '';
   if (!url) return null;
   return {

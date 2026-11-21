@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -9,9 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
-import { invoiceIsPaid } from '../lib/invoicePaidGate';
-import { isWrittenOff } from '../lib/invoiceArchive';
-import { sessionsToClose, type SweepDoc } from '../lib/checkoutSessionSweep';
+import { invoiceTakesNoPayment, sessionsToClose, type SweepDoc } from '../lib/checkoutSessionSweep';
 import {
   liveSessionsApi,
   recordCheckoutSweep,
@@ -63,14 +62,15 @@ export async function retryInvoiceCheckoutCloseHandler(
     throw err;
   }
   const snap = await db().collection('invoices').doc(args.invoiceId).get();
-  if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+  if (!snap.exists) throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
   const data = snap.data() as SweepDoc & { kinfolkId?: string; invoiceNumber?: string };
   // #2090: a written-off invoice owes nothing either, and the sweep closes its
   // links (`sessionsToClose`), so Try again works on it as on a paid one.
-  if (!invoiceIsPaid(data) && !isWrittenOff(data)) {
+  // #2362: so does a cancelled one.
+  if (!invoiceTakesNoPayment(data)) {
     throw new HttpsError(
       'failed-precondition',
-      'This invoice is not paid, so its payment links are still how the household pays.',
+      'This invoice is still owed, so its payment links are still how the household pays.',
       { code: 'invoice_not_paid' },
     );
   }

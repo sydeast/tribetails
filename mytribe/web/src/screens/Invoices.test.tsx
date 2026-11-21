@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -53,7 +53,7 @@ vi.mock('../api/invoicesApi', async () => {
 });
 
 const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
-  id: 'inv-open-1',
+  id: 'inv-open-1', invoiceNumber: '1042',
   kinfolkId: 'kin-fam-1',
   kinfolkName: 'The Test Family',
   client: 'The Test Family',
@@ -79,6 +79,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditTarget: null,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  // #2410: null on an invoice that can be paid.
+  payBlockedReason: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -354,5 +356,174 @@ describe('Invoices — #1281 a credit save waits for the fresh list', () => {
     expect(document.querySelector('.bnum')?.textContent).toBe('$20.00');
     expect(screen.queryByRole('button', { name: /Save to Account Balance/ })).toBeNull();
     expect(redeemCredit).toHaveBeenCalledTimes(1);
+  });
+});
+/**
+ * #2400: "Pay now" on a list row started its own checkout and sent Stripe the
+ * bare invoice page for both return addresses, with no checkout key. A
+ * household who paid from the list came back with no marker, so no payment
+ * check ran: a live Pay button and nothing saying a payment was on its way,
+ * for the seconds the card webhook takes to land.
+ */
+describe('Invoices: Pay now sends the same return addresses and checkout key as the invoice page (#2400)', () => {
+  const KEY = /^chk_\d{10,16}_[a-z0-9]{1,16}$/;
+  const SECOND: GetMyInvoicesResult['open'][number] = { ...OPEN_INVOICE, id: 'inv-open-2', client: 'The Second Bill' };
+  async function renderList(open: GetMyInvoicesResult['open']) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockReset().mockResolvedValue({ open, paid: [], credits: [], accountBalanceCents: 0 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Invoices />
+      </QueryClientProvider>,
+    );
+  }
+  beforeEach(() => {
+    payInvoice.mockReset();
+  });
+  it('comes back to the invoice with the marker on success, and to the bare invoice on cancel', async () => {
+    payInvoice.mockRejectedValue(new Error('stop before the redirect'));
+    await renderList([OPEN_INVOICE]);
+    await userEvent.click(await screen.findByRole('button', { name: /Pay now/ }));
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(1));
+    const [invoiceId, successUrl, cancelUrl, kinfolkId, key] = payInvoice.mock.calls[0]!;
+    expect(invoiceId).toBe('inv-open-1');
+    expect(successUrl).toBe(`${window.location.origin}/invoices/inv-open-1?checkout=done`);
+    expect(cancelUrl).toBe(`${window.location.origin}/invoices/inv-open-1`);
+    expect(kinfolkId).toBe('kin-fam-1');
+    expect(key).toMatch(KEY);
+  });
+  it('writes the invoice id into the address encoded', async () => {
+    payInvoice.mockRejectedValue(new Error('stop before the redirect'));
+    await renderList([{ ...OPEN_INVOICE, id: 'INV 2027/1' }]);
+    await userEvent.click(await screen.findByRole('button', { name: /Pay now/ }));
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(1));
+    expect(payInvoice.mock.calls[0]![1]).toBe(`${window.location.origin}/invoices/INV%202027%2F1?checkout=done`);
+    expect(payInvoice.mock.calls[0]![2]).toBe(`${window.location.origin}/invoices/INV%202027%2F1`);
+  });
+  it('holds one checkout key across a re-tap after a failure', async () => {
+    payInvoice.mockRejectedValue(new Error('Card declined by Stripe.'));
+    await renderList([OPEN_INVOICE]);
+    await userEvent.click(await screen.findByRole('button', { name: /Pay now/ }));
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(1));
+    await userEvent.click(await screen.findByRole('button', { name: /Pay now/ }));
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(2));
+    const firstKey = payInvoice.mock.calls[0]![4];
+    expect(firstKey).toMatch(KEY);
+    expect(payInvoice.mock.calls[1]![4]).toBe(firstKey);
+  });
+  it("never carries one invoice's key to another invoice's checkout", async () => {
+    payInvoice.mockRejectedValue(new Error('Card declined by Stripe.'));
+    await renderList([OPEN_INVOICE, SECOND]);
+    const buttons = await screen.findAllByRole('button', { name: /Pay now/ });
+    expect(buttons).toHaveLength(2);
+    await userEvent.click(buttons[0]!);
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(1));
+    await userEvent.click((await screen.findAllByRole('button', { name: /Pay now/ }))[1]!);
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(2));
+    await userEvent.click((await screen.findAllByRole('button', { name: /Pay now/ }))[0]!);
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(3));
+    const [first, second, firstAgain] = payInvoice.mock.calls.map((c) => ({ id: c[0], key: c[4] }));
+    expect(first!.id).toBe('inv-open-1');
+    expect(second!.id).toBe('inv-open-2');
+    expect(second!.key).toMatch(KEY);
+    expect(second!.key).not.toBe(first!.key);
+    // The first bill's own key was kept for its own re-tap.
+    expect(firstAgain!.id).toBe('inv-open-1');
+    expect(firstAgain!.key).toBe(first!.key);
+  });
+  it('drops the key once a checkout has opened, so a later payment mints a new one', async () => {
+    // No address to go to, so the test stays on the page; the key is dropped all the same.
+    payInvoice.mockResolvedValue({ checkoutUrl: '', sessionId: 'cs_test_1', amountCents: 5000, currency: 'usd' });
+    await renderList([OPEN_INVOICE]);
+    await userEvent.click(await screen.findByRole('button', { name: /Pay now/ }));
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(1));
+    await userEvent.click(await screen.findByRole('button', { name: /Pay now/ }));
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(2));
+    expect(payInvoice.mock.calls[1]![4]).toMatch(KEY);
+    expect(payInvoice.mock.calls[1]![4]).not.toBe(payInvoice.mock.calls[0]![4]);
+  });
+});
+
+/**
+ * #1848: every row names its invoice by the number a Kinfolk can quote. The
+ * stored id (`inv_<13 digits>_<6 characters>`) used to stand after the "#".
+ */
+describe('Invoices: a row prints the invoice number, never the stored id (#1848)', () => {
+  const ID = 'inv_1731000000000_ab12cd';
+  async function renderWith(res: GetMyInvoicesResult) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(res);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Invoices />
+      </QueryClientProvider>,
+    );
+  }
+  const noIdOnScreen = () => expect(document.body.textContent ?? '').not.toContain(ID);
+
+  it('an open row', async () => {
+    await renderWith({ open: [{ ...OPEN_INVOICE, id: ID, invoiceNumber: '1042' }], paid: [], credits: [], accountBalanceCents: 0 });
+    expect(await screen.findByText(/^Invoice #1042 · /)).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('an open row with no number', async () => {
+    await renderWith({ open: [{ ...OPEN_INVOICE, id: ID, invoiceNumber: null }], paid: [], credits: [], accountBalanceCents: 0 });
+    expect(await screen.findByText(/^Invoice with no number · /)).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('an open row with no client name takes the invoice name as its title', async () => {
+    await renderWith({
+      open: [{ ...OPEN_INVOICE, id: ID, invoiceNumber: '1042', client: null }],
+      paid: [],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText('Invoice #1042')).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('a quote row', async () => {
+    await renderWith({
+      open: [{ ...OPEN_INVOICE, id: ID, invoiceNumber: 'Q-7', status: 'quote' }],
+      paid: [],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText(/^Quote #Q-7/)).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('a paid row, with and without a number', async () => {
+    await renderWith({
+      open: [],
+      paid: [
+        { ...OPEN_INVOICE, id: ID, invoiceNumber: '1042', status: 'paid', isPaid: true, amountDue: 0 },
+        { ...OPEN_INVOICE, id: `${ID}2`, invoiceNumber: null, status: 'paid', isPaid: true, amountDue: 0 },
+      ],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText(/^Invoice #1042 · /)).toBeInTheDocument();
+    expect(screen.getByText(/^Invoice with no number · /)).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('a row in the CREDITS panel, with and without a number', async () => {
+    await renderWith({
+      open: [],
+      paid: [],
+      credits: [
+        { ...CREDIT_INVOICE, id: ID, invoiceNumber: '1042' },
+        { ...CREDIT_INVOICE, id: `${ID}2`, invoiceNumber: null },
+      ],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText(/^Invoice #1042\. /)).toBeInTheDocument();
+    expect(screen.getByText(/^Invoice with no number\. /)).toBeInTheDocument();
+    noIdOnScreen();
   });
 });

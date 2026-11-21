@@ -1,3 +1,4 @@
+import { invoiceNumberText } from '../lib/invoiceNaming';
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
@@ -12,7 +13,9 @@ import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib
 import { validateResponse } from '../lib/callableResponse';
 import { hiddenFromHousehold, quoteDecisionOf } from '../lib/quoteDecision';
 import { amountDueCentsOf } from '../lib/amountDueRule';
-import { centsToDollars } from '../lib/invoiceMath';
+import { centsToDollars, type PaymentAmount } from '../lib/invoiceMath';
+import { cardCheckoutRefusal, cardCheckoutRefusalSentence } from '../lib/cardPaymentApply';
+import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
 import { invoiceIsPaid } from '../lib/invoicePaidGate';
 import {
@@ -120,6 +123,12 @@ export type InvoiceLineItemDto = z.infer<typeof InvoiceLineItemDtoSchema>;
 export const InvoiceDtoSchema = z
   .object({
     id: z.string().min(1),
+    /**
+     * #1848: the number a Kinfolk can quote, as the office sees it, or null when
+     * the invoice has none. The portals print this and never `id`, which is the
+     * stored key and only opens the invoice.
+     */
+    invoiceNumber: z.string().nullable(),
     kinfolkId: z.string(),
     kinfolkName: z.string().nullable(),
     client: z.string().nullable(),
@@ -272,6 +281,28 @@ export const InvoiceDtoSchema = z
      * what", not "may they".
      */
     payMethods: z.array(PayMethodDtoSchema),
+    /**
+     * #2410: why this invoice offers NO way to pay although it reads as an open
+     * bill with a balance, as a plain sentence for the household; null on
+     * every other invoice.
+     *
+     * It is `payInvoice`'s own refusal, asked ahead of the tap
+     * (`lib/cardPaymentApply.ts#cardCheckoutRefusal`): the invoice states a
+     * balance while nothing is owed on its total, because it has no total or
+     * its payment rows already cover it. A card payment on it would be kept
+     * off the invoice for the owner to decide on, so no Pay is offered.
+     * `payMethods` is `[]` whenever this is set, and both portals hide every
+     * pay option and print the sentence in its place.
+     *
+     * Asked only for an invoice the screens would otherwise offer Pay on
+     * (`open`, a balance above zero, not paid). A quote, a credit and a
+     * settled invoice already say what they are, so they carry null.
+     *
+     * `.nullable()`, never `.optional()`, the same call as `editScope`. A
+     * server older than the field sends no key at all, and both portals read
+     * that as null.
+     */
+    payBlockedReason: z.string().min(1).nullable(),
   })
   .strict();
 
@@ -421,6 +452,35 @@ export async function getMyInvoicesHandler(
   // bucket or total, and not openable (both portals open an invoice, and any
   // deep link to one, from this list).
   const visible = invoiceSnap.docs.filter((d) => !hiddenFromHousehold(d.data() as Record<string, unknown>));
+  // #2410: the payment rows of each invoice the screens would offer Pay on,
+  // read here so `payBlockedReason` is `payInvoice`'s answer and not a guess
+  // from the invoice's own fields. The stored `paidCents` cannot stand in:
+  // the invoices this exists for are the ones whose fields and rows disagree.
+  // A handful of small reads at most (open bills only), in parallel. One that
+  // fails leaves that invoice with no reason, and `payInvoice` still refuses.
+  const payRowsByInvoice = new Map<string, PaymentAmount[]>();
+  await Promise.all(
+    visible
+      .filter((d) => offeredForPayment(d.data() as Record<string, unknown>))
+      .map(async (d) => {
+        try {
+          const rows = await d.ref.collection('payments').get();
+          payRowsByInvoice.set(
+            d.id,
+            rows.docs.map((r) => r.data() as PaymentAmount),
+          );
+        } catch (err) {
+          logEvent({
+            severity: 'warn',
+            function: 'getMyInvoices',
+            event: 'portal.invoices.payRows.failed',
+            uid,
+            errorMessage: (err as Error)?.message,
+            extra: { kinfolkId, invoiceId: d.id },
+          });
+        }
+      }),
+  );
   const all: InvoiceDto[] = visible.map((d) => {
     const data = d.data() as Record<string, unknown>;
     // THE INVOICE'S OWN LINES WIN. Until 2026-07-25 this callable ignored the
@@ -477,8 +537,16 @@ export async function getMyInvoicesHandler(
     const amountDueCents = amountDueCentsOf(data, paidCents);
     const amountDue = centsToDollars(amountDueCents);
     const partiallyPaid = !isCredit && !isPaid && paidCents > 0 && amountDue > 0;
+    // #2410: null for every invoice whose rows were not read above.
+    const payRows = payRowsByInvoice.get(d.id);
+    const payRefusal =
+      payRows === undefined
+        ? null
+        : cardCheckoutRefusal({ invoiceId: d.id, doc: data as InvoiceDoc, existingPayments: payRows, kinfolkId });
+    const payBlockedReason = payRefusal === null ? null : cardCheckoutRefusalSentence(payRefusal);
     return {
       id: d.id,
+      invoiceNumber: invoiceNumberText(data['invoiceNumber']) || null,
       kinfolkId,
       kinfolkName: stringOrNull(data['kinfolkName']),
       client: stringOrNull(data['client']) ?? stringOrNull(data['kinfolkName']) ?? householdName,
@@ -511,11 +579,14 @@ export async function getMyInvoicesHandler(
       // docket Q5), even when its stated balance is positive: that shape is
       // the partial-payment corruption the admin repairs. `[]` is the answer
       // `resolvePayMethods` already gives a zero balance.
-      payMethods: invoiceIsPaid(data, paidCents > 0 ? paidCents : null)
-        ? []
-        : resolvePayMethods(settingsForInvoice(data, liveSettings), {
-            amountDue: amountDueCents,
-          }),
+      // #2410: and so does an invoice that cannot take a payment.
+      payMethods:
+        invoiceIsPaid(data, paidCents > 0 ? paidCents : null) || payBlockedReason !== null
+          ? []
+          : resolvePayMethods(settingsForInvoice(data, liveSettings), {
+              amountDue: amountDueCents,
+            }),
+      payBlockedReason,
       // Set here when the invoice has its own lines. The session pass below then
       // skips this invoice entirely and cannot overwrite them.
       // Bound lines get their visit day filled in by the lookup pass below; a
@@ -653,6 +724,19 @@ export function statusFromStamp(data: Record<string, unknown>): { status: Status
   const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   if (isInvoiceState(s)) return { status: s, stamped: true };
   return { status: 'open', stamped: false };
+}
+
+/**
+ * #2410: whether the screens would offer Pay on this invoice from its own
+ * fields: stamped `open`, a balance above zero, not paid. The portals'
+ * `offersPayment` asks the same three things of the response. Only these
+ * invoices have their payment rows read for `payBlockedReason`.
+ */
+function offeredForPayment(data: Record<string, unknown>): boolean {
+  if (statusFromStamp(data).status !== 'open') return false;
+  const paidCents = integerCentsFrom(data['paidCents']);
+  if (amountDueCentsOf(data, paidCents) <= 0) return false;
+  return !invoiceIsPaid(data, paidCents > 0 ? paidCents : null);
 }
 
 /**

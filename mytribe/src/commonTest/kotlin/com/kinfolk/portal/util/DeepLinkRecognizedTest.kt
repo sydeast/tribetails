@@ -35,4 +35,18 @@ class DeepLinkRecognizedTest {
         assertFalse(deepLinkIsRecognized(listOf("this-page-does-not-exist"), inviteQuery = null, isEmailAction = false))
         assertFalse(deepLinkIsRecognized(emptyList(), inviteQuery = null, isEmailAction = false))
     }
+    // #2401: the address Stripe returns a card payment to opens the invoice, not the not-found screen.
+    @Test
+    fun aCheckoutReturnIsRecognized() {
+        assertTrue(deepLinkIsRecognized(listOf("app", "invoices", "inv-1"), inviteQuery = null, isEmailAction = false, isCheckoutReturn = true))
+        // `mytribe://invoices/<id>` carries "invoices" as the host, which MainActivity puts first.
+        assertTrue(deepLinkIsRecognized(listOf("invoices", "inv-1"), inviteQuery = null, isEmailAction = false, isCheckoutReturn = true))
+    }
+    @Test
+    fun theSamePathThatDidNotReadAsACheckoutReturnIsNot() {
+        // `/app/invoices/` with no invoice, or with an id the reader refused.
+        assertFalse(deepLinkIsRecognized(listOf("app", "invoices"), inviteQuery = null, isEmailAction = false, isCheckoutReturn = false))
+        assertFalse(deepLinkIsRecognized(listOf("app", "invoices", "a b"), inviteQuery = null, isEmailAction = false))
+        assertFalse(deepLinkIsRecognized(listOf("invoices", "inv-1"), inviteQuery = null, isEmailAction = false))
+    }
 }

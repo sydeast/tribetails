@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { QUOTE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { FieldValue, type DocumentReference } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -304,7 +305,7 @@ export async function resendQuoteHandler(
   const firestore = db();
   const ref = firestore.collection('invoices').doc(args.invoiceId);
   const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError('not-found', `Quote '${args.invoiceId}' not found.`);
+  if (!snap.exists) throw new HttpsError('not-found', QUOTE_NOT_FOUND_WORDS);
   const data = snap.data() as Record<string, unknown>;
 
   const kinfolkId = typeof data['kinfolkId'] === 'string' ? (data['kinfolkId'] as string) : '';
@@ -358,7 +359,7 @@ export async function resendQuoteHandler(
   // the other.
   const { status, sessionsLinked, resendNumber, prior } = await firestore.runTransaction(async (tx) => {
     const txSnap = await tx.get(ref);
-    if (!txSnap.exists) throw new HttpsError('not-found', `Quote '${args.invoiceId}' not found.`);
+    if (!txSnap.exists) throw new HttpsError('not-found', QUOTE_NOT_FOUND_WORDS);
     const txData = txSnap.data() as Record<string, unknown>;
 
     // ATOMIC guard, the same shape `acceptQuote` uses: re-read the decision

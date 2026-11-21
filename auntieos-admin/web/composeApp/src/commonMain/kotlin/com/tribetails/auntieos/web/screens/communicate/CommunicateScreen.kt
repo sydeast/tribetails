@@ -148,6 +148,8 @@ internal enum class MessageType(val label: String, val type: CommunicationType, 
     Visit("Visit report", CommunicationType.VISIT_REPORT, true),
     Text("Text", CommunicationType.SMS, true),
     Email("Email", CommunicationType.EMAIL, true),
+    // #2294: a Push goes to the household's phone and notifications list.
+    Push("Push", CommunicationType.PUSH, true),
     Blog("Blog", CommunicationType.BLOG_POST, false),
 }
 
@@ -166,7 +168,7 @@ internal fun draftCalloutLine(kinfolkName: String?, communicationType: String?):
         "email" -> MessageType.Email.label
         "blog_post" -> MessageType.Blog.label
         "visit_report" -> MessageType.Visit.label
-        "push" -> "Push"
+        "push" -> MessageType.Push.label
         "social_post" -> "Social"
         "general" -> "General"
         else -> humanizeKey(wire)
@@ -189,13 +191,15 @@ internal fun generateRecipient(type: MessageType, recipientName: String): String
 
 /**
  * #1563: the composer type a stored draft's `communication_type` selects. This
- * console offers four; blank, unknown and the types it has no chip for read as
+ * console offers five; blank, unknown and the types it has no chip for read as
  * a KinTale (Home's own fallback), which is what the operator ruled these
- * drafts are (D-2026-08-04). Pure; tested.
+ * drafts are (D-2026-08-04). #2294: a Push draft opens as a Push; it read as a
+ * KinTale. Pure; tested.
  */
 internal fun messageTypeOfDraft(type: String): MessageType = when (type.trim().lowercase()) {
     "sms" -> MessageType.Text
     "email" -> MessageType.Email
+    "push" -> MessageType.Push
     "blog_post" -> MessageType.Blog
     else -> MessageType.Visit
 }
@@ -256,6 +260,12 @@ fun CommunicateScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var openedHouseholdId by remember { mutableStateOf<String?>(null) }
+    // #2294: what the push send answered for an approved Push draft, and a retry in flight.
+    var pushNotice by remember { mutableStateOf<HouseholdPushNotice?>(null) }
+    var retryingPush by remember { mutableStateOf(false) }
+    // #2428: an Email or Text that went out, just now or before the draft was
+    // opened. While it is set the draft has no Approve and no Delete.
+    var sentNotice by remember { mutableStateOf<SentDraftNotice?>(null) }
 
     // Keep editedCopy in sync when a fresh AI result lands.
     LaunchedEffect(result) {
@@ -282,6 +292,27 @@ fun CommunicateScreen(
         )
         sentReportId = d.publishedReportId.ifBlank { null }
         sentBefore = d.isPublished
+        // #2293: a held Push draft opens where it was left: approved, with the
+        // held notice and its Try again.
+        // #2381: so does one whose send never answered.
+        pushNotice = when {
+            d.isHeldPush ->
+                householdPushNotice(HouseholdPushResult("held", d.pushReason.ifBlank { null }), d.household().ifBlank { "the household" })
+            d.isUnansweredPush ->
+                householdPushNotice(HouseholdPushResult(PUSH_UNANSWERED, null), d.household().ifBlank { "the household" })
+            // #2428: a Push the household already has opens as sent, with what
+            // happened and neither button. It used to open as needing approval.
+            else -> sentPushResult(d)?.let { householdPushNotice(it, d.household().ifBlank { "the household" }) }
+        }
+        // #2428: so does an Email or Text that already went out. Approving one
+        // again sent it to the household a second time.
+        // #2452: read off the stamps, so a send that got no answer says so.
+        sentNotice = sentDraftNotice(
+            d,
+            d.household(),
+            com.tribetails.auntieos.web.util.businessTimeZone(),
+            draftClockMs(),
+        )
         selectedKinfolk = null
         openedHouseholdId = d.householdId().ifBlank { null }
         onDraftConsumed()
@@ -326,6 +357,8 @@ fun CommunicateScreen(
                 } else {
                     sentReportId = null
                     sentBefore = false
+                    pushNotice = null
+                    sentNotice = null
                     result = resp
                     showToast("Draft ready for your review.", ToastKind.Success)
                 }
@@ -387,6 +420,8 @@ fun CommunicateScreen(
     /** #1563: delete the open, unsent draft. The server refuses one already sent. */
     fun deleteDraft() {
         val draftId = result?.draft_id ?: return
+        // #2389: one delete at a time, and never across a send in flight.
+        if (deleting || saving || retryingPush) return
         deleting = true
         scope.launch {
             try {
@@ -395,6 +430,8 @@ fun CommunicateScreen(
                         result = null
                         editedCopy = ""
                         sentReportId = null
+                        pushNotice = null
+                        sentNotice = null
                         showToast("Draft deleted.", ToastKind.Success)
                     }
                     is WriteResult.Err -> showToast("Delete failed: ${w.message}", ToastKind.Error)
@@ -409,8 +446,41 @@ fun CommunicateScreen(
         }
     }
 
+    /** #2294: the push for an approved Push draft. Never throws: a failed call is a notice. */
+    suspend fun sendPushNow(kinfolkId: String, draftId: String, copy: String, householdName: String?): HouseholdPushNotice {
+        val who = householdName?.ifBlank { null } ?: "the household"
+        return try {
+            when (val w = firestore.sendHouseholdPush(kinfolkId, draftId, copy)) {
+                is WriteResult.Ok -> householdPushNotice(decodeHouseholdPushResult(w.value), who)
+                is WriteResult.Err -> householdPushCallFailed(w.code, w.message)
+            }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            householdPushCallFailed(null, t.message)
+        }
+    }
+    /**
+     * What the screen holds after a push attempt. #2389: when the server
+     * refused the words, the draft goes back to unapproved and says why.
+     */
+    fun showPushAnswer(notice: HouseholdPushNotice) {
+        pushNotice = pushNoticeAfterAnswer(notice)
+        if (notice.needsApproval) showToast(notice.body, ToastKind.Error)
+    }
+    /**
+     * The draft editor. #2389: an approved Push that has not gone out sends its
+     * approved words and no others, so editing them returns the draft to
+     * unapproved and the next step is Approve and send.
+     */
+    fun editCopy(next: String) {
+        pushNotice = pushNoticeAfterEdit(pushNotice, editedCopy, next)
+        editedCopy = next
+    }
     fun approveDraft() {
         approveConfirmOpen = false
+        // #2428: never a second approve of a draft that is already approved or sent.
+        if (!mayApprove(sentReportId != null, pushNotice, sentNotice)) return
         // #1563: a KinTale reaches a real household, so it asks first.
         if (messageType == MessageType.Visit) {
             confirmSend = true
@@ -433,7 +503,58 @@ fun CommunicateScreen(
         if (channel != null) {
             approveSendBlocker(channel, recipient, subj, copy)?.let { showToast(it, ToastKind.Error); return }
         }
+        val pushTo = r.kinfolk_id?.ifBlank { null } ?: recipient?._id?.ifBlank { null }
+        if (messageType == MessageType.Push) {
+            pushApproveBlocker(pushTo, copy)?.let { showToast(it, ToastKind.Error); return }
+        }
         saving = true
+        // #2428: an Email or Text is approved and sent by the server in one
+        // call, which marks the draft sent. No approve write from here and no
+        // `sendExternalMessage`: that pair left nothing on the draft to say it
+        // had gone, so it could be approved and sent again.
+        if (channel != null) {
+            val sendTo = pushTo.orEmpty()
+            scope.launch {
+                try {
+                    val outcome = runDraftSend(
+                        channel = channel,
+                        household = recipient?.displayName?.ifBlank { null } ?: r.kinfolk_name,
+                        send = { firestore.sendGeneratedDraft(draftId, sendTo, copy, subj.takeIf { channel == ExternalChannel.Email }) },
+                        audit = {
+                            val actorUid = auth.authStateStream().first()?.uid ?: ""
+                            AuditLog.fire(
+                                scope = scope,
+                                client = firestore,
+                                actorId = actorUid,
+                                actionType = "DRAFT_APPROVED",
+                                description = com.tribetails.auntieos.web.data.ActivityWords.DRAFT_APPROVED,
+                                targetId = draftId,
+                                targetCollection = "generated_drafts",
+                                familyId = r.kinfolk_id.orEmpty(),
+                            )
+                        },
+                    )
+                    when (outcome) {
+                        is DraftSendOutcome.Sent -> {
+                            sentNotice = outcome.notice
+                            showToast(outcome.notice.body, ToastKind.Success)
+                        }
+                        is DraftSendOutcome.AlreadySent -> sentNotice = outcome.notice
+                        // #2452: held on the screen, where Approve and Delete
+                        // were. It used to be a toast and nothing else.
+                        is DraftSendOutcome.Unconfirmed -> sentNotice = outcome.notice
+                        is DraftSendOutcome.Refused -> showToast(outcome.message, ToastKind.Error)
+                    }
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    showToast(externalSendErrorText(t.message ?: "The send did not answer."), ToastKind.Error)
+                } finally {
+                    saving = false
+                }
+            }
+            return
+        }
         scope.launch {
             try {
                 // Write (the gate), then the audit entry, then the send: the web
@@ -455,19 +576,16 @@ fun CommunicateScreen(
                             familyId = r.kinfolk_id.orEmpty(),
                         )
                     },
-                    channel = channel,
-                    send = if (channel != null && recipient != null) {
-                        {
-                            firestore.sendExternalMessage(
-                                channel = channel.wire,
-                                to = approveSendAddress(channel, recipient),
-                                subject = subj.takeIf { channel == ExternalChannel.Email },
-                                body = copy,
-                                transactional = true,
-                            )
-                        }
-                    } else null,
+                    // An Email or Text never reaches this write; see above.
+                    channel = null,
+                    send = null,
                 )
+                // #2294: a Push goes out after the approve, and the notice says
+                // what reached the household, never a generic "approved".
+                if (messageType == MessageType.Push && outcome == ApproveOutcome.Approved && pushTo != null) {
+                    showPushAnswer(sendPushNow(pushTo, draftId, copy, recipient?.displayName ?: r.kinfolk_name))
+                    return@launch
+                }
                 showToast(
                     approveOutcomeText(outcome),
                     when (outcome) {
@@ -485,17 +603,36 @@ fun CommunicateScreen(
         }
     }
 
-    /** The Approve button: a Text or Email approve is checked, then confirmed (#1625). */
+    /** #2293: try a held push again, once its cause is fixed. The draft stays approved. */
+    fun retryPush() {
+        val r = result ?: return
+        val draftId = r.draft_id ?: return
+        val kinfolkId = r.kinfolk_id?.ifBlank { null } ?: approveRecipient(r)?._id?.ifBlank { null } ?: return
+        if (retryingPush || saving || deleting || pushNotice?.retryable != true) return
+        retryingPush = true
+        scope.launch {
+            try {
+                showPushAnswer(sendPushNow(kinfolkId, draftId, editedCopy, approveRecipient(r)?.displayName ?: r.kinfolk_name))
+            } finally {
+                retryingPush = false
+            }
+        }
+    }
+    /** The Approve button: a Text, Email or Push approve is checked, then confirmed (#1625, #2294). */
     fun requestApprove() {
         val r = result ?: return
         if (saving) return
+        if (!mayApprove(sentReportId != null, pushNotice, sentNotice)) return
         val channel = approveDeliveryChannel(messageType)
         val blocker = approveSendBlocker(channel, approveRecipient(r), subject, editedCopy)
+            ?: if (messageType == MessageType.Push) {
+                pushApproveBlocker(r.kinfolk_id?.ifBlank { null } ?: approveRecipient(r)?._id, editedCopy)
+            } else null
         if (blocker != null) {
             showToast(blocker, ToastKind.Error)
             return
         }
-        if (channel != null) approveConfirmOpen = true else approveDraft()
+        if (channel != null || messageType == MessageType.Push) approveConfirmOpen = true else approveDraft()
     }
 
     fun applyTemplate(t: KinTaleTemplate) {
@@ -549,9 +686,14 @@ fun CommunicateScreen(
         // #1625: names who gets it, the address and the channel before a send.
         val confirmChannel = approveDeliveryChannel(messageType)
         val confirmKf = result?.let { approveRecipient(it) }
+        val confirmPush = messageType == MessageType.Push
         AuntieDialog(
-            visible = approveConfirmOpen && confirmChannel != null,
-            title = if (confirmChannel == ExternalChannel.Email) "Send this email?" else "Send this text?",
+            visible = approveConfirmOpen && (confirmChannel != null || confirmPush),
+            title = when {
+                confirmPush -> "Send this push?"
+                confirmChannel == ExternalChannel.Email -> "Send this email?"
+                else -> "Send this text?"
+            },
             onDismiss = { approveConfirmOpen = false },
             maxWidth = 480.dp,
             footer = {
@@ -559,15 +701,38 @@ fun CommunicateScreen(
                 PrimaryButton(label = "Approve and send", onClick = { approveDraft() }, enabled = !saving, loading = saving)
             },
         ) {
+            if (confirmPush) {
+                Text(
+                    text = "To: ${confirmKf?.displayName?.ifBlank { null } ?: result?.kinfolk_name?.ifBlank { null } ?: "This household"}",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                )
+                Text(
+                    text = "Channel: Push, to their phone and their notifications list",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+            }
             if (confirmChannel != null && confirmKf != null) {
                 Text(
                     text = "To: ${"${confirmKf.firstName} ${confirmKf.lastName}".trim().ifBlank { "This household" }} (${approveSendAddress(confirmChannel, confirmKf)})",
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textPrimary,
                 )
-                Text(text = "Channel: ${confirmChannel.label}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                Text(
+                    text = "Channel: ${if (confirmChannel == ExternalChannel.Email) confirmChannel.label else "Text, kept short, with a link to MyTribe"}",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
                 if (confirmChannel == ExternalChannel.Email) {
                     Text(text = "Subject: ${subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                } else {
+                    // #2408: what the household is texted, not the draft it is cut from.
+                    Text(
+                        text = "Text: ${householdTextPreviewLine(editedCopy)}",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textPrimary,
+                    )
                 }
             }
         }
@@ -597,7 +762,7 @@ fun CommunicateScreen(
                             length = length, onLength = { length = it },
                             loading = loading, saving = saving,
                             result = result,
-                            editedCopy = editedCopy, onEditedCopy = { editedCopy = it },
+                            editedCopy = editedCopy, onEditedCopy = ::editCopy,
                             onGenerate = ::generate, onApprove = ::requestApprove,
                             firestore = firestore,
                             onToast = { msg, kind -> showToast(msg, kind) },
@@ -605,6 +770,10 @@ fun CommunicateScreen(
                             sentNote = sentNoteFor(sentBefore, sentReportId, selectedKinfolk?.displayName ?: result?.kinfolk_name),
                             deleting = deleting,
                             onDelete = { confirmDelete = true },
+                            pushNotice = pushNotice,
+                            sentNotice = sentNotice,
+                            retryingPush = retryingPush,
+                            onRetryPush = ::retryPush,
                         )
                     }
                     Column(
@@ -618,7 +787,12 @@ fun CommunicateScreen(
                         // #12: Live preview is the primary right-column panel and stays
                         // open; the secondary panels collapse by default so the column
                         // no longer overflows below the fold (expand on demand).
-                        PreviewPanel(recipientName = recipientName, subject = subject, body = editedCopy)
+                        PreviewPanel(
+                            recipientName = recipientName,
+                            subject = subject,
+                            body = editedCopy,
+                            textMessage = messageType == MessageType.Text,
+                        )
                         ExternalSendPanel(
                             firestore = firestore,
                             onToast = { msg, kind -> showToast(msg, kind) },
@@ -646,7 +820,7 @@ fun CommunicateScreen(
                         length = length, onLength = { length = it },
                         loading = loading, saving = saving,
                         result = result,
-                        editedCopy = editedCopy, onEditedCopy = { editedCopy = it },
+                        editedCopy = editedCopy, onEditedCopy = ::editCopy,
                         onGenerate = ::generate, onApprove = ::requestApprove,
                         firestore = firestore,
                         onToast = { msg, kind -> showToast(msg, kind) },
@@ -654,12 +828,21 @@ fun CommunicateScreen(
                         sentNote = sentNoteFor(sentBefore, sentReportId, selectedKinfolk?.displayName ?: result?.kinfolk_name),
                         deleting = deleting,
                         onDelete = { confirmDelete = true },
+                        pushNotice = pushNotice,
+                        sentNotice = sentNotice,
+                        retryingPush = retryingPush,
+                        onRetryPush = ::retryPush,
                     )
                     RecipientContextPanel(
                         recipient = selectedKinfolk,
                         firestore = firestore,
                     )
-                    PreviewPanel(recipientName = recipientName, subject = subject, body = editedCopy)
+                    PreviewPanel(
+                        recipientName = recipientName,
+                        subject = subject,
+                        body = editedCopy,
+                        textMessage = messageType == MessageType.Text,
+                    )
                     ExternalSendPanel(
                         firestore = firestore,
                         onToast = { msg, kind -> showToast(msg, kind) },
@@ -724,7 +907,7 @@ fun CommunicateScreen(
         },
     ) {
         Text(
-            text = "It has not been sent. Deleting it cannot be undone.",
+            text = deleteDraftConfirmLine(pushNotice),
             style = AuntieTheme.typography.bodyMedium,
             color = c.textPrimary,
         )
@@ -777,6 +960,12 @@ private fun ComposePanel(
     sentNote: String? = null,
     deleting: Boolean = false,
     onDelete: (() -> Unit)? = null,
+    // #2294: an approved Push draft's answer, with Try again while it is held.
+    pushNotice: HouseholdPushNotice? = null,
+    // #2428: an Email or Text that already went out. No Approve and no Delete beside it.
+    sentNotice: SentDraftNotice? = null,
+    retryingPush: Boolean = false,
+    onRetryPush: () -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -910,6 +1099,8 @@ private fun ComposePanel(
             result?.let { r ->
                 DraftCallout(
                     subtitle = draftCalloutLine(r.kinfolk_name, r.communication_type),
+                    // #2428: a draft that was approved or sent no longer says it needs approval.
+                    needsApproval = draftNeedsApproval(sent = sent, approved = pushNotice != null || sentNotice != null),
                 )
                 MultilineField(
                     value = editedCopy,
@@ -927,15 +1118,18 @@ private fun ComposePanel(
             ) {
                 val approveChannel = approveDeliveryChannel(messageType)
                 PrimaryButton(
-                    label = when {
-                        sent -> "Sent"
-                        // #1563: a KinTale sends to the household's portal; #1625: a Text or Email sends too.
-                        messageType == MessageType.Visit || approveChannel != null -> "Approve and send"
-                        else -> "Approve draft"
-                    },
+                    // #2452: "Sent" only for a send somebody vouches for.
+                    label = approveButtonLabel(
+                        sent = sent,
+                        notice = sentNotice,
+                        approved = pushNotice != null,
+                        // #1563: a KinTale sends to the household's portal; #1625: a Text or Email sends too; #2294: a Push too.
+                        sends = messageType == MessageType.Visit || approveChannel != null ||
+                            messageType == MessageType.Push,
+                    ),
                     onClick = onApprove,
                     loading = saving,
-                    enabled = result?.draft_id != null && !sent && !deleting,
+                    enabled = result?.draft_id != null && !deleting && mayApprove(sent, pushNotice, sentNotice),
                     leading = {
                         Icon(
                             imageVector = Lucide.Send,
@@ -948,24 +1142,53 @@ private fun ComposePanel(
                 Text(
                     text = when {
                         approveChannel != null ->
-                            "Approving saves the draft, logs it, then sends it to the household by " +
-                                (if (approveChannel == ExternalChannel.Email) "email" else "text") + "."
+                            "Approving sends this to the household by " +
+                                (if (approveChannel == ExternalChannel.Email) "email" else "text") +
+                                ", marks the draft sent and logs it. A draft is sent once."
                         messageType == MessageType.Visit -> "Approving sends this KinTale to the household's portal."
+                        messageType == MessageType.Push -> "Approving sends this push to the household's phone and their notifications list."
                         else -> "Approving saves the draft and logs it. This type sends nothing from here."
                     },
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
-                if (onDelete != null && result?.draft_id != null && !sent) {
+                // #2381: an approved Push that did not go out keeps its Delete.
+                if (onDelete != null &&
+                    canDeleteDraft(result?.draft_id != null, sent, pushNotice != null || sentNotice != null, pushNotice)
+                ) {
                     GhostButton(
                         label = if (deleting) "Deleting…" else "Delete draft",
                         onClick = onDelete,
-                        enabled = !saving && !deleting,
+                        enabled = !saving && !deleting && !retryingPush,
                     )
                 }
             }
             sentNote?.let {
                 Text(text = it, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+            }
+            sentNotice?.let { notice ->
+                Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
+                    // #2452: a send nobody can vouch for is in the warning colour.
+                    Text(
+                        text = notice.title,
+                        style = AuntieTheme.typography.titleSmall,
+                        color = if (notice.confirmed) c.textPrimary else c.warning,
+                    )
+                    Text(text = notice.body, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                }
+            }
+            pushNotice?.let { notice ->
+                Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
+                    Text(text = notice.title, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                    Text(text = notice.body, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                    if (notice.retryable) {
+                        GhostButton(
+                            label = if (retryingPush) "Trying again…" else "Try again",
+                            onClick = onRetryPush,
+                            enabled = !retryingPush && !saving,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1595,9 +1818,9 @@ private fun RecipientPicker(
     }
 }
 
-/** "Auntie AI draft · needs approval" callout above the editable copy. */
+/** "Auntie AI draft" callout above the editable copy, with "needs approval" until the draft is approved or sent. */
 @Composable
-private fun DraftCallout(subtitle: String) {
+private fun DraftCallout(subtitle: String, needsApproval: Boolean = true) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     Row(
@@ -1625,11 +1848,13 @@ private fun DraftCallout(subtitle: String) {
                 )
             }
         }
-        AuntieStatusPill(
-            label = "needs approval",
-            tone = AuntieStatusTone.Purple,
-            mono = true,
-        )
+        if (needsApproval) {
+            AuntieStatusPill(
+                label = "needs approval",
+                tone = AuntieStatusTone.Purple,
+                mono = true,
+            )
+        }
     }
 }
 
@@ -1976,7 +2201,7 @@ private fun LastCommunicationBox(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PreviewPanel(recipientName: String, subject: String, body: String) {
+private fun PreviewPanel(recipientName: String, subject: String, body: String, textMessage: Boolean = false) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     DenPanel(
@@ -1985,7 +2210,17 @@ private fun PreviewPanel(recipientName: String, subject: String, body: String) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
-            AuntieEmailPreviewCard(
+            // #2408: a Text is sent short with a link to the whole message in
+            // MyTribe, so its preview is that text and not an email card.
+            if (textMessage) {
+                Text(
+                    text = body.takeIf { it.isNotBlank() }?.let(::householdTextPreviewLine)
+                        ?: "Pull a template or generate a draft and it shows up here.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else AuntieEmailPreviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 // Author-typed subject (spec 19 item 3); falls back to a computed
                 // placeholder only until the author types one. CTA stays placeholder.

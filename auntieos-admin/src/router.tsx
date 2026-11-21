@@ -232,6 +232,8 @@ const featureFlagsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'feature-flags',
   staticData: { title: navTitle('featureFlags') },
+  // Business configuration: every switch is refused for an Auntie.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./screens/FeatureFlags'), 'FeatureFlags'),
 });
 
@@ -255,6 +257,8 @@ const formSchemasRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'form-schemas',
   staticData: { title: navTitle('formSchemas') },
+  // Business configuration: the list cannot load for an Auntie.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./routes/FormSchemasView'), 'FormSchemasView'),
 });
 
@@ -287,6 +291,8 @@ const invitesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invites',
   staticData: { title: navTitle('invites') },
+  // An invite grants a person portal access, which is the owner's to give.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./screens/Invites'), 'Invites'),
 });
 
@@ -297,6 +303,8 @@ const inviteDetailRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invites/$inviteId',
   staticData: { title: navTitle('invites') },
+  // The notice that links here goes to the owner; an Auntie cannot read one.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./routes/InviteDetailView'), 'InviteDetailView'),
 });
 
@@ -396,7 +404,7 @@ const galleryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'gallery',
   staticData: { title: navTitle('gallery') },
-  component: lazyRouteComponent(() => import('./screens/Gallery'), 'Gallery'),
+  component: lazyRouteComponent(() => import('./routes/GalleryView'), 'GalleryView'),
 });
 
 const templatesRoute = createRoute({
@@ -449,9 +457,24 @@ const tribalIntelRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'tribal-intel',
   staticData: { title: navTitle('trainingDocs') },
+  // The owner's notes: `training_documents` is owner-read in the rules, and
+  // its three save callables are the owner's too.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./screens/TribalIntel'), 'TribalIntel'),
 });
 
+// #2429: the address Tribal Intel had before its rename. `lib/nav.ts` still
+// maps the slug, and no route answered it, so it fell to the not-found card.
+// Redirect-only, like `/template-bank`: the owner lands on Tribal Intel, and
+// an Auntie Home, the same as at `/tribal-intel`.
+const trainingDocsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'training-docs',
+  beforeLoad: (ctx: { context: { access?: AdminAccess | null } }) => {
+    refuseAuntie(ctx);
+    throw redirect({ to: '/tribal-intel' });
+  },
+});
 const coveragePackagesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'packages',
@@ -475,7 +498,7 @@ const inboxRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'inbox',
   staticData: { title: navTitle('inbox') },
-  component: lazyRouteComponent(() => import('./screens/Inbox'), 'Inbox'),
+  component: lazyRouteComponent(() => import('./routes/InboxView'), 'InboxView'),
 });
 
 const settingsRoute = createRoute({
@@ -549,7 +572,7 @@ const vetClinicsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'vet-clinics',
   staticData: { title: navTitle('vetClinics') },
-  component: lazyRouteComponent(() => import('./screens/VetClinics'), 'VetClinics'),
+  component: lazyRouteComponent(() => import('./routes/VetClinicsView'), 'VetClinicsView'),
 });
 
 const mediaRoute = createRoute({
@@ -584,7 +607,7 @@ const adminNotFoundRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, templateBankRoute, templateAssignmentRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute, adminNotFoundRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, templateBankRoute, templateAssignmentRoute, kinTaleTemplatesRoute, tribalIntelRoute, trainingDocsRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute, adminNotFoundRoute]),
 ]);
 
 export const router = createRouter({

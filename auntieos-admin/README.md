@@ -103,6 +103,22 @@ gracious-formal demotion were all live in `voice/` and absent from what the
 model saw. Run the sync after every corpus edit, and again before deploying the
 function.
 
+There is a third copy. The scheduled release runs on a GitHub runner whose
+checkout has no voice files, so it restores them from Secret Manager
+(`AUNTIE_VOICE_FILES`) for the length of the run (#2399). That copy is as old
+as the last time it was stored, and a scheduled release ships it as it is. So
+after the sync, from the repo root:
+
+```
+node scripts/voice-secret.mjs push
+```
+
+It stores nothing when the files fail the check below, and it never prints a
+line of them. A release from the Mac that ships the admin functions compares
+the stored copy with the files here and warns in yellow when they differ, so
+a missed push shows up at the next release. `docs/runbooks/release-internals.md`,
+"Ask Auntie's voice files on the runner", has the rest.
+
 Channel and length rules belong in `voice/02_Channel_Playbook.md` §2. The
 per-type lines in `SYSTEM_FRAMING` (`web/functions/generate.js`) must agree with
 that table; when they disagree, the table is right and the prompt is the bug.
@@ -123,12 +139,42 @@ kinfolk: Dana
 One line per Kin or person, with `|` between the other ways the same name is
 written. List every name that appears in any of the three voice files, not only
 the samples. Before the model reads them, `generate.js` swaps each name for
-`[Kin]`, `[Kin 2]` or `[Kinfolk]` and cuts the block. After the model answers,
-a draft that uses a listed name is thrown away unless the request itself
-carries that name (a Kin of that household, or the Auntie's own notes).
+`[Kin]`, `[Kin 2]` or `[Kinfolk]` and cuts the block.
 
-A samples file without the block stops every generate with a 500
-(`voice_sample_names_missing`), because the names in it cannot be replaced.
+A name is replaced however it is written: `BISCUIT`, `biscuit`, `Biscuits` and
+`Biscuit's` are all Biscuit. A name that is also an everyday word is replaced
+as the word too, so a sample that says "a biscuit" reads "a [Kin]". The voice
+training examples (`training_documents`) get the same replacement before they
+are sent.
+
+The voice files are used only when the block is in order. Otherwise every
+generate stops with a 500 and nothing is sent:
+
+| Code | What is wrong |
+|---|---|
+| `voice_sample_names_missing` | The voice files have no block. |
+| `voice_sample_names_empty` | The block has no `kin:` and no `kinfolk:` line. |
+| `voice_sample_names_invalid` | There is more than one block, the block does not open and close as a comment of its own, a line is not `kin:`, `kinfolk:` or `auntie:`, a name holds anything other than letters, digits, spaces, apostrophes, hyphens and full stops (a comma between two names, a note after one), one name is on two lines, or `-->` is written inside the block. |
+| `voice_sample_names_left` | A listed name is still in the text after replacing. |
+
+`npm run check:voice` in `web/functions` asks the same question without a
+deploy. It prints the reason and counts, never a name. `npm run sync:voice`
+runs it after copying. A release that ships the admin functions runs it before
+anything deploys, and stops on voice files that are present and fail. A
+checkout with no voice files gets the stored copy, checked the same way; a
+stored copy that fails stops the release too. With no copy stored, the
+release reports it and goes on (#2399).
+
+After the model answers, a draft that uses a listed name in any of those forms
+is thrown away unless the request itself carries the name:
+
+- A Kin of that household, its Kinfolk and the recipient carry their names
+  however they are stored or typed.
+- Anywhere else in the request (the Auntie's notes, the dossier, a 411) a
+  capital has to be matched by a capital. "Biscuit" in the notes lets the draft
+  say Biscuit. "a biscuit after the walk" lets the draft say "a biscuit" and
+  no more than that.
+
 When a new sample brings a new name, add the line in `voice/`, then sync. An
 `auntie:` line is replaced in the samples but never refused in a draft.
 

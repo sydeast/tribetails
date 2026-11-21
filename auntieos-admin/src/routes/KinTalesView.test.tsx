@@ -17,15 +17,17 @@ import userEvent from '@testing-library/user-event';
  * The router hooks and the three screens are stubbed: what is under test is the
  * decision this view makes, and each screen has its own suite.
  */
-const { navigate, back, search } = vi.hoisted(() => ({
+const { navigate, back, search, access } = vi.hoisted(() => ({
   navigate: vi.fn(),
   back: vi.fn(),
+  access: { current: { status: 'admin' } as { status: string } | null },
   search: { current: {} as { kinTaleId?: string; sessionId?: string; range?: string } },
 }));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigate,
   useRouter: () => ({ history: { back } }),
   useSearch: () => search.current,
+  useRouteContext: () => ({ access: access.current }),
 }));
 vi.mock('../screens/KinTales', () => ({
   KinTales: ({
@@ -52,16 +54,21 @@ vi.mock('../screens/KinTales', () => ({
   ),
 }));
 vi.mock('../screens/KinTaleDetail', () => ({
-  KinTaleDetail: ({ kinTaleId, onClose }: { kinTaleId: string; onClose: () => void }) => (
+  KinTaleDetail: ({ kinTaleId, onClose, isAuntie }: { kinTaleId: string; onClose: () => void; isAuntie?: boolean }) => (
     <div>
       <p>detail for {kinTaleId}</p>
+      <p>{isAuntie ? 'detail told an Auntie' : 'detail told the owner'}</p>
       <button type="button" onClick={onClose}>
         Close
       </button>
     </div>
   ),
 }));
-vi.mock('../screens/KinTaleCompose', () => ({ KinTaleCompose: () => <p>compose</p> }));
+vi.mock('../screens/KinTaleCompose', () => ({
+  KinTaleCompose: ({ isAuntie }: { isAuntie?: boolean }) => (
+    <p>{isAuntie ? 'compose told an Auntie' : 'compose told the owner'}</p>
+  ),
+}));
 
 import { KinTalesView } from './KinTalesView';
 
@@ -69,6 +76,7 @@ beforeEach(() => {
   navigate.mockReset();
   back.mockReset();
   search.current = {};
+  access.current = { status: 'admin' };
 });
 
 describe('KinTalesView routing (#1563)', () => {
@@ -142,4 +150,34 @@ describe('KinTalesView keeps the list window across the detail (#1594)', () => {
     rerender(<KinTalesView />);
     expect(screen.getByText('list in 30d')).toBeInTheDocument();
   });
+});
+
+/**
+ * The composer and the detail leave out the controls an Auntie is refused (Ask
+ * Auntie, Delete draft, the Reaction panel). This view tells them who is
+ * signed in, from the access the admin layout resolved.
+ */
+describe('KinTalesView tells the composer and the detail who is signed in', () => {
+  it('tells both an Auntie is signed in', () => {
+    access.current = { status: 'caretaker' };
+    search.current = { sessionId: 'sess-1' };
+    const { unmount } = render(<KinTalesView />);
+    expect(screen.getByText('compose told an Auntie')).toBeInTheDocument();
+    unmount();
+    search.current = { kinTaleId: 'tale-7' };
+    render(<KinTalesView />);
+    expect(screen.getByText('detail told an Auntie')).toBeInTheDocument();
+  });
+  for (const who of [{ status: 'admin' }, { status: 'testAdmin' }, null]) {
+    it(`does not for ${who === null ? 'the offline session' : who.status}`, () => {
+      access.current = who;
+      search.current = { sessionId: 'sess-1' };
+      const { unmount } = render(<KinTalesView />);
+      expect(screen.getByText('compose told the owner')).toBeInTheDocument();
+      unmount();
+      search.current = { kinTaleId: 'tale-7' };
+      render(<KinTalesView />);
+      expect(screen.getByText('detail told the owner')).toBeInTheDocument();
+    });
+  }
 });

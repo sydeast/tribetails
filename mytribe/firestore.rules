@@ -1699,11 +1699,95 @@ service cloud.firestore {
     // NOT apply — this is a bespoke branch. RULE ALONE IS NOT ENOUGH: the client's
     // list listen MUST also constrain the query to where(kinfolk_id == testScope) or
     // an unfiltered list is still denied (see generatedDraftsStream). Writes admin-only.
-    match /generated_drafts/{id} {
-      allow read: if isStaff() || (isTestAdmin() && resource.data.kinfolk_id == testScope());
-      allow write: if isStaff();
+    //
+    // A draft is the owner's to make and to remove: the generator creates one
+    // on the server and the owner's delete goes through `deleteGeneratedDraft`,
+    // so no client creates or deletes here. The owner reads and edits every
+    // draft (approving one in Communicate is a direct update).
+    //
+    // An Auntie works KinTale drafts only, the ones whose type is exactly
+    // `visit_report`. She reads those here and writes none of them here: the
+    // words and the title she leaves on screen travel with the send, through
+    // `publishGeneratedDraft`, and no client saves an edit of hers to the draft
+    // itself. Every other draft (email, text, push and the rest) is the owner's
+    // and she does not read it either. The type is compared as stored, with no
+    // trimming or case folding, and a type that is not a string is not a
+    // KinTale draft.
+    //
+    // HER LIST MUST CARRY THE TYPE: a list is allowed only when the query itself
+    // says `communication_type == 'visit_report'` (admin web adds it for her in
+    // `lib/caretakerScope.ts`); an unfiltered list is refused whole.
+    function isKinTaleDraftData(d) {
+      return d.get('communication_type', null) == 'visit_report'
+             && d.get('communicationType', 'visit_report') == 'visit_report';
     }
-    match /household_data/{id}                  { allow read, write: if isStaff(); }
+    // #2428: A DRAFT THAT WENT OUT IS A RECORD, AND AN EMAIL OR TEXT GOES OUT
+    // ONCE. An Email or Text draft is sent by `sendGeneratedDraft`, which marks
+    // it `approved` and sends it in one call. Every client installed before
+    // that approved the draft with its own update here and then sent the
+    // message itself, and nothing recorded the send, so the same draft could be
+    // approved and sent again. That update is the one thing such a client does
+    // before it sends, so it is refused once the draft is approved: an
+    // installed client cannot send an Email or Text draft a second time.
+    //
+    // The type counts when EITHER spelling carries it.
+    //
+    // A Push that reached the household (`pushOutcome` `sent` or `listed`) is
+    // refused the same update. `sendHouseholdPush` never pushes one twice, but
+    // a client that approved such a draft again with new words had the server
+    // rewrite the notice already on the household's list. A held Push, and one
+    // whose send never answered, reached nobody and are still approved again.
+    //
+    // A draft a household was sent is kept: a KinTale (`publishedReportId`), an
+    // approved Email or Text, and a Push that reached their notifications list
+    // or their phone (`pushOutcome` `sent` or `listed`). The owner's delete goes
+    // through `deleteGeneratedDraft`, which refuses the same drafts; this is
+    // the same refusal for a delete made directly.
+    function draftTypeIsOneOf(d, types) {
+      return d.get('communication_type', '') in types || d.get('communicationType', '') in types;
+    }
+    function draftHasText(d, field) {
+      return d.get(field, '') is string && d.get(field, '') != '';
+    }
+    function isApprovedMessageDraftData(d) {
+      return draftTypeIsOneOf(d, ['email', 'sms'])
+             && (d.get('status', '') == 'approved' || draftHasText(d, 'sentAt'));
+    }
+    function isSentPushDraftData(d) {
+      return draftTypeIsOneOf(d, ['push']) && d.get('pushOutcome', '') in ['sent', 'listed'];
+    }
+    function draftWentOutData(d) {
+      return isApprovedMessageDraftData(d)
+             || isSentPushDraftData(d)
+             || draftHasText(d, 'publishedReportId');
+    }
+    match /generated_drafts/{id} {
+      allow get: if isOwner()
+                 || (isCaretaker() && isKinTaleDraftData(resource.data))
+                 || (isTestAdmin() && resource.data.kinfolk_id == testScope());
+      allow list: if isOwner()
+                  || (isCaretaker() && resource.data.communication_type == 'visit_report')
+                  || (isTestAdmin() && resource.data.kinfolk_id == testScope());
+      allow create: if isOwner();
+      allow delete: if isOwner() && !draftWentOutData(resource.data);
+      allow update: if isOwner()
+                    && !isApprovedMessageDraftData(resource.data)
+                    && !isSentPushDraftData(resource.data);
+    }
+    // #2289: ONE household record per household. A household's first record
+    // is made at its own id (`household_data/{kinfolkId}`) by every creator:
+    // admin web, admin Android, the desktop console and the portal's vet pick
+    // (`writeHouseholdVetClinicId`, Admin SDK). The office used to create under
+    // an auto id while the portal created under the household id, so two
+    // creates at about the same time left the household with two records and
+    // each side reading a different one. A create at any other id is refused
+    // here, so an app that still creates the old way cannot make the second
+    // record. Records made before this, under an auto id, stay readable and
+    // editable: only `create` is narrowed.
+    match /household_data/{id} {
+      allow read, update, delete: if isStaff();
+      allow create: if isStaff() && request.resource.data.kinfolkId == id;
+    }
  // The household bank (issue #461): the household's own reconciled record, the
  // peer of a kinfolk dossier and a kin 411. ADMIN-ONLY, the same standing ruling
  // that governs those two: kinfolk never see it, and no portal callable projects
@@ -1846,10 +1930,63 @@ service cloud.firestore {
  // this line open on purpose, because the desktop admin was still writing
  // `media_files` from the client. It no longer is (#577), so the line closes
  // here, in the same change that removes the last client writer.
+ //
+ // WHO READS WHICH FILE. One collection holds every upload, told apart by
+ // `entityType`, and the two staff roles do not read the same set:
+ //
+ //   the owner    every file.
+ //   an Auntie    the files of her own work: a visit's KinTale photos
+ //                (VISIT_LOG), a Kin's photos (KIN) and a household's photos
+ //                (KINFOLK). The Gallery is those, and nothing else is hers:
+ //                not a Tribal Intel attachment (TRIBAL_INTEL, the owner's
+ //                notes, see `training_documents` below), not company media
+ //                (BUSINESS), and not another person's account photo (USER).
+ //
+ // It is a list of what she reads, never a list of what she does not, so a
+ // type added later is the owner's until somebody writes it in here. The type
+ // is compared as stored, with no case folding: `kin` and `kinfolk` are in the
+ // list because the desktop console's Gallery writes them that way. A file
+ // with no `entityType` at all (rows older than the field) is the owner's.
+ //
+ // HER LIST MUST CARRY THE TYPE, the same way her drafts list does
+ // (`generated_drafts` above): a list is allowed only when the query itself
+ // says `entityType in [...]` with nothing outside these five values. Admin web
+ // adds it for her in `lib/caretakerScope.ts`; an unfiltered list is refused
+ // whole. The `list` rule spells the five values out and `caretakerMediaType`
+ // holds the same five; `test/rules/mediaFilesRead.test.ts` runs every one of
+ // them through both.
+ //
+ // She writes what she reads: an upload or a caption on one of those three
+ // kinds, and an update can move a file neither into nor out of them. The one
+ // file she writes outside them is her own account photo (USER, on her own
+ // id), which her Account page uploads and `setMediaProfilePhoto` then reads on
+ // the server; she reads that one back by id.
+    function caretakerMediaType(t) {
+      return t in ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk'];
+    }
+    function caretakerOwnPhoto(d) {
+      return d.get('entityType', null) == 'USER'
+             && d.get('entityId', null) == request.auth.uid;
+    }
+    function caretakerMedia(d) {
+      return caretakerMediaType(d.get('entityType', null)) || caretakerOwnPhoto(d);
+    }
     match /media_files/{id} {
-      allow read: if isStaff() || testOwnsExisting();
-      allow create: if isStaff() || testOwnsIncoming();
-      allow update: if (isStaff() || testOwnsExisting())
+      allow get: if isOwner()
+                 || (isCaretaker() && caretakerMedia(resource.data))
+                 || testOwnsExisting();
+      allow list: if isOwner()
+                  || (isCaretaker()
+                      && resource.data.entityType in ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk'])
+                  || testOwnsExisting();
+      allow create: if isOwner()
+                    || (isCaretaker() && caretakerMedia(request.resource.data))
+                    || testOwnsIncoming();
+      allow update: if (isOwner()
+                        || (isCaretaker()
+                            && caretakerMedia(resource.data)
+                            && caretakerMedia(request.resource.data))
+                        || testOwnsExisting())
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['taggedKinIds']);
       allow delete: if false;
     }
@@ -1871,11 +2008,24 @@ service cloud.firestore {
  // the_411 on the Admin SDK, which does not evaluate these rules. The feed the
  // ruling says must keep working never ran through a client grant.
     match /the_411/{kinfolkId}                  { allow read: if isStaff(); allow write: if isOwner(); }
- // Tribal Intel (spec 23): admins READ here, but writes go ONLY through the
- // server-bound createTrainingDocument / updateTrainingDocument /
- // deleteTrainingDocument callables (admin SDK bypasses rules), so the audit
- // entry is structurally bound to every mutation. Direct client writes denied.
-    match /training_documents/{id}              { allow read: if isStaff(); allow write: if false; }
+ // Tribal Intel (spec 23): the OWNER reads here, and nobody else. A note is
+ // the owner's own words about a household, a Kinfolk or a Kin, and the nightly
+ // reconcile folds it into that household's bank, that Kinfolk's dossier or
+ // that Kin's 411. Two of those three records are the owner's alone (see
+ // `dossiers` and `household_bank`), and this collection holds the source text
+ // for all three in one place, so it takes the stricter boundary: `isOwner()`,
+ // the same as the dossier. An Auntie reads the 411 above, which is where a
+ // note about a Kin ends up; she never reads the notes.
+ //
+ // Not narrowed per row (say, by `targetType`) on purpose. A list read is only
+ // allowed when the query itself proves the rule for every row, older rows
+ // carry no `targetType` at all, and no Auntie screen reads this collection.
+ //
+ // Writes go ONLY through the server-bound createTrainingDocument /
+ // updateTrainingDocument / deleteTrainingDocument callables (admin SDK
+ // bypasses rules), so the audit entry is structurally bound to every
+ // mutation. Direct client writes denied, the owner's included.
+    match /training_documents/{id}              { allow read: if isOwner(); allow write: if false; }
  // #2215: an Auntie reads her OWN user record, which is where her Home layout
  // is kept (`dashboardWidgets`). Never anyone else's, and she writes none of
  // them from a client: her layout save goes through saveDashboardLayout, which

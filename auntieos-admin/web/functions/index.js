@@ -263,8 +263,9 @@ const DRAFT_RATE_LIMIT = 60;
 async function requireAdminWithDraftBudget(req, res, scope) {
   // No `allowTestAdmin`, and no caretaker: all three draft endpoints are
   // owner-only. See the table in staffAccess.js for why (no live caller since
-  // n8n was retired; the composer reaches `generated_drafts` and
-  // `training_documents` as direct client reads the rules already grant her).
+  // n8n was retired; the composer reads `generated_drafts` directly under the
+  // rules, which give her KinTale drafts only, and `training_documents` is the
+  // owner's to read).
   const staff = await requireStaffToken(req, res, scope);
   if (!staff) return null;
   const decoded = staff.token;

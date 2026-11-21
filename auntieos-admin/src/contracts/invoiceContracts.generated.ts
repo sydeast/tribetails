@@ -43,6 +43,7 @@ export interface InvoiceDtoPayMethod {
  */
 export interface InvoiceDto {
   id: string;
+  invoiceNumber: string | null;
   kinfolkId: string;
   kinfolkName: string | null;
   client: string | null;
@@ -70,6 +71,7 @@ export interface InvoiceDto {
   writtenOffCents: number | null;
   lineItems?: InvoiceLineItemDto[];
   payMethods: InvoiceDtoPayMethod[];
+  payBlockedReason: string | null;
 }
 
 // ---------- acceptQuote ----------

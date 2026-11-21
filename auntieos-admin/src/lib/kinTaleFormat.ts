@@ -1,6 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { dayKey, formatWhen, type FsTime } from './time';
 import { str } from './coerce';
+import { cutWhole } from './cutText';
 import { parseFlexibleDate } from './bookingFormat';
 
 /**
@@ -105,7 +106,7 @@ export function kinTaleHousehold(kinfolkName: string): string {
 export function bodyPreview(body: string): string {
   const cleaned = str(body).replace(/\s+/g, ' ').trim();
   if (cleaned === '') return '(empty body)';
-  return cleaned.length <= 80 ? cleaned : `${cleaned.slice(0, 80)}…`;
+  return cleaned.length <= 80 ? cleaned : `${cutWhole(cleaned, 80)}…`;
 }
 
 /**
@@ -158,7 +159,15 @@ export function sentViaLabel(sentVia: string): string {
  * (the AO-12 lesson, every branch below is a positive match against the
  * literal text, never "not one of the others, so must be Y").
  */
-export type KinTaleState = 'draft' | 'sent' | 'failed' | 'unknown';
+export type KinTaleState = 'draft' | 'sent' | 'failed' | 'unconfirmed' | 'sending' | 'unknown';
+
+/**
+ * #2440: the two list statuses only a Communicate Email or Text draft takes
+ * (`lib/kinTaleList.ts#rowFromDraft`). No report stores either. A send that got
+ * no answer is its own state, never Sent, and one still running is `sending`.
+ */
+export const SEND_UNCONFIRMED_STATUS = 'SEND_UNCONFIRMED';
+export const SENDING_STATUS = 'SENDING';
 
 /** Classifies one report's free-text `status`, case-insensitively (mirrors the wasm's own `.uppercase()` compares in `bucketFor`/`statusTone`). */
 export function kinTaleState(status: string): KinTaleState {
@@ -169,6 +178,10 @@ export function kinTaleState(status: string): KinTaleState {
       return 'sent';
     case 'FAILED':
       return 'failed';
+    case SEND_UNCONFIRMED_STATUS:
+      return 'unconfirmed';
+    case SENDING_STATUS:
+      return 'sending';
     default:
       return 'unknown';
   }
@@ -189,6 +202,10 @@ export function kinTaleStateInfo(state: KinTaleState): KinTaleStateInfo {
       return { label: 'Sent', chipLabel: 'SENT', cssClass: 'sent' };
     case 'failed':
       return { label: 'Needs another look', chipLabel: 'FAILED', cssClass: 'failed' };
+    case 'unconfirmed':
+      return { label: 'Send not confirmed', chipLabel: 'NOT CONFIRMED', cssClass: 'failed' };
+    case 'sending':
+      return { label: 'Sending', chipLabel: 'SENDING', cssClass: 'draft' };
     case 'unknown':
       return { label: 'Unknown', chipLabel: 'UNKNOWN', cssClass: 'unknown' };
   }

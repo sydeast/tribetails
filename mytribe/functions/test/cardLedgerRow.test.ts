@@ -86,6 +86,7 @@ import {
   STATED_BELOW_RECORDED,
   cardPaymentRowId,
   decideCardApply,
+  fallbackNeedsOwnerLine,
 } from '../src/lib/cardPaymentApply';
 
 type Docs = Record<string, Record<string, any> | null>;
@@ -627,7 +628,7 @@ describe('#2276: the settlement sweep and a card payment, in either order', () =
   });
 });
 
-describe('#2276: invoices the ordinary plan cannot describe are still paid, and flagged', () => {
+describe('#2276: invoices the ordinary plan cannot describe are paid and flagged, or held (#2345)', () => {
   const fallbackWarnings = () => hooks.log.mock.calls.filter((c) => c[0]?.event === 'stripe.cardApply.fallback');
 
   it('a stated balance lower than the payment rows leave: paid as shown, never reopened', async () => {
@@ -768,25 +769,30 @@ describe('#2276: invoices the ordinary plan cannot describe are still paid, and 
     ).toBe('partial');
   });
 
-  it('an invoice with a balance and no total: paid, with the card row on it', async () => {
+  it('an invoice with a balance and no total: held for the owner, not applied (#2345)', async () => {
     docs[INVOICE] = { kinfolkId: 'fam1', invoiceNumber: '1029', status: 'open', amountDue: 10 };
     cardPayment(1, 1000);
 
     expect(await deliver('session-1')).toBe(200);
 
-    expect(docs[INVOICE]).toMatchObject({
-      status: 'paid',
-      amountDue: 0,
-      amountDueCents: 0,
-      paidCents: 1000,
-      [CARD_APPLY_FALLBACK_FIELD]: 'no_recorded_balance',
+    expect(docs[INVOICE]).toMatchObject({ status: 'open', amountDue: 10 });
+    expect(docs[INVOICE]!.paidCents).toBeUndefined();
+    expect(docs[INVOICE]![CARD_APPLY_FALLBACK_FIELD]).toBeUndefined();
+    expect(invoiceRows()).toHaveLength(0);
+    expect(docs['payments/evt_cs_1']).toMatchObject({
+      amountCents: 1000,
+      appliedTo: 'unapplied',
+      needsAdminDecision: true,
+      duplicateCheckoutReason: 'invoice-no-balance',
     });
-    expect(docs[`${INVOICE}/payments/stripe_pi_1`]).toMatchObject({ amountCents: 1000 });
-    expect(fallbackWarnings()).toHaveLength(1);
+    expect(cardLedgerRows()).toHaveLength(1);
+    expect(paidNotices()).toHaveLength(0);
   });
 
   it('no amount from Stripe or the invoice: paid and flagged, with no invoice row invented', async () => {
-    docs[INVOICE] = { kinfolkId: 'fam1', status: 'open' };
+    // Owed on its total, which is kept in cents only: the dollar fields the
+    // charge would be read from are not there.
+    docs[INVOICE] = { kinfolkId: 'fam1', status: 'open', totalCents: 4000 };
     hooks.events['bare'] = {
       id: 'evt_bare',
       type: 'payment_intent.succeeded',
@@ -799,16 +805,50 @@ describe('#2276: invoices the ordinary plan cannot describe are still paid, and 
     expect(invoiceRows()).toHaveLength(0);
     expect(docs['payments/evt_bare']).toMatchObject({ amountResolved: false, amountCents: null });
     expect(docs['payments/evt_bare']!.appliedInvoiceId).toBeUndefined();
+    expect(docs['payments/evt_bare']!.needsAdminDecision).toBeUndefined();
     expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0 });
   });
 
-  it('a household on the checkout that is not the invoice\'s: paid as before, flagged with the reason', async () => {
+  it('no amount from Stripe, and an invoice with no total: held for the owner, not marked paid (#2345)', async () => {
+    const before = { kinfolkId: 'fam1', invoiceNumber: '1029', status: 'open' };
+    docs[INVOICE] = { ...before };
+    hooks.events['bare'] = {
+      id: 'evt_bare',
+      type: 'payment_intent.succeeded',
+      created: 1_763_000_000,
+      data: { object: { id: 'pi_bare', metadata: META } },
+    };
+
+    expect(await deliver('bare')).toBe(200);
+
+    expect(invoiceRows()).toHaveLength(0);
+    expect(docs['payments/evt_bare']).toMatchObject({
+      amountResolved: false,
+      amountCents: null,
+      appliedTo: 'unapplied',
+      needsAdminDecision: true,
+      duplicateCheckoutReason: 'invoice-no-balance',
+    });
+    expect(docs[INVOICE]).toMatchObject(before);
+    expect(docs[INVOICE]!.paidAt).toBeUndefined();
+    expect(docs[INVOICE]!.amountDueCents).toBeUndefined();
+    expect(paidNotices()).toHaveLength(0);
+  });
+
+  it('a household on the checkout that is not the invoice\'s: held for that household, and the invoice is untouched (#2345)', async () => {
+    const before = { ...docs[INVOICE] };
     cardPayment(1, 4000, { ...META, familyId: 'fam2', kinfolkId: 'fam2' });
 
     expect(await deliver('session-1')).toBe(200);
 
-    expect(docs[INVOICE]).toMatchObject({ status: 'paid', paidCents: 4000, [CARD_APPLY_FALLBACK_FIELD]: 'apply_wrong_household' });
-    expect(cardRows()).toHaveLength(1);
+    expect(docs[INVOICE]).toEqual(before);
+    expect(cardRows()).toHaveLength(0);
+    expect(docs['payments/evt_cs_1']).toMatchObject({
+      kinfolkId: 'fam2',
+      appliedTo: 'unapplied',
+      duplicateCheckoutReason: 'invoice-other-household',
+    });
+    expect(paidNotices()).toHaveLength(0);
   });
 });
 
@@ -843,7 +883,37 @@ describe('#2276: where a card payment lands (decideCardApply)', () => {
       appliedCents: 1000,
       tipCents: 0,
       paidCents: 1000,
+      leftOwingCents: 0,
     });
+  });
+  it('#2345: a fallback card short of the stated balance leaves the rest owing', () => {
+    // A balance and no total: the plan cannot describe it.
+    const noTotal = { kinfolkId: 'fam1', status: 'open', amountDue: 100, amountDueCents: 10000 };
+    expect(decide({ doc: noTotal, cardCents: 6000 })).toEqual({
+      kind: 'fallback',
+      reason: 'no_recorded_balance',
+      writeRow: true,
+      appliedCents: 6000,
+      tipCents: 0,
+      paidCents: 6000,
+      leftOwingCents: 4000,
+    });
+    // Covering it, or over it: nothing left, the rest is tip.
+    expect(decide({ doc: noTotal, cardCents: 10000 })).toMatchObject({ leftOwingCents: 0, tipCents: 0 });
+    expect(decide({ doc: noTotal, cardCents: 12000 })).toMatchObject({ leftOwingCents: 0, tipCents: 2000 });
+    // No stated balance at all: the whole card goes on the bill, nothing left.
+    expect(decide({ doc: { kinfolkId: 'fam1', status: 'open' }, cardCents: 6000 })).toMatchObject({
+      reason: 'no_recorded_balance',
+      leftOwingCents: 0,
+    });
+  });
+  it('#2345: every fallback reason but the stated-below-recorded one gets the owner a line', () => {
+    for (const reason of ['no_recorded_balance', 'apply_invoice_not_sent', 'apply_wrong_household', 'apply_invoice_not_payable', 'apply_invoice_not_found']) {
+      expect(fallbackNeedsOwnerLine(reason), reason).toBe(true);
+    }
+    expect(fallbackNeedsOwnerLine(STATED_BELOW_RECORDED)).toBe(false);
+    expect(fallbackNeedsOwnerLine(null)).toBe(false);
+    expect(fallbackNeedsOwnerLine('')).toBe(false);
   });
 
   it('a cancelled invoice, a draft and a credit fall back with the plan\'s own reason', () => {

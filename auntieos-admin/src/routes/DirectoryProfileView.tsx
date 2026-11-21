@@ -1,5 +1,6 @@
 import { useRef } from 'react';
-import { useNavigate, useParams, useRouter, useSearch } from '@tanstack/react-router';
+import { useNavigate, useParams, useRouteContext, useRouter, useSearch } from '@tanstack/react-router';
+import { isAuntieAccess } from '../lib/access';
 import { UNAPPLIED_PAYMENTS_SECTION } from '../lib/notificationActions';
 import { Directory } from '../screens/Directory';
 import type { ProfileSubView } from '../screens/KinfolkProfile';
@@ -27,12 +28,14 @@ export function DirectoryProfileView() {
   const { section, paymentId, view } = useSearch({ from: '/admin/directory/$kinfolkId' });
   const navigate = useNavigate();
   const router = useRouter();
+  const { access } = useRouteContext({ from: '/admin' });
   // Set while a sub-view this mount pushed is open, so stepping back out of it
   // pops that entry instead of stacking a second copy of the profile.
   const pushedSubView = useRef(false);
   const profileView = subView(view);
   return (
     <Directory
+      isAuntie={isAuntieAccess(access)}
       initialKinfolkId={kinfolkId}
       // #1003: opened from the `invoice.payment.unapplied` notice.
       openUnappliedPayments={section === UNAPPLIED_PAYMENTS_SECTION}

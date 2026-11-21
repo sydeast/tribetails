@@ -14,11 +14,15 @@
  * `noticeAudit.ts`). A copy held without a batch (a tap, a save, a trigger)
  * keeps its own line, exactly as #2330 wrote it.
  *
- * ONLY "held by the send switch" is counted. A notification turned off in
- * Settings, a channel the household switched off, a channel with no address
- * and a send that failed keep their own lines inside a timed job too: those
- * happen with the switch ON, and a failed send has to stay one `FAILURE` line
- * per notice because the daily error digest reads them.
+ * WHAT IS COUNTED: a copy held by the send switch (off, or unreadable), and
+ * since #2341 a copy of a notification the operator turned off in Settings,
+ * which crowded the log the same way with the switch on. A channel the
+ * household switched off, a channel with no address and a send that failed
+ * keep their own lines inside a timed job: the first two are about one
+ * household, and a failed send has to stay one `FAILURE` line per notice
+ * because the daily error digest reads them.
+ *
+ * #2340: a marketing blast is counted the same way, one batch per fan-out run.
  *
  * EACH HELD COPY IS COUNTED ONCE A BUSINESS DAY. Nothing is stamped on a
  * visit or an invoice while its notice is held, so the hourly visit job holds
@@ -35,8 +39,13 @@
  * No imports: the dispatcher and the scheduled jobs load this at cold start.
  */
 
-/** Why the switch held the copy: it is off, or it could not be read (fail closed). */
-export type HeldNoticeReason = 'off' | 'unreadable';
+/**
+ * Why the copy did not go: the send switch is off, the switch could not be
+ * read (fail closed), or the notification itself is turned off in Settings.
+ */
+export type HeldNoticeReason = 'off' | 'unreadable' | 'turnedOff';
+/** Every reason, in the order their lines are written. */
+export const HELD_NOTICE_REASONS: readonly HeldNoticeReason[] = ['off', 'unreadable', 'turnedOff'];
 
 export interface HeldNoticeBatch {
   /** The scheduled job, by its function name. Names the job's marker for the day. */
@@ -60,8 +69,8 @@ export function startHeldNoticeBatch(job: string, run: { day?: string; atMs?: nu
     job,
     ...(run.day !== undefined && run.day !== '' ? { day: run.day } : {}),
     atMs: run.atMs ?? Date.now(),
-    held: { off: new Map(), unreadable: new Map() },
-    unnamed: { off: new Map(), unreadable: new Map() },
+    held: { off: new Map(), unreadable: new Map(), turnedOff: new Map() },
+    unnamed: { off: new Map(), unreadable: new Map(), turnedOff: new Map() },
   };
 }
 
@@ -84,8 +93,11 @@ export function countHeldNotice(
   byKey.set(key, (byKey.get(key) ?? 0) + 1);
 }
 
-/** How many copies the batch holds for one reason. */
-export function heldNoticeTotal(batch: HeldNoticeBatch, reason: HeldNoticeReason): number {
+/** How many copies the batch holds for one reason, or for every reason when none is named. */
+export function heldNoticeTotal(batch: HeldNoticeBatch, reason?: HeldNoticeReason): number {
+  if (reason === undefined) {
+    return HELD_NOTICE_REASONS.reduce((sum, r) => sum + heldNoticeTotal(batch, r), 0);
+  }
   let total = batch.held[reason].size;
   for (const n of batch.unnamed[reason].values()) total += n;
   return total;
@@ -117,7 +129,7 @@ export async function withHeldNoticeBatch<T>(
   try {
     return await run(batch);
   } finally {
-    if (heldNoticeTotal(batch, 'off') + heldNoticeTotal(batch, 'unreadable') > 0) {
+    if (heldNoticeTotal(batch) > 0) {
       try {
         const { recordHeldNoticeSummary } = await import('./noticeAudit.js');
         await recordHeldNoticeSummary(batch);

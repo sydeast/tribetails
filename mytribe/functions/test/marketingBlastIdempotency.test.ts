@@ -31,7 +31,16 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), get
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+// The blast sends through `enqueueNotificationDetailed` since #2340 (it hands a
+// held-notice count as the second argument); `mocks.enqueue` stands for its `written`.
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueue,
+  enqueueNotificationDetailed: async (args: unknown) => ({
+    written: await mocks.enqueue(args),
+    suppressed: [],
+    unresolved: [],
+  }),
+}));
 vi.mock('../src/notifications/prefs', () => ({
   loadUserPrefs: mocks.loadUserPrefs,
   loadBusinessOverride: mocks.loadBusinessOverride,

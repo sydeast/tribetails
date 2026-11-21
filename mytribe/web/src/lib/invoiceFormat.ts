@@ -25,9 +25,31 @@ type InvoiceStatus = InvoiceDto['status'];
  * the balance says. The server refuses too (`payInvoice`, and `getMyInvoices`
  * ships no pay methods for a paid invoice); this keeps the button from being
  * offered at all.
+ *
+ * #2410: AND NEVER ONE THE SERVER SAYS CANNOT TAKE A PAYMENT. `getMyInvoices`
+ * asks `payInvoice`'s own rule for each invoice it would otherwise offer Pay
+ * on and ships the answer as `payBlockedReason`. This screen does not work
+ * the rule out again, so the two cannot disagree. A server older than the
+ * field sends no key, which reads as not blocked.
  */
-export function offersPayment(inv: Pick<InvoiceDto, 'status' | 'amountDue' | 'isPaid'>): boolean {
-  return inv.status === 'open' && inv.amountDue > 0 && !inv.isPaid;
+export function offersPayment(inv: PayRuleInvoice): boolean {
+  return inv.status === 'open' && inv.amountDue > 0 && !inv.isPaid && !inv.payBlockedReason;
+}
+
+/** What the pay rule reads. `payBlockedReason` is optional: an older server sends no key. */
+type PayRuleInvoice = Pick<InvoiceDto, 'status' | 'amountDue' | 'isPaid'> & {
+  payBlockedReason?: string | null;
+};
+
+/**
+ * #2410: the server's sentence for an open bill with a balance that offers no
+ * way to pay, or null. Printed where the pay options would be. Null on every
+ * invoice that is not a bill waiting to be paid: a quote, a credit and a paid
+ * invoice already say what they are.
+ */
+export function payBlockedReason(inv: PayRuleInvoice): string | null {
+  if (inv.status !== 'open' || inv.amountDue <= 0 || inv.isPaid) return null;
+  return inv.payBlockedReason ? inv.payBlockedReason : null;
 }
 const USD_DIGITS = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
@@ -207,6 +229,32 @@ export function declinedQuoteStatusInfo(): InvoiceStatusInfo {
  */
 export function documentNoun(invoice: Pick<InvoiceDto, 'status'>): 'Quote' | 'Invoice' {
   return invoice.status === 'quote' ? 'Quote' : 'Invoice';
+}
+/** What `invoiceName` reads. `invoiceNumber` is optional: a server older than the field sends no key. */
+type NamedInvoice = Pick<InvoiceDto, 'status'> & { invoiceNumber?: string | null };
+/**
+ * #1848: how the portal names one invoice, "Invoice #1042" or "Quote #1042".
+ * The stored id used to stand after the "#", a string nobody can quote. An
+ * invoice with no number reads "Invoice with no number" (or "Quote with no
+ * number"), the words the office's apps and the server use.
+ *
+ * A server older than the field sends no key. That is "not told", not "has no
+ * number", so the name is the bare noun: "Invoice". The portal's main channel
+ * runs against the released server, which may be older than this page.
+ */
+export function invoiceName(invoice: NamedInvoice): string {
+  const noun = documentNoun(invoice);
+  if (invoice.invoiceNumber === undefined) return noun;
+  const number = (invoice.invoiceNumber ?? '').trim();
+  return number === '' ? `${noun} with no number` : `${noun} #${number}`;
+}
+/**
+ * The invoice a credit was spent on, inside a sentence: its number as stored
+ * ("INV-1009"), or "an invoice with no number". Never an id.
+ */
+export function invoiceNumberOrWords(invoiceNumber: string | null | undefined): string {
+  const number = (invoiceNumber ?? '').trim();
+  return number === '' ? 'an invoice with no number' : number;
 }
 /**
  * The status info for one invoice, decision included: the single place the two

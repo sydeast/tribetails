@@ -29,6 +29,7 @@ import {
 } from '../lib/paymentAppliedOwner';
 import { InvoicePaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { validateResponse } from '../lib/callableResponse';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import {
   CentsSchema,
   InvoiceSettlementStateSchema,
@@ -458,7 +459,7 @@ export async function markInvoicePaidHandler(
     }
     const snap = await tx.get(ref);
     if (!snap.exists) {
-      throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+      throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
     }
     const data = snap.data() as InvoiceDoc;
     // The payments SUBCOLLECTION is the only field that can say how much has
@@ -638,9 +639,8 @@ export async function markInvoicePaidHandler(
     // The description says which of the two things happened. An audit line
     // reading "marked paid" for a $20 payment against a $40 invoice is how the
     // original defect stayed invisible in the audit trail as well as in the UI.
-    description: settling
-      ? `Invoice ${data.invoiceNumber ?? args.invoiceId} settled by a manually-recorded payment`
-      : `Partial payment recorded against invoice ${data.invoiceNumber ?? args.invoiceId}; a balance is still owed`,
+    // #2453: the invoice's number, or the words for one with none. Its id is the payload's.
+    description: (await import('../lib/activityWords.js')).manualPaymentWords(data.invoiceNumber, settling),
     payload: {
       invoiceId: args.invoiceId,
       kinfolkId: familyId ?? null,

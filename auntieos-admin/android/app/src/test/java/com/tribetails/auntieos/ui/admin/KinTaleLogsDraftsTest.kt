@@ -153,4 +153,71 @@ class KinTaleLogsDraftsTest {
         assertEquals("gd1", reviewTarget(listOf(Draft(id = "gd1"), Draft(id = "gd2"))))
         assertNull(reviewTarget(emptyList()))
     }
+    @Test
+    fun `#2293 a held Push draft is listed under Drafts again, a sent one is not`() {
+        val held = draftFromFields(
+            "held",
+            mapOf(
+                "status" to "approved", "communication_type" to "push", "kinfolk_id" to "kf1",
+                "generated_copy" to "Hi", "pushOutcome" to "held", "pushReason" to "household_notices_off",
+                "createdOn" to "2026-11-14T00:00:00Z",
+            ),
+        )
+        assertTrue(held.isHeldPush)
+        assertEquals("household_notices_off", held.pushReason)
+        assertFalse(held.isUnsent)
+        val sent = held.copy(id = "sent", pushOutcome = "sent")
+        val listedOnly = held.copy(id = "listed", pushOutcome = "listed")
+        val noStamp = held.copy(id = "nostamp", pushOutcome = "")
+        val sms = held.copy(id = "sms", communicationType = "sms")
+        // #2381: the approved push with no answer on it is listed too.
+        assertEquals(listOf("held", "nostamp"), unsentGeneratedDrafts(listOf(held, sent, listedOnly, noStamp, sms)).map { it.id })
+    }
+    @Test
+    fun `#2381 an approved Push draft whose send never answered stays under Drafts`() {
+        val unanswered = draftFromFields(
+            "unanswered",
+            mapOf(
+                "status" to "approved", "communication_type" to "push", "kinfolk_id" to "kf1",
+                "generatedCopy" to "Hi", "createdOn" to "2026-11-14T00:00:00Z",
+            ),
+        )
+        assertTrue(unanswered.isUnansweredPush)
+        assertFalse(unanswered.isHeldPush)
+        assertFalse(unanswered.isUnsent)
+        // Any answer on it, another type, or a push nobody approved: not unanswered.
+        listOf("sent", "listed", "held").forEach { assertFalse(it, unanswered.copy(pushOutcome = it).isUnansweredPush) }
+        assertFalse(unanswered.copy(communicationType = "email").isUnansweredPush)
+        assertFalse(unanswered.copy(communicationType = "visit_report").isUnansweredPush)
+        assertFalse(unanswered.copy(status = "generated").isUnansweredPush)
+        val approvedEmail = unanswered.copy(id = "email", communicationType = "email")
+        assertEquals(listOf("unanswered"), unsentGeneratedDrafts(listOf(unanswered, approvedEmail)).map { it.id })
+        // Home's count is unchanged.
+        assertEquals(0, com.tribetails.auntieos.data.model.pendingDraftCountOf(listOf(unanswered)))
+    }
+
+    @Test
+    fun `#2440 the load keeps the drafts that went out, beside the Drafts bucket`() = runTest(dispatcher) {
+        val repo = mockk<AuntieRepository>()
+        coEvery { repo.getGeneratedDrafts(any()) } returns Result.success(
+            listOf(
+                Draft(id = "pending", status = "pending", communicationType = "email", createdOn = "2026-11-14T00:00:00Z"),
+                Draft(id = "sentEmail", status = "approved", communicationType = "email", sentAt = "2026-11-15T00:00:05Z", createdOn = "2026-11-15T00:00:00Z"),
+                Draft(id = "sentPush", status = "approved", communicationType = "push", pushOutcome = "sent", createdOn = "2026-11-16T00:00:00Z"),
+                Draft(
+                    id = "lost", status = "approved", communicationType = "sms",
+                    sendClaimedAt = "2026-11-17T00:00:00Z", sendUnconfirmedAt = "2026-11-17T00:00:31Z", createdOn = "2026-11-17T00:00:00Z",
+                ),
+                Draft(id = "tale", status = "published", communicationType = "visit_report", publishedReportId = "r1", createdOn = "2026-11-18T00:00:00Z"),
+            ),
+        )
+        val vm = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true), kinCareRepository = mockk<KinCareRepository>())
+        vm.loadGeneratedDrafts()
+        advanceUntilIdle()
+        // The Drafts bucket is what it was.
+        assertEquals(listOf("pending"), vm.generatedDrafts.value.map { it.id })
+        // A sent KinTale is listed as its report, never here.
+        assertEquals(listOf("lost", "sentPush", "sentEmail"), vm.goneGeneratedDrafts.value.map { it.id })
+    }
 }
+

@@ -1,5 +1,5 @@
 import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore';
-import { addDoc, updateDoc } from '../lib/firestoreWrite';
+import { setDoc, updateDoc } from '../lib/firestoreWrite';
 import { type CollectionSpec } from '../lib/firestore';
 import { db } from '../lib/firebase';
 import { str } from '../lib/coerce';
@@ -121,9 +121,17 @@ export async function getDossierHouseholdNotes(kinfolkId: string): Promise<strin
  * operator actually edited, so two operators in two sections cannot clobber each
  * other, and a field this port does not model cannot be erased by it.
  *
- * The CREATE path does write the full field set, which is correct: there is no
- * document yet, so there is nothing to clobber, and a complete document keeps
- * the android `toObject(HouseholdData::class.java)` deserialization happy.
+ * ONE RECORD PER HOUSEHOLD (#2289). A household's first record is made at
+ * `household_data/{kinfolkId}`, the same document the portal's vet pick makes
+ * (`writeHouseholdVetClinicId`). It used to be an `addDoc` under an auto id,
+ * so an operator who saved from a screen that loaded with no record, after the
+ * household had picked a vet, made a SECOND record, and the two sides read
+ * different ones. `firestore.rules` refuses a create at any other id.
+ *
+ * The create is a MERGE of the fields the operator filled in, never the whole
+ * blank form: at a shared id a full document would write `primaryVetClinicId:
+ * ''` straight over the vet the household just picked. Android and the desktop
+ * console read a missing field as blank, the same as this file does.
  */
 export async function saveHouseholdSection(
   record: HouseholdRecord,
@@ -140,14 +148,39 @@ export async function saveHouseholdSection(
   const next: HouseholdRecord = { ...record, ...patch, kinfolkId, updatedAt };
 
   if (record._id === '') {
-    const createdAt = record.createdAt !== '' ? record.createdAt : updatedAt;
-    // Built key by key rather than spread, so `_id` (our own field, not the
-    // doc's) can never leak into the document body.
-    const payload: Record<string, string> = { kinfolkId, createdAt, updatedAt };
-    for (const key of HOUSEHOLD_FIELD_KEYS) payload[key] = next[key];
+    const ref = doc(db, 'household_data', kinfolkId);
+    // Only what was filled in. `record` is the blank form here, so this is the
+    // patch minus anything left empty.
+    const filled: Record<string, string> = {};
+    for (const key of HOUSEHOLD_FIELD_KEYS) if (next[key] !== '') filled[key] = next[key];
 
-    const ref = await addDoc(collection(db, 'household_data'), payload);
-    return { ...next, _id: ref.id, createdAt };
+    // What is at that id now. The household may have made the record since
+    // this screen loaded (its first vet pick does). `undefined` means the
+    // question could not be asked, which with no signal is the usual case: the
+    // save still goes ahead and queues, it just cannot claim to be the first.
+    let stored: Record<string, unknown> | null | undefined;
+    try {
+      const snap = await getDoc(ref);
+      stored = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+    } catch {
+      stored = undefined;
+    }
+    // A record is there and this save adds nothing to it: no write, not even
+    // the stamp (#994), and the screen gets the record it had not seen.
+    if (stored && Object.keys(filled).length === 0) return mergeHouseholdRecord(kinfolkId, kinfolkId, stored);
+
+    // Built key by key rather than spread from `next`, so `_id` (our own field,
+    // not the doc's) can never leak into the document body. `createdAt` is
+    // written only for a record known not to exist: a merge would otherwise
+    // move the date of one the household made first.
+    const createdAt = record.createdAt !== '' ? record.createdAt : updatedAt;
+    const payload: Record<string, string> = { kinfolkId, ...filled, updatedAt };
+    if (stored === null) payload['createdAt'] = createdAt;
+    await setDoc(ref, payload, { merge: true });
+
+    // The record as it now stands: what was already there, with this save on top.
+    if (stored) return { ...mergeHouseholdRecord(kinfolkId, kinfolkId, stored), ...filled, kinfolkId, updatedAt };
+    return { ...next, _id: kinfolkId, createdAt: stored === null ? createdAt : record.createdAt };
   }
 
   // #994: a section dialog hands over every field of its section. Only the ones

@@ -82,8 +82,16 @@ export type { MediaFile };
  *     collectionGroup: media_files
  *     fields: entityId ASC, kinfolkId ASC, uploadedAt DESC
  *
- * Both must stay. If either is ever dropped, the matching shape fails at runtime
- * with `failed-precondition`, which surfaces a console link through
+ * When an AUNTIE is signed in, `applyCaretakerScope` adds `entityType in [...]`
+ * (the types she reads, `lib/caretakerScope.ts`) on top of the `entityId`
+ * equality, because rules refuse her a media list that does not name them.
+ * That shape has its own index:
+ *
+ *     collectionGroup: media_files
+ *     fields: entityId ASC, entityType ASC, uploadedAt DESC
+ *
+ * All three must stay. If one is ever dropped, the matching shape fails at
+ * runtime with `failed-precondition`, which surfaces a console link through
  * `AsyncRegion`'s error banner (fail-loud, never a silent empty grid).
  */
 

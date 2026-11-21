@@ -3,6 +3,8 @@ import {
   draftBody,
   draftIdFromListRowId,
   isPublishedDraft,
+  isHeldPushDraft,
+  isUnansweredPushDraft,
   draftCreatedAt,
   draftHousehold,
   draftKinfolkId,
@@ -377,5 +379,95 @@ describe('kinTaleListRows with the legacy rows', () => {
   });
   it('reads exactly as before when there are no legacy rows', () => {
     expect(kinTaleListRows([report()], [], { startIso: null }).map((r) => r._id)).toEqual(['r1']);
+  });
+});
+describe('isHeldPushDraft (#2293)', () => {
+  const held = { communicationType: 'push', status: 'approved', pushOutcome: 'held', pushReason: 'household_notices_off' };
+  it('an approved push the server held is listed under Drafts again', () => {
+    expect(isHeldPushDraft(draft(held))).toBe(true);
+    expect(kinTaleState(rowFromDraft(draft(held)).status ?? '')).toBe('draft');
+  });
+  it('reads the snake_case type generate.js writes', () => {
+    expect(isHeldPushDraft(draft({ ...held, communicationType: undefined, communication_type: 'push' }))).toBe(true);
+  });
+  it('a push that went out, or reached their list, is not held', () => {
+    expect(isHeldPushDraft(draft({ ...held, pushOutcome: 'sent' }))).toBe(false);
+    expect(isHeldPushDraft(draft({ ...held, pushOutcome: 'listed' }))).toBe(false);
+    // #2440: it is listed under Sent. It used to fall under "Unknown status".
+    expect(kinTaleState(rowFromDraft(draft({ ...held, pushOutcome: 'sent' })).status ?? '')).toBe('sent');
+  });
+  it('an approved push with no answer on it, and a held stamp on another type, are not held', () => {
+    expect(isHeldPushDraft(draft({ ...held, pushOutcome: undefined }))).toBe(false);
+    expect(isHeldPushDraft(draft({ ...held, communicationType: 'sms' }))).toBe(false);
+    expect(isHeldPushDraft(draft({ ...held, status: 'generated' }))).toBe(false);
+  });
+});
+describe('isUnansweredPushDraft (#2381)', () => {
+  const unanswered = { communicationType: 'push', status: 'approved' };
+  it('an approved push whose send never answered is listed under Drafts', () => {
+    expect(isUnansweredPushDraft(draft(unanswered))).toBe(true);
+    expect(isUnansweredPushDraft(draft({ ...unanswered, pushOutcome: '' }))).toBe(true);
+    expect(isUnansweredPushDraft(draft({ communicationType: undefined, communication_type: 'push', status: 'approved' }))).toBe(true);
+    expect(kinTaleState(rowFromDraft(draft(unanswered)).status ?? '')).toBe('draft');
+  });
+  it('a push with any answer on it is not unanswered', () => {
+    for (const pushOutcome of ['sent', 'listed', 'held']) {
+      expect(isUnansweredPushDraft(draft({ ...unanswered, pushOutcome }))).toBe(false);
+    }
+  });
+  it('another type, or a push nobody approved, is not unanswered', () => {
+    expect(isUnansweredPushDraft(draft({ ...unanswered, communicationType: 'sms' }))).toBe(false);
+    expect(isUnansweredPushDraft(draft({ ...unanswered, communicationType: 'visit_report' }))).toBe(false);
+    expect(isUnansweredPushDraft(draft({ ...unanswered, status: 'generated' }))).toBe(false);
+    // An approved email stays out of Drafts, as before. #2440: it went out, so it is Sent.
+    expect(kinTaleState(rowFromDraft(draft({ communicationType: 'email', status: 'approved' })).status ?? '')).toBe('sent');
+  });
+});
+
+describe('a Communicate draft that went out is listed as Sent (#2440)', () => {
+  const NOW = Date.parse('2026-11-20T18:00:00.000Z');
+  const stateOf = (over: Partial<GeneratedDraftRow>) => kinTaleState(rowFromDraft(draft(over), NOW).status ?? '');
+  it('a stamped Email or Text, one an older version sent, and a Push the household was sent', () => {
+    expect(stateOf({ communicationType: 'email', status: 'approved', sentAt: '2026-11-20T16:00:00.000Z' })).toBe('sent');
+    expect(stateOf({ communicationType: undefined, communication_type: 'sms', status: 'approved' })).toBe('sent');
+    expect(stateOf({ communicationType: 'push', status: 'approved', pushOutcome: 'sent' })).toBe('sent');
+    expect(stateOf({ communicationType: 'push', status: 'approved', pushOutcome: 'listed' })).toBe('sent');
+  });
+  it('none of them is left under Unknown status', () => {
+    const rows = kinTaleListRows(
+      [],
+      [
+        draft({ _id: 'a', communicationType: 'email', status: 'approved', sentAt: '2026-11-20T16:00:00.000Z' }),
+        draft({ _id: 'b', communicationType: 'sms', status: 'approved' }),
+        draft({ _id: 'c', communicationType: 'push', status: 'approved', pushOutcome: 'listed' }),
+      ],
+      { startIso: null },
+      { rows: [], hasMore: false },
+      NOW,
+    );
+    expect(rows.map((r) => kinTaleState(r.status ?? ''))).toEqual(['sent', 'sent', 'sent']);
+  });
+  it('#2452 a send that got no answer is its own state, never Sent and never a Draft', () => {
+    const unconfirmed = {
+      communicationType: 'email',
+      status: 'approved',
+      sendClaimedAt: '2026-11-20T16:00:00.000Z',
+      sendUnconfirmedAt: '2026-11-20T16:00:31.000Z',
+    };
+    expect(stateOf(unconfirmed)).toBe('unconfirmed');
+    // A claim nobody answered, past its two minutes.
+    expect(stateOf({ communicationType: 'sms', status: 'approved', sendClaimedAt: '2026-11-20T16:00:00.000Z' })).toBe('unconfirmed');
+  });
+  it('a send still running is Sending', () => {
+    expect(stateOf({ communicationType: 'sms', status: 'approved', sendClaimedAt: new Date(NOW - 5000).toISOString() })).toBe('sending');
+  });
+  it('a held Push, an unanswered Push and an unapproved draft stay Drafts', () => {
+    expect(stateOf({ communicationType: 'push', status: 'approved', pushOutcome: 'held' })).toBe('draft');
+    expect(stateOf({ communicationType: 'push', status: 'approved' })).toBe('draft');
+    expect(stateOf({ communicationType: 'email', status: 'generated' })).toBe('draft');
+  });
+  it('an approved draft of a type that is never sent from here is not called Sent', () => {
+    expect(stateOf({ communicationType: 'social_post', status: 'approved' })).toBe('unknown');
+    expect(stateOf({ communicationType: 'blog_post', status: 'approved' })).toBe('unknown');
   });
 });

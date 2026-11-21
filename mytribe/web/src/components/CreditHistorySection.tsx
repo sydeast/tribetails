@@ -7,7 +7,7 @@ import type {
   GetAccountCreditHistoryResultCredit,
   GetAccountCreditHistoryResultUse,
 } from '../contracts/invoiceContracts.generated';
-import { formatCentsUsd } from '../lib/invoiceFormat';
+import { formatCentsUsd, invoiceNumberOrWords } from '../lib/invoiceFormat';
 
 /**
  * Q6 (operator ruling 2026-09-27): "Those with billing access: biz
@@ -38,13 +38,13 @@ export function creditStatusLine(c: GetAccountCreditHistoryResultCredit): string
 export function creditApplicationLines(c: GetAccountCreditHistoryResultCredit): string[] {
   if (c.fullyAppliedAtMs !== null && c.applications.length <= 1) return [];
   return c.applications.map(
-    (a) => `${formatCentsUsd(a.amountCents)} on ${a.invoiceNumber ?? 'an invoice'}, ${creditDate(a.appliedAtMs)}`,
+    (a) => `${formatCentsUsd(a.amountCents)} on ${invoiceNumberOrWords(a.invoiceNumber)}, ${creditDate(a.appliedAtMs)}`,
   );
 }
 
 /** "$25.00 on INV-1009, Oct 3, 2026". */
 export function creditUseLine(u: GetAccountCreditHistoryResultUse): string {
-  return `${formatCentsUsd(u.amountCents)} on ${u.invoiceNumber ?? 'an invoice'}, ${creditDate(u.usedAtMs)}`;
+  return `${formatCentsUsd(u.amountCents)} on ${invoiceNumberOrWords(u.invoiceNumber)}, ${creditDate(u.usedAtMs)}`;
 }
 
 function isPermissionDenied(err: unknown): boolean {

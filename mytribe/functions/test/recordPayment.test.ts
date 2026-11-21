@@ -151,7 +151,8 @@ describe('recordPayment TestMode scoping (server-side, replacing the client-side
   const testToken = { testTribeId: 'test-kinfolk-001' };
 
   it("stamps the sandbox kinfolkId no matter what the caller sent", async () => {
-    const ctx = seed();
+    // The linked invoice is the sandbox's own: a payment links only to its own household's invoice.
+    const ctx = seed({ invoice: { kinfolkId: 'test-kinfolk-001', status: 'open', total: 127.5, invoiceNumber: '1029' } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await recordPaymentHandler(
       req({ ...fullArgs, kinfolkId: 'fam1' }, 'testuser1', testToken),
@@ -166,6 +167,18 @@ describe('recordPayment TestMode scoping (server-side, replacing the client-side
     );
   });
 
+  it('a sandbox payment cannot be linked to a live household\'s invoice', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      recordPaymentHandler(req({ ...fullArgs, kinfolkId: 'fam1' }, 'testuser1', testToken)),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'Invoice 1029 belongs to a different household than this payment.',
+      details: { code: 'link_wrong_household' },
+    });
+    expect(paymentWriteOf(ctx)).toBeUndefined();
+  });
   it('staff keep the kinfolkId they sent', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -676,5 +689,35 @@ describe('recordPayment: staff notes stay staff-only', () => {
     );
     const call = mocks.enqueueNotification.mock.calls[0]![0];
     expect(JSON.stringify(call)).not.toContain('chases payment every month');
+  });
+});
+
+/** #2453: the Activity Log line names the invoice by the number stored on it, or in words, never by its id. */
+describe('#2453 recordPayment: no stored id in the Activity Log line', () => {
+  it('a row against a numbered invoice names the number on the invoice, not the one the app sent', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await recordPaymentHandler(req(fullArgs));
+    expect((writeAuditEntry as any).mock.calls[0][0].description).toBe('Payment row recorded against invoice 1029');
+    // The app sent nothing: the invoice still has its number.
+    (writeAuditEntry as any).mockClear();
+    mocks.dbFn.mockReturnValue(seed().db);
+    await recordPaymentHandler(req({ ...fullArgs, invoiceNumber: '' }));
+    expect((writeAuditEntry as any).mock.calls[0][0].description).toBe('Payment row recorded against invoice 1029');
+  });
+
+  it('an app that sends the stored id as the number does not get it into the line', async () => {
+    mocks.dbFn.mockReturnValue(seed({ invoice: { kinfolkId: 'fam1', status: 'open', total: 127.5 } }).db);
+    await recordPaymentHandler(req({ ...fullArgs, invoiceNumber: 'inv_1731000000000_ab12cd' }));
+    const entry = (writeAuditEntry as any).mock.calls[0][0];
+    expect(entry.description).toBe('Payment row recorded against an invoice with no number');
+  });
+
+  it('a row against an invoice with no number', async () => {
+    mocks.dbFn.mockReturnValue(seed({ invoice: { kinfolkId: 'fam1', status: 'open', total: 127.5 } }).db);
+    await recordPaymentHandler(req({ ...fullArgs, invoiceNumber: '' }));
+    const entry = (writeAuditEntry as any).mock.calls[0][0];
+    expect(entry.description).toBe('Payment row recorded against an invoice with no number');
+    expect(entry.description).not.toContain('inv1');
+    expect(entry.payload.invoiceId).toBe('inv1');
   });
 });

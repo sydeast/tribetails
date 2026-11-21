@@ -108,6 +108,15 @@ make_repo() {
   mkdir -p "$r/scripts/lib"
   cp "$REPO_SCRIPTS"/lib/*.sh "$REPO_SCRIPTS"/lib/*.js "$r/scripts/lib/" 2>/dev/null
 
+  # Step 1b runs the admin functions' own voice-file checker whenever
+  # RELEASE_INCLUDE_ADMIN_FUNCTIONS=1. The real one, and the one module it
+  # needs: neither reads node_modules. No voice files are written here, which
+  # is what a fresh checkout looks like (they are gitignored).
+  mkdir -p "$r/auntieos-admin/web/functions"
+  cp "$REPO_SCRIPTS/../auntieos-admin/web/functions/checkVoice.js" \
+     "$REPO_SCRIPTS/../auntieos-admin/web/functions/sampleNames.js" \
+     "$r/auntieos-admin/web/functions/"
+
   # 0a reads a root lockfile and mytribe/functions' own lockfile. Empty
   # (no dependencies declared) so a fully-synthetic repo with no real
   # node_modules reports "not installed yet" rather than "no lockfile at
@@ -217,7 +226,7 @@ STUB
   # The same entries the real .gitignore carries for these, because step 0
   # refuses a dirty tree and .release-state and the APK are both untracked
   # by design. Without this the test would be testing the dirty-tree guard.
-  printf '.release-state\n.release-functions\n.release-progress\nauntieos-admin/android/app/build/\nmytribe/build/\nnode_modules/\n' > "$r/.gitignore"
+  printf '.release-state\n.release-functions\n.release-progress\nauntieos-admin/android/app/build/\nmytribe/build/\nnode_modules/\nauntieos-admin/web/functions/voice/\n' > "$r/.gitignore"
 
   ( cd "$r"
     git init -q -b main .
@@ -474,6 +483,21 @@ case "${1:-}:${FIREBASE_DISTRIBUTE_DEBUG_LOG:-}" in
   appdistribution:distribute:root)
     printf 'debug\n' > "$(git rev-parse --show-toplevel)/firebase-debug.log"; exit 2 ;;
 esac
+
+# FIREBASE_VOICE_LOG=<file> records, each time functions:default is deployed,
+# how many of Ask Auntie's three voice files are in the checkout at that moment
+# and a checksum of them (#2399). The release removes files it restored when it
+# ends, so "did the deploy have them" can only be answered from in here.
+if [ -n "${FIREBASE_VOICE_LOG:-}" ] && [ "$only" = "functions:default" ]; then
+  vdir="$(git rev-parse --show-toplevel)/auntieos-admin/web/functions/voice"
+  vn=0
+  for vf in 01_Voice_Bible.md 02_Channel_Playbook.md corpus/exemplars.md; do
+    [ -s "$vdir/$vf" ] && vn=$((vn + 1))
+  done
+  printf '%s %s\n' "$vn" \
+    "$(cat "$vdir/01_Voice_Bible.md" "$vdir/02_Channel_Playbook.md" "$vdir/corpus/exemplars.md" 2>/dev/null | cksum | tr ' ' ':')" \
+    >> "$FIREBASE_VOICE_LOG"
+fi
 
 # FIREBASE_ADMIN_FAIL_TEXT makes an admin codebase deploy fail printing that
 # text (printf %b, so \n works), FIREBASE_ADMIN_FAIL_TIMES times (default:
@@ -3861,6 +3885,669 @@ if [ "$RC" != "0" ] && printf '%s' "$OUT" | grep -qF "KEYSTORE_PATH" &&
   ok "#1402: any other Gradle failure still gets the signing and Mapbox hint"
 else
   bad "#1402: an ordinary Gradle failure lost its hint (rc=$RC)"; printf '%s\n' "$OUT" | tail -12
+fi
+
+# ---------------------------------------------------------------------------
+# Ask Auntie's voice files are checked in step 1b, before anything deploys,
+# and only when this run uploads them (RELEASE_INCLUDE_ADMIN_FUNCTIONS=1).
+# Present and unusable refuses. Absent, with no copy stored for the release to
+# restore, is reported and the release goes on, as it did before the check
+# existed (#2399). Every name here is invented.
+# ---------------------------------------------------------------------------
+# voice_files <dir> <declaration lines>: the three voice files, in the checkout
+# the way the operator's Mac has them: on disk and ignored by git.
+voice_files() {
+  voice_write "$1/repo/auntieos-admin/web/functions/voice" "$2"
+  commit_all "$1"
+  arm_ci "$1"
+}
+# voice_write <voice dir> <declaration lines>: the three files, in any folder.
+voice_write() {
+  local v="$1"
+  mkdir -p "$v/corpus"
+  printf '# Voice\n\n"Quillon ate every bit."\n' > "$v/01_Voice_Bible.md"
+  printf '# Playbook\n\n"Hi Bramwell, quick note."\n' > "$v/02_Channel_Playbook.md"
+  printf '# Samples\n\n<!-- sample-names\n%s-->\n\n### One\n> "QUILLON was at the door. Tell Bramwell."\n' "$2" \
+    > "$v/corpus/exemplars.md"
+}
+
+# No voice files at all (the hosted runner, a fresh clone), and a gcloud that
+# answers nothing, which is the shared stub. The release cannot know whether a
+# copy is stored, says so, and goes on.
+DVA="$(admin_repo)"
+RCVA="$(run_release "$DVA" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DVA/calls")"
+OUT="$(stripped "$DVA/out")"
+if [ "$RCVA" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: NOT IN THIS CHECKOUT" &&
+   printf '%s' "$OUT" | grep -qF "voice: Secret Manager could not be asked for AUNTIE_VOICE_FILES" &&
+   printf '%s' "$OUT" | grep -qF "does not know whether one exists" &&
+   ! printf '%s' "$OUT" | grep -qF "No copy is stored" &&
+   [ "$(admin_calls "$DVA/calls" functions:default)" = "1" ]; then
+  ok "voice: no files and a Secret Manager that cannot be asked is told so, and the release goes on"
+else
+  bad "voice: no files and no answer from Secret Manager did not release with a warning (rc=$RCVA)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+
+# Usable files, and a gcloud that answers nothing (the shared stub): a Mac with
+# no gcloud, or one that is signed out. The files ship. The copy stored for the
+# scheduled release could not be compared with them, which is said in yellow
+# and stops nothing.
+DVB="$(admin_repo)"
+voice_files "$DVB" $'kin: Quillon\nkinfolk: Bramwell\n'
+RCVB="$(run_release "$DVB" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DVB/calls")"
+OUT="$(stripped "$DVB/out")"
+if [ "$RCVB" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: the files this release uploads are usable" &&
+   printf '%s' "$OUT" | grep -qF "voice: sample names 2 declared (2 spellings), 4 replaced, none left" &&
+   [ "$(admin_calls "$DVB/calls" functions:default)" = "1" ]; then
+  ok "voice: usable voice files pass, with counts, and the admin functions deploy"
+else
+  bad "voice: usable voice files did not pass (rc=$RCVB)"; printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+if [ "$RCVB" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: Secret Manager could not be asked for AUNTIE_VOICE_FILES" &&
+   printf '%s' "$OUT" | grep -qF "voice: NOT COMPARED with the copy stored for the scheduled release" &&
+   printf '%s' "$OUT" | grep -qF "node scripts/voice-secret.mjs push" &&
+   ! printf '%s' "$OUT" | grep -qF "REFUSED"; then
+  ok "voice: a Secret Manager that cannot be asked leaves the stored copy uncompared, in yellow, and the release goes on"
+else
+  bad "voice: an unreachable Secret Manager stopped a release that has its files, or said nothing (rc=$RCVB)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+if printf '%s' "$OUT" | grep -qiE "quillon|bramwell"; then
+  bad "voice: the release output repeats a name out of the voice files"
+else
+  ok "voice: the release output repeats no name out of the voice files"
+fi
+
+# A declaration that would replace nothing: refused before the first deploy.
+DVC="$(admin_repo)"
+voice_files "$DVC" $'# nobody yet\nauntie: Thessaly\n'
+RCVC="$(run_release "$DVC" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DVC/calls")"
+OUT="$(stripped "$DVC/out")"
+if [ "$RCVC" != "0" ] &&
+   printf '%s' "$OUT" | grep -qF "REFUSED: Ask Auntie's voice files cannot be used" &&
+   printf '%s' "$OUT" | grep -qF "voice: refused (voice_sample_names_empty)"; then
+  ok "voice: a samples file that lists no Kin or Kinfolk refuses the release, and says why"
+else
+  bad "voice: an unusable samples file did not refuse the release (rc=$RCVC)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+if grep -q "deploy" "$DVC/calls" 2>/dev/null; then
+  bad "voice: something deployed before the voice files were refused"; cat "$DVC/calls"
+else
+  ok "voice: nothing deployed before the voice files were refused"
+fi
+if printf '%s' "$OUT" | grep -qiE "quillon|bramwell|thessaly"; then
+  bad "voice: the refusal repeats a name out of the voice files"
+else
+  ok "voice: the refusal repeats no name out of the voice files"
+fi
+
+# The same files, in a run that does not upload them: not this run's business.
+RCVD="$(run_release "$DVC" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_BATCH=4 \
+  RELEASE_FUNCTIONS_SETTLE=0 RELEASE_RETRY_KEEP=0 FIREBASE_CALL_LOG="$DVC/calls-off")"
+OUT="$(stripped "$DVC/out")"
+if [ "$RCVD" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: not looked at" &&
+   ! printf '%s' "$OUT" | grep -qF "voice_sample_names_empty"; then
+  ok "voice: a run that does not ship the admin functions does not check their voice files"
+else
+  bad "voice: a run without the admin functions was held up by their voice files (rc=$RCVD)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+
+# ---------------------------------------------------------------------------
+# The stored copy (#2399). The voice files are gitignored, so the hosted
+# runner's checkout has none, and a release from it shipped an Ask Auntie that
+# answered every draft with an error. The operator now stores the files in
+# Secret Manager from the Mac (`node scripts/voice-secret.mjs push`), and step
+# 1b restores them into a checkout that has none, checks them, and removes
+# them when the run ends.
+#
+# What has to hold, and each line below is a case:
+#   - the copy `push` stores is the copy a release restores, byte for byte,
+#     and the admin functions deploy while it is in the checkout
+#   - it is gone from the checkout afterwards, however the run ended
+#   - no copy stored: reported, and the release goes on
+#   - a copy that is stored and cannot be used: refused before any deploy
+#   - files already in the checkout (the Mac) are never asked about, replaced
+#     or removed
+#   - no output and no command line ever carries a name or the stored value
+# ---------------------------------------------------------------------------
+VOICE_NAMES='quillon|bramwell|thessaly'
+GOOD_NAMES=$'kin: Quillon\nkinfolk: Bramwell\n'
+BAD_NAMES=$'# nobody yet\nauntie: Thessaly\n'
+
+voice_dir() { printf '%s' "$1/repo/auntieos-admin/web/functions/voice"; }
+
+# voice_sum <voice dir>: one line that changes when any of the three files does.
+voice_sum() {
+  cat "$1/01_Voice_Bible.md" "$1/02_Channel_Playbook.md" "$1/corpus/exemplars.md" 2>/dev/null | cksum | tr ' ' ':'
+}
+
+# voice_bundle <dir> <voice dir>: what `push` would store for those files,
+# packed by the script under test.
+voice_bundle() {
+  node --input-type=module -e \
+    "import { packVoice } from '$1/repo/scripts/voice-secret.mjs'; process.stdout.write(packVoice(process.argv[1]));" "$2"
+}
+
+# voice_raw <text>: base64 of gzip of <text>, for stored values that are the
+# right wrapping around the wrong thing.
+voice_raw() {
+  node -e 'process.stdout.write(require("zlib").gzipSync(process.argv[1]).toString("base64"))' "$1"
+}
+
+# voice_store <dir> [stored value]: a Secret Manager holding everything step 0c
+# reads, plus AUNTIE_VOICE_FILES when a second argument is given (an empty one
+# stores an empty value). It answers the two reads secret_store answers and the
+# two writes `push` makes, and logs every call to GCLOUD_CALL_LOG.
+#
+#   GCLOUD_VOICE_ACCESS=denied   the secret is listed and its value is refused,
+#                                in gcloud's own words
+#   GCLOUD_VOICE_ADD=lose        `versions add` exits 0 and stores something
+#                                else, which is a write that did not land
+#   GCLOUD_LIST_ANSWERS=N        `secrets list` answers N times and then fails
+#                                with a 503: a store that goes quiet mid-run
+voice_store() {
+  local dir="$1"
+  secret_store "$dir" "${FULL_STORE[@]}"
+  rm -f "$dir/secrets.created" "$dir/secrets.lists"
+  if [ "$#" -ge 2 ]; then printf '%s' "$2" > "$dir/secrets/AUNTIE_VOICE_FILES"; fi
+  cat > "$dir/stubs/gcloud" <<'STUB'
+#!/usr/bin/env bash
+[ -n "${GCLOUD_CALL_LOG:-}" ] && printf '%s\n' "$*" >> "$GCLOUD_CALL_LOG"
+[ -n "${GCLOUD_SECRETS_DIR:-}" ] || exit 1
+store="$GCLOUD_SECRETS_DIR"
+case "$1 $2 $3" in
+  "secrets list --project")
+    if [ -n "${GCLOUD_LIST_ANSWERS:-}" ]; then
+      asked="$(cat "$store.lists" 2>/dev/null || echo 0)"
+      asked=$((asked + 1)); echo "$asked" > "$store.lists"
+      if [ "$asked" -gt "$GCLOUD_LIST_ANSWERS" ]; then
+        echo "ERROR: (gcloud.secrets.list) HttpError accessing <https://secretmanager.googleapis.com/v1/projects/0/secrets>: response: <503>" >&2
+        exit 1
+      fi
+    fi
+    for f in "$store"/*; do [ -e "$f" ] && basename "$f"; done
+    exit 0
+    ;;
+  "secrets versions access")
+    name=""
+    for a in "$@"; do case "$a" in --secret=*) name="${a#--secret=}" ;; esac; done
+    if [ "$name" = "AUNTIE_VOICE_FILES" ] && [ "${GCLOUD_VOICE_ACCESS:-}" = "denied" ]; then
+      echo "ERROR: (gcloud.secrets.versions.access) PERMISSION_DENIED: Permission 'secretmanager.versions.access' denied on resource (or it may not exist)." >&2
+      exit 1
+    fi
+    [ -n "$name" ] && [ -f "$store/$name" ] || exit 1
+    cat "$store/$name"
+    exit 0
+    ;;
+  "secrets create AUNTIE_VOICE_FILES")
+    if [ -e "$store/AUNTIE_VOICE_FILES" ]; then
+      echo "ERROR: (gcloud.secrets.create) ALREADY_EXISTS: Secret [AUNTIE_VOICE_FILES] already exists." >&2
+      exit 1
+    fi
+    : > "$store.created"
+    exit 0
+    ;;
+  "secrets versions add")
+    if [ "$4" != "AUNTIE_VOICE_FILES" ] || { [ ! -e "$store/$4" ] && [ ! -e "$store.created" ]; }; then
+      echo "ERROR: (gcloud.secrets.versions.add) NOT_FOUND: Secret [$4] not found." >&2
+      exit 1
+    fi
+    case " $* " in
+      *" --data-file=- "*) ;;
+      *) echo "stub gcloud: the value has to arrive on stdin (--data-file=-)" >&2; exit 1 ;;
+    esac
+    if [ "${GCLOUD_VOICE_ADD:-}" = "lose" ]; then
+      cat > /dev/null
+      printf 'bm90IHdoYXQgd2FzIHNlbnQ=' > "$store/$4"
+      exit 0
+    fi
+    cat > "$store/$4"
+    exit 0
+    ;;
+esac
+exit 1
+STUB
+  chmod +x "$dir/stubs/gcloud"
+}
+
+# run_push <dir> [VAR=VAL ...]: `push` from that repo, as the operator runs it.
+# Output to $dir/push-out, exit code echoed.
+run_push() {
+  local dir="$1"; shift
+  local rc
+  ( cd "$dir/repo" && PATH="$dir/stubs:$PATH" env "$@" node scripts/voice-secret.mjs push ) > "$dir/push-out" 2>&1
+  rc=$?
+  printf '%s' "$rc"
+}
+
+# voice_quiet <label> <text> [stored value]: the text repeats no name out of
+# the voice files and no piece of the stored value.
+voice_quiet() {
+  if printf '%s' "$2" | grep -qiE "$VOICE_NAMES"; then
+    bad "voice: $1 repeats a name out of the voice files"
+  elif [ -n "${3:-}" ] && printf '%s' "$2" | grep -qF "${3:0:24}"; then
+    bad "voice: $1 carries the stored value"
+  else
+    ok "voice: $1 repeats no name and no part of the stored value"
+  fi
+}
+
+# --- push, on the Mac -------------------------------------------------------
+# No copy stored yet: push creates the secret, stores the files and reads them
+# back.
+DPM="$(admin_repo)"
+voice_files "$DPM" "$GOOD_NAMES"
+voice_store "$DPM"
+RCPM="$(run_push "$DPM" GCLOUD_SECRETS_DIR="$DPM/secrets" GCLOUD_CALL_LOG="$DPM/gcalls")"
+OUT="$(cat "$DPM/push-out")"
+STORED="$(cat "$DPM/secrets/AUNTIE_VOICE_FILES" 2>/dev/null)"
+if [ "$RCPM" = "0" ] && [ -n "$STORED" ] && [ "$STORED" = "$(voice_bundle "$DPM" "$(voice_dir "$DPM")")" ] &&
+   printf '%s' "$OUT" | grep -qF "voice: created AUNTIE_VOICE_FILES" &&
+   printf '%s' "$OUT" | grep -qF "voice: stored 3 files as AUNTIE_VOICE_FILES and read them back"; then
+  ok "voice push: with no copy stored, creates the secret, stores the three files and reads them back"
+else
+  bad "voice push: did not store the files (rc=$RCPM)"; printf '%s\n' "$OUT" | tail -8
+fi
+if grep -qF -- "--data-file=-" "$DPM/gcalls" && ! grep -qF "${STORED:0:24}" "$DPM/gcalls"; then
+  ok "voice push: the value goes to gcloud on stdin, never on a command line"
+else
+  bad "voice push: the value was put on a gcloud command line, or was not sent on stdin"
+fi
+voice_quiet "push output" "$OUT" "$STORED"
+voice_quiet "the gcloud command lines push ran" "$(cat "$DPM/gcalls")" "$STORED"
+
+# The same files again: nothing to store, and no new version.
+: > "$DPM/gcalls"
+RCPM2="$(run_push "$DPM" GCLOUD_SECRETS_DIR="$DPM/secrets" GCLOUD_CALL_LOG="$DPM/gcalls")"
+if [ "$RCPM2" = "0" ] && grep -qF "already holds these 3 files" "$DPM/push-out" &&
+   ! grep -qF "versions add" "$DPM/gcalls"; then
+  ok "voice push: files that are already stored add no new version"
+else
+  bad "voice push: a second push of the same files did not stop short (rc=$RCPM2)"; tail -5 "$DPM/push-out"
+fi
+
+# Files a release would refuse are not stored: a stored copy of them would
+# refuse every scheduled release.
+DPB="$(admin_repo)"
+voice_files "$DPB" "$BAD_NAMES"
+voice_store "$DPB"
+RCPB="$(run_push "$DPB" GCLOUD_SECRETS_DIR="$DPB/secrets" GCLOUD_CALL_LOG="$DPB/gcalls")"
+OUT="$(cat "$DPB/push-out")"
+if [ "$RCPB" != "0" ] && printf '%s' "$OUT" | grep -qF "voice: refused (voice_sample_names_empty)" &&
+   printf '%s' "$OUT" | grep -qF "nothing was stored" &&
+   [ ! -e "$DPB/secrets/AUNTIE_VOICE_FILES" ] && [ ! -e "$DPB/gcalls" ]; then
+  ok "voice push: files the check refuses are not stored, and gcloud is never called"
+else
+  bad "voice push: unusable files were stored, or gcloud was called (rc=$RCPB)"; printf '%s\n' "$OUT" | tail -5
+fi
+voice_quiet "a refused push" "$OUT"
+
+# No files in the checkout: nothing to store, and the command that copies them in.
+DPN="$(admin_repo)"
+voice_store "$DPN"
+RCPN="$(run_push "$DPN" GCLOUD_SECRETS_DIR="$DPN/secrets" GCLOUD_CALL_LOG="$DPN/gcalls")"
+if [ "$RCPN" != "0" ] && grep -qF "npm run sync:voice --prefix auntieos-admin/web/functions" "$DPN/push-out" &&
+   [ ! -e "$DPN/secrets/AUNTIE_VOICE_FILES" ] && [ ! -e "$DPN/gcalls" ]; then
+  ok "voice push: a checkout without the files stores nothing and names the copy command"
+else
+  bad "voice push: a checkout without the files did not stop (rc=$RCPN)"; tail -5 "$DPN/push-out"
+fi
+
+# A Secret Manager that cannot be asked: says so, exit 4, nothing claimed.
+DPU="$(admin_repo)"
+voice_files "$DPU" "$GOOD_NAMES"
+RCPU="$(run_push "$DPU")"
+if [ "$RCPU" = "4" ] && grep -qF "voice: Secret Manager could not be asked" "$DPU/push-out" &&
+   ! grep -qF "stored 3 files" "$DPU/push-out"; then
+  ok "voice push: a Secret Manager that cannot be asked is not reported as stored"
+else
+  bad "voice push: an unreachable Secret Manager did not exit 4 (rc=$RCPU)"; tail -5 "$DPU/push-out"
+fi
+
+# A write that exits 0 and did not land: caught by reading it back.
+DPL="$(admin_repo)"
+voice_files "$DPL" "$GOOD_NAMES"
+voice_store "$DPL"
+RCPL="$(run_push "$DPL" GCLOUD_SECRETS_DIR="$DPL/secrets" GCLOUD_VOICE_ADD=lose)"
+if [ "$RCPL" != "0" ] && grep -qF "is not what was sent" "$DPL/push-out" &&
+   ! grep -qF "and read them back" "$DPL/push-out"; then
+  ok "voice push: a version that does not read back as what was sent is reported, not claimed"
+else
+  bad "voice push: a lost write was reported as stored (rc=$RCPL)"; tail -5 "$DPL/push-out"
+fi
+
+# --- restore, on the runner -------------------------------------------------
+# The copy the Mac pushed above, in a checkout with no voice files.
+DRG="$(admin_repo)"
+voice_store "$DRG" "$STORED"
+RCRG="$(run_release "$DRG" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRG/secrets" GCLOUD_CALL_LOG="$DRG/gcalls" \
+  FIREBASE_CALL_LOG="$DRG/calls" FIREBASE_VOICE_LOG="$DRG/voice-at-deploy")"
+OUT="$(stripped "$DRG/out")"
+if [ "$RCRG" = "0" ] &&
+   printf '%s' "$OUT" | grep -qF "voice: restored 3 files from Secret Manager (AUNTIE_VOICE_FILES) for this run" &&
+   printf '%s' "$OUT" | grep -qF "voice: sample names 2 declared (2 spellings), 4 replaced, none left" &&
+   printf '%s' "$OUT" | grep -qF "voice: the files this release uploads are usable" &&
+   printf '%s' "$OUT" | grep -qF "They came from Secret Manager" &&
+   [ "$(admin_calls "$DRG/calls" functions:default)" = "1" ]; then
+  ok "voice restore: a stored copy is restored, passes the check, and the admin functions deploy"
+else
+  bad "voice restore: a good stored copy did not carry the release (rc=$RCRG)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+if [ "$(cat "$DRG/voice-at-deploy" 2>/dev/null)" = "3 $(voice_sum "$(voice_dir "$DPM")")" ]; then
+  ok "voice restore: functions:default deployed with the three files the Mac pushed, byte for byte"
+else
+  bad "voice restore: the deploy did not have the pushed files (saw '$(cat "$DRG/voice-at-deploy" 2>/dev/null)')"
+fi
+if [ ! -e "$(voice_dir "$DRG")" ] &&
+   printf '%s' "$OUT" | grep -qF "voice: the files restored for this run were removed from the checkout" &&
+   [ -z "$(cd "$DRG/repo" && git status --porcelain)" ] &&
+   [ "$(cat "$DRG/repo/.release-state" 2>/dev/null)" = "$(cd "$DRG/repo" && git rev-parse HEAD)" ]; then
+  ok "voice restore: the files are gone when the release ends, and the tree it leaves is clean"
+else
+  bad "voice restore: the restored files outlived the release, or the release did not finish"
+  ls -R "$(voice_dir "$DRG")" 2>/dev/null | head -5
+fi
+voice_quiet "a release that restored the files" "$OUT" "$STORED"
+voice_quiet "the gcloud command lines that release ran" "$(cat "$DRG/gcalls")" "$STORED"
+
+# Preflight only: the one run that proves the stored copy before an `on` night.
+DRP="$(admin_repo)"
+voice_store "$DRP" "$STORED"
+RCRP="$(run_release "$DRP" "${ADMIN_ENV[@]}" RELEASE_PREFLIGHT_ONLY=1 GCLOUD_SECRETS_DIR="$DRP/secrets" \
+  FIREBASE_CALL_LOG="$DRP/calls")"
+OUT="$(stripped "$DRP/out")"
+if [ "$RCRP" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: restored 3 files" &&
+   printf '%s' "$OUT" | grep -qF "voice: the files this release uploads are usable" &&
+   [ ! -e "$(voice_dir "$DRP")" ] && ! grep -q "deploy" "$DRP/calls" 2>/dev/null; then
+  ok "voice restore: a preflight restores, checks and removes the files, and deploys nothing"
+else
+  bad "voice restore: a preflight did not prove the stored copy (rc=$RCRP)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+
+# The release stops later, at the admin deploy: the files still leave.
+DRF="$(admin_repo)"
+voice_store "$DRF" "$STORED"
+RCRF="$(run_release "$DRF" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRF/secrets" \
+  FIREBASE_VOICE_LOG="$DRF/voice-at-deploy" FIREBASE_ADMIN_FAIL_TEXT="$MISSING_TEXT")"
+OUT="$(stripped "$DRF/out")"
+if [ "$RCRF" != "0" ] && [ "$(cut -d' ' -f1 "$DRF/voice-at-deploy" 2>/dev/null)" = "3" ] &&
+   [ ! -e "$(voice_dir "$DRF")" ] &&
+   printf '%s' "$OUT" | grep -qF "voice: the files restored for this run were removed from the checkout"; then
+  ok "voice restore: a release that stops after restoring still removes the files"
+else
+  bad "voice restore: a stopped release left the restored files behind (rc=$RCRF)"
+  ls -R "$(voice_dir "$DRF")" 2>/dev/null | head -5
+fi
+
+# Secret Manager answers and holds no copy: as before the copy existed.
+DRA="$(admin_repo)"
+voice_store "$DRA"
+RCRA="$(run_release "$DRA" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRA/secrets" FIREBASE_CALL_LOG="$DRA/calls")"
+OUT="$(stripped "$DRA/out")"
+if [ "$RCRA" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: Secret Manager holds no AUNTIE_VOICE_FILES" &&
+   printf '%s' "$OUT" | grep -qF "voice: NOT IN THIS CHECKOUT" &&
+   printf '%s' "$OUT" | grep -qF "No copy is stored for a release to restore" &&
+   printf '%s' "$OUT" | grep -qF "node scripts/voice-secret.mjs push" &&
+   ! printf '%s' "$OUT" | grep -qF "could not be asked" &&
+   [ "$(admin_calls "$DRA/calls" functions:default)" = "1" ] && [ ! -e "$(voice_dir "$DRA")" ]; then
+  ok "voice restore: no copy stored is told so with the command that stores one, and the release goes on"
+else
+  bad "voice restore: no stored copy did not release with a warning (rc=$RCRA)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+
+# A stored copy that is there and cannot be used refuses, before any deploy
+# and without writing anything. Each row: label, stored value, the reason the
+# refusal has to give.
+SRC_BAD="$(mktemp -d)"; voice_write "$SRC_BAD" "$BAD_NAMES"
+SRC_GOOD="$(mktemp -d)"; voice_write "$SRC_GOOD" "$GOOD_NAMES"
+# voice_damaged <kind> <voice dir>: a bundle of those files with one thing
+# wrong with it. A function of its own, and no JSON written at a call site:
+# bash 3.2 (the Mac's) brace-expands `{"a":1,"b":2}` inside "$( ... )", and the
+# fixture then holds half a bundle for a reason that has nothing to do with the
+# case.
+voice_damaged() {
+  node -e '
+    const fs = require("fs"), zlib = require("zlib");
+    const kind = process.argv[1], dir = process.argv[2];
+    const files = {};
+    for (const f of ["01_Voice_Bible.md", "02_Channel_Playbook.md", "corpus/exemplars.md"]) {
+      files[f] = fs.readFileSync(dir + "/" + f, "utf8");
+    }
+    const bundle = { format: "auntie-voice/1", files };
+    if (kind === "other-format") bundle.format = "something-else/9";
+    if (kind === "file-short") delete files["02_Channel_Playbook.md"];
+    if (kind === "extra-path") files["../../../evil.md"] = "Thessaly";
+    process.stdout.write(zlib.gzipSync(JSON.stringify(bundle)).toString("base64"));
+  ' "$1" "$2"
+}
+unusable_copy() {
+  local label="$1" value="$2" reason="$3" d rc out
+  d="$(admin_repo)"
+  voice_store "$d" "$value"
+  rc="$(run_release "$d" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$d/secrets" FIREBASE_CALL_LOG="$d/calls")"
+  out="$(stripped "$d/out")"
+  if [ "$rc" != "0" ] && printf '%s' "$out" | grep -qF "$reason" &&
+     printf '%s' "$out" | grep -qF "REFUSED: the stored copy of Ask Auntie's voice files cannot be used" &&
+     printf '%s' "$out" | grep -qF "node scripts/voice-secret.mjs push"; then
+    ok "voice restore: a stored copy that $label refuses the release, and says why"
+  else
+    bad "voice restore: a stored copy that $label did not refuse (rc=$rc)"
+    printf '%s\n' "$out" | grep -i "voice" | tail -8
+  fi
+  if grep -q "deploy" "$d/calls" 2>/dev/null || [ -e "$(voice_dir "$d")" ] ||
+     [ -n "$(find "$d" -name 'evil*' 2>/dev/null)" ]; then
+    bad "voice restore: a stored copy that $label deployed something or wrote a file"
+  else
+    ok "voice restore: a stored copy that $label deploys nothing and writes nothing"
+  fi
+  voice_quiet "the refusal of a stored copy that $label" "$out" "$value"
+}
+unusable_copy "fails the names check" "$(voice_bundle "$DPM" "$SRC_BAD")" \
+  "voice: the stored copy (AUNTIE_VOICE_FILES) was refused (voice_sample_names_empty)"
+unusable_copy "is empty" "" "cannot be used: it is empty."
+unusable_copy "is not base64" "Quillon and Bramwell, typed in by hand" "cannot be used: it is not base64."
+unusable_copy "is not compressed" "$(printf 'Quillon and Bramwell' | base64 | tr -d '\n')" \
+  "cannot be used: it does not decompress."
+unusable_copy "is not a bundle" "$(voice_raw 'Quillon was at the door. Tell Bramwell.')" \
+  "cannot be used: it does not hold a bundle."
+unusable_copy "is some other format" "$(voice_damaged other-format "$SRC_GOOD")" \
+  "cannot be used: its format is not auntie-voice/1."
+unusable_copy "is a file short" "$(voice_damaged file-short "$SRC_GOOD")" \
+  "cannot be used: it holds 2 of the 3 voice files."
+unusable_copy "carries a path that is not a voice file" "$(voice_damaged extra-path "$SRC_GOOD")" \
+  "cannot be used: it holds 1 file(s) that are not voice files."
+rm -rf "$SRC_BAD" "$SRC_GOOD"
+
+# Listed, and its value refused: not "no copy", and not a reason to ship
+# without the files.
+DRD="$(admin_repo)"
+voice_store "$DRD" "$STORED"
+RCRD="$(run_release "$DRD" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRD/secrets" GCLOUD_VOICE_ACCESS=denied \
+  FIREBASE_CALL_LOG="$DRD/calls")"
+OUT="$(stripped "$DRD/out")"
+if [ "$RCRD" != "0" ] &&
+   printf '%s' "$OUT" | grep -qF "voice: AUNTIE_VOICE_FILES is in Secret Manager and its value could not be read" &&
+   printf '%s' "$OUT" | grep -qF "REFUSED: the stored copy of Ask Auntie's voice files cannot be used" &&
+   printf '%s' "$OUT" | grep -qF "gcloud secrets versions list AUNTIE_VOICE_FILES" &&
+   ! printf '%s' "$OUT" | grep -qF "No copy is stored" &&
+   ! grep -q "deploy" "$DRD/calls" 2>/dev/null && [ ! -e "$(voice_dir "$DRD")" ]; then
+  ok "voice restore: a stored copy whose value is refused stops the release, and is not called missing"
+else
+  bad "voice restore: an unreadable stored copy did not refuse (rc=$RCRD)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+
+# Secret Manager answers step 0c and then goes quiet. That is not a machine
+# without gcloud, which is the case that warns and goes on (the first case in
+# this file's voice section): the copy is there and was never looked at, so
+# going on would ship a broken Ask Auntie over one dropped request.
+DRQ="$(admin_repo)"
+voice_store "$DRQ" "$STORED"
+RCRQ="$(run_release "$DRQ" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRQ/secrets" GCLOUD_LIST_ANSWERS=1 \
+  FIREBASE_CALL_LOG="$DRQ/calls")"
+OUT="$(stripped "$DRQ/out")"
+if [ "$RCRQ" != "0" ] &&
+   printf '%s' "$OUT" | grep -qF "client config: every declared VITE_* value resolved" &&
+   printf '%s' "$OUT" | grep -qF "voice: Secret Manager could not be asked for AUNTIE_VOICE_FILES" &&
+   printf '%s' "$OUT" | grep -qF "REFUSED: the stored copy of Ask Auntie's voice files could not be asked for" &&
+   printf '%s' "$OUT" | grep -qF "Run the release again" &&
+   ! printf '%s' "$OUT" | grep -qF "NOT IN THIS CHECKOUT" &&
+   ! grep -q "deploy" "$DRQ/calls" 2>/dev/null && [ ! -e "$(voice_dir "$DRQ")" ]; then
+  ok "voice restore: a Secret Manager that answered step 0c and then went quiet stops the release"
+else
+  bad "voice restore: a Secret Manager that went quiet after step 0c did not refuse (rc=$RCRQ)"
+  printf '%s\n' "$OUT" | grep -iE "voice|client config" | tail -10
+fi
+
+# --- the Mac: is the stored copy these files? --------------------------------
+# The files are in the checkout. The release ships them, never replaces or
+# removes them, and restores nothing. It also asks whether the copy stored for
+# the scheduled release is the same files, because an edit released from the
+# Mac and never stored is undone by the next scheduled run. Every answer to
+# that question, and no answer at all, is at most a yellow warning: none of
+# them may stop the release in hand, which has its files.
+#
+# voice_repacked <voice dir>: those files as a bundle packed another way (other
+# compression level, other key order, indented JSON). Same files, other bytes,
+# which is what a different Node on the Mac would store.
+voice_repacked() {
+  node -e '
+    const fs = require("fs"), zlib = require("zlib");
+    const files = {};
+    for (const f of ["corpus/exemplars.md", "02_Channel_Playbook.md", "01_Voice_Bible.md"]) {
+      files[f] = fs.readFileSync(process.argv[1] + "/" + f, "utf8");
+    }
+    const json = JSON.stringify({ files, format: "auntie-voice/1" }, null, 2);
+    process.stdout.write(zlib.gzipSync(json, { level: 1 }).toString("base64"));
+  ' "$1"
+}
+
+# drift_case <label> <stored value, or - for no secret> <said> <warned> [VAR=VAL ...]
+#   <said>    a line the output has to carry
+#   <warned>  1 when the output must name the command that stores the files,
+#             0 when it must not
+# Whatever is stored, the release finishes, deploys functions:default once with
+# the checkout's own files, leaves them as they were and repeats no name.
+drift_case() {
+  local label="$1" value="$2" said="$3" warned="$4"; shift 4
+  local d rc out before pushes
+  d="$(admin_repo)"
+  voice_files "$d" "$GOOD_NAMES"
+  if [ "$value" = "-" ]; then voice_store "$d"; value=""; else voice_store "$d" "$value"; fi
+  before="$(voice_sum "$(voice_dir "$d")")"
+  rc="$(run_release "$d" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$d/secrets" GCLOUD_CALL_LOG="$d/gcalls" \
+    FIREBASE_CALL_LOG="$d/calls" FIREBASE_VOICE_LOG="$d/voice-at-deploy" "$@")"
+  out="$(stripped "$d/out")"
+  pushes="$(printf '%s\n' "$out" | grep -cF "node scripts/voice-secret.mjs push")"
+  if [ "$rc" = "0" ] && printf '%s' "$out" | grep -qF "$said" &&
+     { { [ "$warned" = "1" ] && [ "$pushes" = "1" ]; } || { [ "$warned" = "0" ] && [ "$pushes" = "0" ]; }; } &&
+     ! printf '%s' "$out" | grep -qF "REFUSED"; then
+    ok "voice compare: a stored copy that $label is told so, and the release goes on"
+  else
+    bad "voice compare: a stored copy that $label stopped the release, or was reported wrongly (rc=$rc, push named $pushes time(s))"
+    printf '%s\n' "$out" | grep -i "voice" | tail -8
+  fi
+  if [ "$(admin_calls "$d/calls" functions:default)" = "1" ] &&
+     [ "$(cat "$d/voice-at-deploy" 2>/dev/null)" = "3 $before" ] &&
+     [ "$(voice_sum "$(voice_dir "$d")")" = "$before" ] && [ -s "$(voice_dir "$d")/corpus/exemplars.md" ] &&
+     printf '%s' "$out" | grep -qF "voice: the files this release uploads are usable" &&
+     ! printf '%s' "$out" | grep -qiE "restored|Secret Manager and leave"; then
+    ok "voice compare: with a stored copy that $label, the checkout's own files deploy and are left as they were"
+  else
+    bad "voice compare: with a stored copy that $label, the checkout's files were not the ones deployed, or were changed"
+    printf '%s\n' "$out" | grep -i "voice" | tail -8
+  fi
+  voice_quiet "a release told its stored copy $label" "$out" "$value"
+  voice_quiet "the gcloud command lines of a release told its stored copy $label" "$(cat "$d/gcalls" 2>/dev/null)" "$value"
+}
+
+SRC_SAME="$(mktemp -d)"; voice_write "$SRC_SAME" "$GOOD_NAMES"
+SRC_OTHER="$(mktemp -d)"; voice_write "$SRC_OTHER" $'kin: Quillon\nkinfolk: Bramwell\nauntie: Thessaly\n'
+drift_case "is these files" "$STORED" \
+  "voice: the stored copy (AUNTIE_VOICE_FILES) holds the same 3 files" 0
+drift_case "is these files packed another way" "$(voice_repacked "$SRC_SAME")" \
+  "voice: the stored copy (AUNTIE_VOICE_FILES) holds the same 3 files" 0
+drift_case "holds other files" "$(voice_bundle "$DPM" "$SRC_OTHER")" \
+  "voice: THE STORED COPY IS NOT THESE FILES" 1
+drift_case "does not exist" "-" \
+  "voice: NO COPY IS STORED for the scheduled release" 1
+# What the Mac's release was first tested against (#2399): a stored copy a
+# hosted release would refuse. Here it is a warning, never a refusal.
+drift_case "cannot be used" "Quillon and Bramwell, typed in by hand" \
+  "voice: THE STORED COPY CANNOT BE USED" 1
+# The mirror of the went-quiet refusal above. There, a checkout with no files
+# had nothing to ship. Here the files are in the checkout, so a Secret Manager
+# that answered step 0c and not this step costs a comparison and nothing else.
+drift_case "could not be asked for after step 0c" "$STORED" \
+  "voice: NOT COMPARED with the copy stored for the scheduled release" 1 GCLOUD_LIST_ANSWERS=1
+drift_case "is listed and not handed over" "$STORED" \
+  "voice: NOT COMPARED with the copy stored for the scheduled release" 1 GCLOUD_VOICE_ACCESS=denied
+rm -rf "$SRC_SAME" "$SRC_OTHER"
+
+# A run that does not upload the admin functions has no business with the voice
+# files, stored or not. Neither rule above may reach it: not the refusal of a
+# checkout with no files and a Secret Manager gone quiet, and not the
+# comparison. Both runs here have a store that answers step 0c once and then
+# nothing, and holds a copy a hosted release would refuse.
+NO_ADMIN_ENV=(RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0
+  RELEASE_RETRY_KEEP=0 GCLOUD_LIST_ANSWERS=1)
+for with_files in no yes; do
+  DRO="$(admin_repo)"
+  [ "$with_files" = "yes" ] && voice_files "$DRO" "$GOOD_NAMES"
+  voice_store "$DRO" "Quillon and Bramwell, typed in by hand"
+  RCRO="$(run_release "$DRO" "${NO_ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRO/secrets" GCLOUD_CALL_LOG="$DRO/gcalls" \
+    FIREBASE_CALL_LOG="$DRO/calls")"
+  OUT="$(stripped "$DRO/out")"
+  if [ "$RCRO" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: not looked at" &&
+     printf '%s' "$OUT" | grep -qF "client config: every declared VITE_* value resolved" &&
+     ! printf '%s' "$OUT" | grep -qF "AUNTIE_VOICE_FILES" && ! grep -qF "AUNTIE_VOICE_FILES" "$DRO/gcalls" &&
+     ! printf '%s' "$OUT" | grep -qiE "REFUSED|stored copy" &&
+     [ "$(cat "$DRO/repo/.release-state" 2>/dev/null)" = "$(cd "$DRO/repo" && git rev-parse HEAD)" ]; then
+    ok "voice: a run without the admin functions (voice files in the checkout: $with_files) never asks for the stored copy and is not stopped by a Secret Manager gone quiet"
+  else
+    bad "voice: a run without the admin functions (voice files in the checkout: $with_files) asked for the stored copy or was stopped (rc=$RCRO)"
+    printf '%s\n' "$OUT" | grep -iE "voice|REFUSED" | tail -8
+  fi
+done
+
+# Some of the files, not all: nothing is restored over them, and the one that
+# is there is left alone.
+DRS="$(admin_repo)"
+mkdir -p "$(voice_dir "$DRS")"
+printf 'only this one\n' > "$(voice_dir "$DRS")/01_Voice_Bible.md"
+voice_store "$DRS" "$STORED"
+RCRS="$(run_release "$DRS" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRS/secrets" FIREBASE_CALL_LOG="$DRS/calls")"
+OUT="$(stripped "$DRS/out")"
+if [ "$RCRS" = "0" ] &&
+   printf '%s' "$OUT" | grep -qF "voice: 1 of the 3 voice files are already in this checkout. Nothing was restored over them." &&
+   printf '%s' "$OUT" | grep -qF "Some of the files are here and some are not" &&
+   [ "$(cat "$(voice_dir "$DRS")/01_Voice_Bible.md")" = "only this one" ] &&
+   [ ! -e "$(voice_dir "$DRS")/02_Channel_Playbook.md" ] && [ ! -e "$(voice_dir "$DRS")/corpus" ]; then
+  ok "voice restore: a checkout with some of the files gets nothing restored over them"
+else
+  bad "voice restore: a partial set of files was overwritten, removed or not reported (rc=$RCRS)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+
+# A checkout where git does not ignore the voice folder: nothing is written
+# there, because a file git can see is a file somebody can commit.
+DRI="$(admin_repo)"
+( cd "$DRI/repo" && grep -v 'functions/voice' .gitignore > .gitignore.new && mv .gitignore.new .gitignore )
+commit_all "$DRI"; arm_ci "$DRI"
+voice_store "$DRI" "$STORED"
+RCRI="$(run_release "$DRI" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRI/secrets" FIREBASE_CALL_LOG="$DRI/calls")"
+OUT="$(stripped "$DRI/out")"
+if [ "$RCRI" != "0" ] && printf '%s' "$OUT" | grep -qF "voice: git does not ignore auntieos-admin/web/functions/voice/" &&
+   [ ! -e "$(voice_dir "$DRI")" ] && ! grep -q "deploy" "$DRI/calls" 2>/dev/null; then
+  ok "voice restore: nothing is written where git would not ignore it, and the release refuses"
+else
+  bad "voice restore: files were restored into a folder git does not ignore (rc=$RCRI)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
 fi
 
 echo

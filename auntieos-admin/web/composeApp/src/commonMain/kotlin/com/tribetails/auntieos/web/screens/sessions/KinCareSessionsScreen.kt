@@ -24,6 +24,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
+import com.tribetails.auntieos.web.screens.cutWhole
 import kotlinx.coroutines.flow.Flow
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -786,7 +787,7 @@ private fun KinCareCard(
             // ---- One-line notes preview ----
             if (session.notes.isNotBlank()) {
                 Text(
-                    text  = session.notes.take(120) + if (session.notes.length > 120) "…" else "",
+                    text  = cutWhole(session.notes, 120) + if (session.notes.length > 120) "…" else "",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )

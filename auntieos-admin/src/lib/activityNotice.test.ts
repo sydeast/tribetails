@@ -145,6 +145,11 @@ describe('#1819 the line the server writes now', () => {
       'Held back 1 invoice reminder: notices to households are turned off',
       'Held back 2 overdue invoice notices: notices to households are turned off',
       'Held back 3 visit reminders: the setting for notices to households could not be read',
+      // #2341, #2340: a run's turned-off copies, and a marketing blast's held ones.
+      'Did not send 14 invoice reminders: this notification is turned off in Settings',
+      'Did not send 1 overdue invoice notice: this notification is turned off in Settings',
+      'Held back 180 notices from a marketing blast: notices to households are turned off',
+      'Did not send 180 notices from a marketing blast: this notification is turned off in Settings',
     ]) {
       expect(activityEntryDescription({ ...summary, description: words })).toBe(words);
     }

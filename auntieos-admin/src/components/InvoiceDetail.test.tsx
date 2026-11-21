@@ -3556,6 +3556,41 @@ describe('InvoiceDetail open payment links (#1113)', () => {
     expect(line()).toHaveTextContent('Could not close an open payment link: You cannot expire this Checkout Session.');
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
   });
+  it('#2362: a cancelled invoice shows the same line, and its tooltip says cancelled', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({
+          status: 'cancelled',
+          editScope: 'none',
+          amountDue: 40,
+          total: 40,
+          checkoutSweep: { expiredIds: ['cs_a'], failed: [] },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(line()).toHaveTextContent('Open payment links closed (1)');
+    expect(line()?.getAttribute('title')).toBe(
+      'Stripe payment links that were still open when this invoice was cancelled',
+    );
+  });
+  it('#2362: a link still open on a cancelled invoice offers Try again', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({
+          status: 'cancelled',
+          editScope: 'none',
+          checkoutSweep: {
+            expiredIds: [],
+            failed: [{ sessionId: 'cs_b', reason: 'Stripe could not be reached from the server.' }],
+          },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(line()?.getAttribute('data-checkout-links')).toBe('failed');
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
   it('Try again calls the callable and reports a failure it returns', async () => {
     retryInvoiceCheckoutClose.mockResolvedValue({ ok: true, invoiceId: 'inv1', closedCount: 0, failedCount: 1 });
     render(
@@ -3648,6 +3683,17 @@ describe('InvoiceDetail Download PDF', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(link).toHaveAttribute('download', `invoice-${inv.invoiceNumber}.pdf`);
+  });
+  it('#2417: the PDF link of an invoice with no number never carries the stored id in its file name', async () => {
+    const user = userEvent.setup();
+    generateInvoicePdf.mockResolvedValue(PDF_URL);
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const inv = entry({ status: 'open', invoiceNumber: '' });
+    render(<InvoiceDetail invoice={inv} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Download PDF' }));
+    const link = await screen.findByRole('link', { name: 'Open PDF' });
+    expect(link).toHaveAttribute('download', 'invoice.pdf');
+    expect(link.getAttribute('download')).not.toContain(inv._id);
   });
 });
 describe('Link visits (#1245)', () => {

@@ -241,6 +241,99 @@ describe('publishGeneratedDraft', () => {
   });
 });
 
+describe('publishGeneratedDraft: an Auntie sends KinTale drafts only', () => {
+  const auntie = (data: unknown) =>
+    callableRequest(data, { uid: 'auntie1', token: { staffRole: 'auntie', name: 'Tia' } });
+  const HOUSEHOLDS = {
+    'kinfolk/kf-olivia': { firstName: 'Olivia' },
+    'kinfolk/kf-robyn': { firstName: 'Robyn' },
+  };
+
+  async function notThereForHer(draft: Record<string, unknown>) {
+    const before = { ...draft };
+    const { ctx, docs } = db({ 'generated_drafts/d1': draft, ...HOUSEHOLDS });
+    await expect(publishGeneratedDraftHandler(auntie({ draftId: 'd1', bodyCopy: 'Her words' }))).rejects.toMatchObject({
+      code: 'not-found',
+      message: 'This draft no longer exists. It may have been deleted.',
+    });
+    // Nothing was sent and the draft is as it was.
+    expect(ctx.writes).toEqual([]);
+    expect(docs['generated_drafts/d1']).toEqual(before);
+    expect(auditMock).not.toHaveBeenCalled();
+  }
+
+  it('HAPPY: an Auntie sends a KinTale draft', async () => {
+    const { ctx, docs } = db({ 'generated_drafts/d1': { ...GENERATE_JS_DRAFT }, ...HOUSEHOLDS });
+    const res = await publishGeneratedDraftHandler(auntie({ draftId: 'd1', bodyCopy: 'Mochi napped in the sun.' }));
+    expect(res.alreadyPublished).toBe(false);
+    expect(reportWrites(ctx)).toHaveLength(1);
+    expect(reportWrites(ctx)[0]!.data).toMatchObject({ kinfolkId: 'kf-olivia', status: 'SENT', authorId: 'auntie1' });
+    expect(docs['generated_drafts/d1']).toMatchObject({ status: DRAFT_STATUS_PUBLISHED, publishedReportId: res.reportId });
+  });
+
+  it('HAPPY: both spellings saying visit_report is still a KinTale draft', async () => {
+    const { ctx } = db({
+      'generated_drafts/d1': { ...GENERATE_JS_DRAFT, communicationType: 'visit_report' },
+      ...HOUSEHOLDS,
+    });
+    await publishGeneratedDraftHandler(auntie({ draftId: 'd1', bodyCopy: 'x' }));
+    expect(reportWrites(ctx)).toHaveLength(1);
+  });
+
+  it.each([
+    ['a Push draft', 'push'],
+    ['an Email draft', 'email'],
+    ['a Text draft', 'sms'],
+  ])('NEGATIVE: %s is not there for an Auntie', async (_label, type) => {
+    await notThereForHer({ ...GENERATE_JS_DRAFT, communication_type: type });
+  });
+
+  it('NEGATIVE: a draft whose type is not exactly visit_report is not there for an Auntie', async () => {
+    for (const type of ['Visit_Report', ' visit_report', 'visit_report ', 'visit_report\u00a0', 7, null]) {
+      auditMock.mockClear();
+      await notThereForHer({ ...GENERATE_JS_DRAFT, communication_type: type });
+    }
+  });
+
+  it('NEGATIVE: a draft whose two type fields disagree is not there for an Auntie', async () => {
+    await notThereForHer({ ...GENERATE_JS_DRAFT, communicationType: 'push' });
+    await notThereForHer({ ...GENERATE_JS_DRAFT, communicationType: '' });
+  });
+
+  it('NEGATIVE: a draft with no type is not there for an Auntie', async () => {
+    const { communication_type: _dropped, ...untyped } = GENERATE_JS_DRAFT;
+    await notThereForHer(untyped);
+  });
+
+  it('NEGATIVE: a draft carrying only the older spelling is not there for an Auntie', async () => {
+    await notThereForHer({ ...MIGRATED_DRAFT });
+  });
+
+  it('NEGATIVE: a sent draft of another type does not answer her with its KinTale', async () => {
+    await notThereForHer({ ...GENERATE_JS_DRAFT, communication_type: 'email', publishedReportId: 'r9' });
+  });
+
+  it('NEGATIVE: an account carrying both roles is held to KinTale drafts too', async () => {
+    const { ctx } = db({ 'generated_drafts/d1': { ...GENERATE_JS_DRAFT, communication_type: 'push' }, ...HOUSEHOLDS });
+    const both = callableRequest(
+      { draftId: 'd1', bodyCopy: 'x' },
+      { uid: 'confused1', token: { admin: true, staffRole: 'auntie' } },
+    );
+    await expect(publishGeneratedDraftHandler(both)).rejects.toMatchObject({ code: 'not-found' });
+    expect(ctx.writes).toEqual([]);
+  });
+
+  it('the owner still sends a draft of any type, and one with only the older spelling', async () => {
+    const typed = db({ 'generated_drafts/d1': { ...GENERATE_JS_DRAFT, communication_type: 'general' }, ...HOUSEHOLDS });
+    await publishGeneratedDraftHandler(admin({ draftId: 'd1', bodyCopy: 'x' }));
+    expect(reportWrites(typed.ctx)).toHaveLength(1);
+
+    const older = db({ 'generated_drafts/d1': { ...MIGRATED_DRAFT }, ...HOUSEHOLDS });
+    await publishGeneratedDraftHandler(admin({ draftId: 'd1', bodyCopy: 'x' }));
+    expect(reportWrites(older.ctx)).toHaveLength(1);
+  });
+});
+
 describe('deleteGeneratedDraft', () => {
   it('deletes an unsent draft and audits it', async () => {
     const { ctx, docs } = db({ 'generated_drafts/d1': { ...MIGRATED_DRAFT } });

@@ -108,6 +108,14 @@ export interface BookingDetailModalProps {
    * that has no business approving anything.
    */
   actions?: React.ReactNode;
+  /**
+   * An Auntie is signed in, from the access the admin layout resolved before
+   * the screen drew. Moving a visit (`rescheduleBooking`) and choosing who
+   * runs it (`assignAuntie`) are the owner's and refuse her, so the Reschedule
+   * panel and the Staffing buttons are not drawn. She still reads who is
+   * assigned, and writes notes. Left out, the sheet reads the token itself.
+   */
+  isAuntie?: boolean;
   /** Injected clock for the note cutoff, so the lock is testable. */
   nowMs?: () => number;
 }
@@ -160,6 +168,7 @@ export function BookingDetailModal({
   onOpenKinfolk,
   onOpenKinTale,
   actions,
+  isAuntie = false,
   nowMs = Date.now,
 }: BookingDetailModalProps) {
   const { showToast } = useToast();
@@ -185,7 +194,8 @@ export function BookingDetailModal({
   // here, not inside ReschedulePanel, so the confirmation names the same
   // `household` the rest of this sheet already reads.
   // #2027: the toast says who the move told, from the move's own answer.
-  const auntie = useIsAuntie();
+  const auntieRead = useIsAuntie();
+  const auntie = isAuntie || auntieRead;
   const handleRescheduled = useCallback(
     (notice: HouseholdNotice | null) => {
       showToast(
@@ -252,6 +262,7 @@ export function BookingDetailModal({
           batchId={batchId}
           visitId={visitId}
           enabled={isEnvelopeVisit}
+          canAssign={!auntie}
         />
 
         <DenPanel title="KinTale" subtitle="The recap this visit sent home." headingLevel={3}>
@@ -272,14 +283,16 @@ export function BookingDetailModal({
           )}
         </DenPanel>
 
-        <ReschedulePanel
-          entry={entry}
-          durationMinutes={durationMinutes}
-          businessZone={businessZone}
-          household={household}
-          auntie={auntie}
-          onDone={handleRescheduled}
-        />
+        {!auntie && (
+          <ReschedulePanel
+            entry={entry}
+            durationMinutes={durationMinutes}
+            businessZone={businessZone}
+            household={household}
+            auntie={auntie}
+            onDone={handleRescheduled}
+          />
+        )}
 
         {isEnvelopeVisit ? (
           <>
@@ -364,9 +377,11 @@ interface AssignedAuntiePanelProps {
   visitId: string;
   /** False on a legacy flat session: the control renders DISABLED with the reason. */
   enabled: boolean;
+  /** False for an Auntie: she reads who is assigned and is drawn no button to change it. */
+  canAssign: boolean;
 }
 
-function AssignedAuntiePanel({ kinfolkId, batchId, visitId, enabled }: AssignedAuntiePanelProps) {
+function AssignedAuntiePanel({ kinfolkId, batchId, visitId, enabled, canAssign }: AssignedAuntiePanelProps) {
   const [assignedUid, setAssignedUid] = useState<string | null>(null);
   const [assignedName, setAssignedName] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
@@ -461,24 +476,26 @@ function AssignedAuntiePanel({ kinfolkId, batchId, visitId, enabled }: AssignedA
         <Fact label="Assigned Auntie">{enabled ? displayed : 'Unavailable'}</Fact>
       </dl>
 
-      <div className="bdm__row">
-        <GhostButton
-          label={assigning ? 'Saving…' : pickerOpen ? 'Hide the list' : 'Choose an Auntie'}
-          disabled={!enabled || assigning}
-          onClick={() => {
-            const next = !pickerOpen;
-            setPickerOpen(next);
-            if (next) void ensureRoster();
-          }}
-        />
-        <GhostButton
-          label="Unassign"
-          disabled={!enabled || assigning || assignedUid === null}
-          onClick={() => void changeAssignee(null, null)}
-        />
-      </div>
+      {canAssign && (
+        <div className="bdm__row">
+          <GhostButton
+            label={assigning ? 'Saving…' : pickerOpen ? 'Hide the list' : 'Choose an Auntie'}
+            disabled={!enabled || assigning}
+            onClick={() => {
+              const next = !pickerOpen;
+              setPickerOpen(next);
+              if (next) void ensureRoster();
+            }}
+          />
+          <GhostButton
+            label="Unassign"
+            disabled={!enabled || assigning || assignedUid === null}
+            onClick={() => void changeAssignee(null, null)}
+          />
+        </div>
+      )}
 
-      {!enabled && <EmptyHint>{NO_ENVELOPE_ASSIGN}</EmptyHint>}
+      {!enabled && canAssign && <EmptyHint>{NO_ENVELOPE_ASSIGN}</EmptyHint>}
 
       {pickerOpen && enabled && (
         <div className="bdm__picker">

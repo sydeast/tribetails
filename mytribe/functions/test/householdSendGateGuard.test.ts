@@ -146,6 +146,11 @@ const ALLOWED = new Map<string, string>([
     'BYPASS: one operator-composed email or text to one household. Never scheduled.',
   ],
   [
+    'mytribe/functions/src/admin/sendGeneratedDraft.ts',
+    'BYPASS (#2408): the entry that holds the whole of one operator-composed Text draft, which goes ' +
+      'through sendExternalMessage.ts above. Written only for a text about to go, removed if none went. Never scheduled.',
+  ],
+  [
     'mytribe/functions/src/lib/sendFromTemplate.ts',
     'BYPASS: invite and recovery mail, outside the catalog entirely. ' +
       'Operator-initiated, and onboarding is what has to work while the gate is shut.',

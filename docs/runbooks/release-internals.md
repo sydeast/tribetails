@@ -88,7 +88,7 @@ and prints `resumed:` instead of refusing. It uses the same rule as the release
 | 0b | CI verdict for HEAD | Asks GitHub whether every check is green for this exact commit, **e2e included**. `npm run check` does not run e2e, so until this existed a red e2e could not stop a release. See below. |
 | 0c | Client build config (`VITE_*`) | Writes each web app's `.env.production.local` from Secret Manager. Runs before step 1 because `vite build` inlines these values; a value that arrives later ships as an empty string. See "Client build config (`VITE_*`) comes from the store too". |
 | 1 | `npm run check` | Typecheck, lint, contracts, seeds, functions build, test, web builds. The functions build runs before the tests because `functionTargetLoading.test.ts` loads `lib/index.js` and refuses a missing or stale one (#1401). Not optional theatre: this is what produces the `dist/` that step 6 uploads. |
-| 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. |
+| 1b | Secret preflight | Every secret the code DECLARES must exist. Firebase validates these before uploading, and one missing name fails the whole codebase. Refuses here, before any deploy. Under `RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` it then runs `auntieos-admin/web/functions/checkVoice.js` on the voice files the admin codebase uploads: files that are present and that `generate.js` would refuse stop the release here. A checkout with none of them (the hosted runner) gets the copy stored in Secret Manager as `AUNTIE_VOICE_FILES`, restored by `scripts/voice-secret.mjs` for the length of the run and checked the same way; a stored copy that cannot be used stops the release, and no stored copy at all is reported and goes on (#2399). A checkout that has the files (the Mac) ships its own, and is told in yellow when the stored copy is not the same files; that never stops it. See "Ask Auntie's voice files on the runner". Neither script prints a line of a voice file, only a reason and counts. |
 | 1c | Android build | Assembles **both** signed release APKs, operator and portal. Runs before the first deploy so a build failure costs nothing; the uploads are step 6b. When Gradle's output says it is "running on Java" the wrong version, the refusal names the JDK instead of the signing keys. |
 | 2 | Firestore indexes | Before the code that queries them. A query with no index fails at RUNTIME, not at build. |
 | 3 | Wait for indexes | The CLI returns when Firestore ACCEPTS an index, not when it is Enabled. The run blocks; the CLI will not. |
@@ -1055,8 +1055,15 @@ The release job, in order, and only when the mode is `preflight` or `on`:
    the run summary. A preflight never builds an APK, so this is the only thing
    in a preflight that proves the signing secrets are right.
 9. Runs `npm run deploy` (preflight builds `mytribe/functions` first so step
-   1b compares the declared secrets for real).
-10. Deletes everything step 7 wrote, in an `always()` step.
+   1b compares the declared secrets for real). Step 1b of `release.sh` also
+   restores Ask Auntie's voice files from Secret Manager, because this
+   checkout has none; see
+   [Ask Auntie's voice files on the runner](#ask-aunties-voice-files-on-the-runner).
+10. Deletes everything step 7 wrote, and the voice files if a cancelled run
+    left them behind, in an `always()` step. That covers the workspace and
+    the two places in the temp directory a killed process can leave them: the
+    folder the restore checks them in (`voice-restore-*`) and the zip
+    `firebase-tools` packs the functions into (`firebase-functions-*`).
 
 **Cost of a full run.** The runner starts empty every run, so it has no
 `.release-state` and deploys the whole functions fleet (about an hour), on top
@@ -1130,7 +1137,7 @@ or touches Auth users or Firestore data).
 | `roles/run.admin` | 2nd gen functions are Cloud Run services: the deploy sets their invoker policy. Step 8 lists and deletes old revisions. |
 | `roles/cloudscheduler.admin` | About 25 scheduled functions (`onSchedule`, and the Python `nightly_reconcile`) are Cloud Scheduler jobs the deploy creates and updates. |
 | `roles/eventarc.admin` | About 25 Firestore-triggered functions are Eventarc triggers the deploy creates and updates. |
-| `roles/secretmanager.admin` | Steps 0c and 1b list secrets and read the `VITE_*` values. The deploy also grants each function's runtime account access to the secrets it declares, which is a change to the secret's own IAM policy; no narrower predefined role allows that. |
+| `roles/secretmanager.admin` | Steps 0c and 1b list secrets and read the `VITE_*` values, and step 1b reads Ask Auntie's voice files (`AUNTIE_VOICE_FILES`). The deploy also grants each function's runtime account access to the secrets it declares, which is a change to the secret's own IAM policy; no narrower predefined role allows that. |
 | `roles/firebasehosting.admin` | Step 6 deploys both sites. |
 | `roles/firebaserules.admin` | Steps 4 and 4b deploy Firestore and Storage rules. |
 | `roles/datastore.indexAdmin` | Step 2 deploys indexes and step 3 waits for them to finish building. |
@@ -1244,6 +1251,9 @@ gh run watch --repo sydeast/tribetails "$(gh run list --repo sydeast/tribetails 
 A passing preflight has signed in through Workload Identity, read Secret Manager
 (steps 0c and 1b), read CI's verdict with the job token (step 0b), installed
 every dependency root, built the `reconcile` venv, and opened both keystores.
+Once the voice files are stored (see
+[Ask Auntie's voice files on the runner](#ask-aunties-voice-files-on-the-runner)),
+it has also restored and checked them.
 Compare the two fingerprints in its summary with the Mac's before going on.
 If the run says "Nothing merged since the last release", it stopped after the
 credential check and proved none of the rest; run it again after the next merge.
@@ -1260,6 +1270,84 @@ To turn it off again at any point:
 ```bash
 gh variable set NIGHTLY_RELEASE --repo sydeast/tribetails --body off
 ```
+
+### Ask Auntie's voice files on the runner
+
+`generateAuntieCopy` reads three files from
+`auntieos-admin/web/functions/voice/` and answers every draft with a 500 when
+one is missing. They hold real names, so they are gitignored and the runner's
+checkout has none. Until #2399 a hosted release uploaded the admin functions
+without them, and Ask Auntie stayed broken until the next release from the
+Mac.
+
+The files are now also kept in Secret Manager, as one secret named
+`AUNTIE_VOICE_FILES`. Step 1b of `release.sh` restores them into a checkout
+that has none, runs `checkVoice.js` on them, and removes them when the run
+ends, however it ends. The release account reads the secret through the
+`roles/secretmanager.admin` grant from setup step 6, so there is no new
+permission and no repository secret.
+
+**Store the files, and store them again after every edit to them.** From the
+repo root on the Mac:
+
+```bash
+npm run sync:voice --prefix auntieos-admin/web/functions \
+  && node scripts/voice-secret.mjs push
+```
+
+The first line copies `auntieos-admin/voice/` into the functions folder and
+checks it. The second creates the secret if it does not exist, stores the
+three files, reads them back and compares. It ends with
+`voice: stored 3 files as AUNTIE_VOICE_FILES and read them back`. It stores
+nothing when the files are missing or fail the check, and says
+`already holds these 3 files` when the stored copy is the same as the Mac's,
+which is also the way to find out whether it is.
+
+A hosted release ships the stored copy, not the Mac's. If you edit the voice
+files, release from the Mac and skip the push, the next Monday or Thursday
+run puts the older voice back. The release from the Mac warns about that in
+yellow (the second table below).
+
+What step 1b does on the runner:
+
+| Secret Manager holds | The release |
+|---|---|
+| A copy that passes `checkVoice.js` | Restores it, ships the admin functions with it, removes it |
+| No `AUNTIE_VOICE_FILES` | Warns and goes on. Ask Auntie answers every draft with an error |
+| A copy that is empty, damaged or refused by `checkVoice.js`, or whose value cannot be read | Refuses before any deploy |
+| No answer, after answering step 0c of the same run | Refuses before any deploy. A dropped request: run it again |
+| No answer at any point in the run (no gcloud, signed out, `RELEASE_SKIP_CLIENT_SECRETS=1`) | Warns and goes on, as for no copy. The runner does not get here: step 0c refuses first |
+
+A release from the Mac ships the files already in the checkout, whatever the
+secret holds. It reads the secret for one thing: once its own files pass
+`checkVoice.js`, step 1b runs `node scripts/voice-secret.mjs compare`, which
+hashes both sides in memory and says whether the stored copy is the same
+files. It writes the stored copy nowhere and prints no hash.
+
+| The stored copy | The release from the Mac prints |
+|---|---|
+| Holds the same files | `voice: the stored copy (AUNTIE_VOICE_FILES) holds the same 3 files` |
+| Holds other files | Yellow: `THE STORED COPY IS NOT THESE FILES`, and the `push` command |
+| Does not exist | Yellow: `NO COPY IS STORED`, and the `push` command |
+| Is empty or damaged | Yellow: `THE STORED COPY CANNOT BE USED`, and the `push` command |
+| Could not be read (no gcloud, signed out, a dropped request) | Yellow: `NOT COMPARED`, and the `push` command |
+
+None of these stops the release, a Secret Manager that answered step 0c and
+then went quiet included. The release in hand has its files; the warning is
+about the next scheduled one.
+
+To see when the stored copy last changed, without printing it:
+
+```bash
+gcloud secrets versions list AUNTIE_VOICE_FILES --project auntieos-ttpc
+```
+
+To prove the stored copy before a scheduled run needs it, start a preflight
+(step 10 above). Its log has `voice: restored 3 files from Secret Manager` and
+`voice: the files this release uploads are usable` under step 1b.
+
+Why the files are restored at deploy time and not read by the function at
+runtime: the header of `scripts/voice-secret.mjs`.
 
 ### What only a full run can prove
 

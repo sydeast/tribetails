@@ -81,6 +81,14 @@ vi.mock('./screens/CoveragePackageBuilder', () => ({
 vi.mock('./screens/MarketingBlasts', () => ({
   MarketingBlasts: () => <div>MARKETING BLASTS SCREEN</div>,
 }));
+// Tribal Intel: the owner's notes about households, Kinfolk and Kin.
+vi.mock('./screens/TribalIntel', () => ({ TribalIntel: () => <div>TRIBAL INTEL SCREEN</div> }));
+// Invites, Form Schemas and Feature Flags: none of the three can do anything
+// for an Auntie, so they join the owner's screens.
+vi.mock('./screens/Invites', () => ({ Invites: () => <div>INVITES SCREEN</div> }));
+vi.mock('./routes/InviteDetailView', () => ({ InviteDetailView: () => <div>INVITE DETAIL SCREEN</div> }));
+vi.mock('./routes/FormSchemasView', () => ({ FormSchemasView: () => <div>FORM SCHEMAS SCREEN</div> }));
+vi.mock('./screens/FeatureFlags', () => ({ FeatureFlags: () => <div>FEATURE FLAGS SCREEN</div> }));
 
 // #2187: the real route adapter over a stand-in screen that says which flag it
 // was handed, so the test reads what the router's own access produced.
@@ -377,9 +385,20 @@ describe('#2200 / #2201 the owner and the test admin keep all four', () => {
 describe('#2200 / #2201 every owner-only nav entry is guarded in the router', () => {
   const ownerOnly = NAV.filter((e) => e.ownerOnly);
 
-  it('covers the six owner screens and agrees with isOwnerOnlyPath', () => {
+  it('covers the ten owner screens and agrees with isOwnerOnlyPath', () => {
     expect(ownerOnly.map((e) => e.slug).sort()).toEqual(
-      ['activity', 'invoices', 'marketing-blasts', 'packages', 'settings', 'templates'],
+      [
+        'activity',
+        'feature-flags',
+        'form-schemas',
+        'invites',
+        'invoices',
+        'marketing-blasts',
+        'packages',
+        'settings',
+        'templates',
+        'tribal-intel',
+      ],
     );
     for (const e of NAV) expect(isOwnerOnlyPath(`/${e.slug}`)).toBe(e.ownerOnly === true);
   });
@@ -392,6 +411,94 @@ describe('#2200 / #2201 every owner-only nav entry is guarded in the router', ()
     });
   }
 });
+
+/**
+ * Tribal Intel is the owner's screen. Its notes are written by the owner and
+ * feed the dossiers, the household records and the 411s; an Auntie reads the
+ * 411, never the notes. She cannot add, edit or delete one either, so the
+ * screen has nothing for her: no rail entry, and its address sends her Home.
+ */
+describe('an Auntie never reaches Tribal Intel', () => {
+  it('shows her no Tribal Intel rail entry, and keeps KinTale templates', async () => {
+    await boot('/home', AUNTIE_CLAIMS);
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    expect(railLink('Tribal Intel')).toBeNull();
+    expect(railLink('KinTale templates')).not.toBeNull();
+  });
+
+  it('sends her from /tribal-intel to Home', async () => {
+    await boot('/tribal-intel', AUNTIE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
+  });
+
+  it('treats a double-claimed account as the Auntie', async () => {
+    await boot('/tribal-intel', DOUBLE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
+    expect(railLink('Tribal Intel')).toBeNull();
+  });
+
+  // #2429: the retired address redirects, and carries the same guard as the
+  // screen it lands on, so it sends her Home and never to the notes.
+  it('opens no notes screen for her at the old /training-docs address', async () => {
+    await boot('/training-docs', AUNTIE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
+  });
+
+  it('sends a double-claimed account Home from the old /training-docs address', async () => {
+    await boot('/training-docs', DOUBLE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
+  });
+});
+
+describe('the owner and the test admin keep Tribal Intel', () => {
+  for (const claims of [OWNER_CLAIMS, TEST_ADMIN_CLAIMS]) {
+    const who = claims === OWNER_CLAIMS ? 'owner' : 'test admin';
+
+    it(`shows the ${who} the rail entry`, async () => {
+      await boot('/home', claims);
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      expect(railLink('Tribal Intel')).not.toBeNull();
+    });
+
+    it(`opens Tribal Intel for the ${who}`, async () => {
+      await boot('/tribal-intel', claims);
+      expect(await screen.findByText('TRIBAL INTEL SCREEN')).toBeInTheDocument();
+      expect(window.location.pathname).toBe('/tribal-intel');
+    });
+
+    // #2429: the old address used to show the not-found card to everyone.
+    it(`sends the ${who} from the old /training-docs address to Tribal Intel`, async () => {
+      await boot('/training-docs', claims);
+      await waitFor(() => expect(window.location.pathname).toBe('/tribal-intel'));
+      expect(await screen.findByText('TRIBAL INTEL SCREEN')).toBeInTheDocument();
+    });
+  }
+
+  it('keeps it for the offline session whose claims were not read', async () => {
+    const offline = Object.assign(new Error('Failed to fetch'), { code: 'auth/network-request-failed' });
+    currentUser = USER;
+    window.history.replaceState(null, '', '/tribal-intel');
+    const { router } = await importRouterTrackingListeners();
+    getIdTokenResult.mockRejectedValue(offline);
+    lastRouter = router;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/Signed in, but out of touch/i)).toBeInTheDocument();
+    expect(await screen.findByText('TRIBAL INTEL SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/tribal-intel');
+    expect(railLink('Tribal Intel')).not.toBeNull();
+  });
+});
+
 /**
  * #2187, operator ruling 2026-11-14: "No, only I can". Making a booking is the
  * owner's alone. Bookings itself stays hers (she works the visits on it), so
@@ -427,4 +534,94 @@ describe('#2187 an Auntie gets Bookings without New booking', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
   }
+});
+
+/**
+ * Three screens that could only refuse an Auntie. Invites: the list, one
+ * invite, sending and revoking are all the owner's, because an invite grants a
+ * person portal access. Form Schemas: the list cannot load for her. Feature
+ * Flags: every switch is refused. Each comes off her rail and its address
+ * sends her Home, the way Settings and Templates do. The owner, the test admin
+ * and the offline session keep all three.
+ */
+const CONFIG_SCREENS = [
+  { rail: 'Invites', path: '/invites', sentinel: 'INVITES SCREEN' },
+  { rail: 'Form Schemas', path: '/form-schemas', sentinel: 'FORM SCHEMAS SCREEN' },
+  { rail: 'Feature Flags', path: '/feature-flags', sentinel: 'FEATURE FLAGS SCREEN' },
+] as const;
+
+function noConfigScreen(): void {
+  for (const s of CONFIG_SCREENS) expect(screen.queryByText(s.sentinel)).toBeNull();
+  expect(screen.queryByText('INVITE DETAIL SCREEN')).toBeNull();
+}
+
+describe('an Auntie never reaches Invites, Form Schemas or Feature Flags', () => {
+  it('shows her none of the three rail entries, and keeps her work screens', async () => {
+    await boot('/home', AUNTIE_CLAIMS);
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    for (const s of CONFIG_SCREENS) expect(railLink(s.rail)).toBeNull();
+    for (const name of ['Directory', 'KinTales', 'Gallery', 'Schedule', 'Bookings', 'Auntie Time', 'Communicate', 'Inbox', 'Notifications', 'KinTale templates']) {
+      expect(railLink(name)).not.toBeNull();
+    }
+  });
+
+  for (const path of ['/invites', '/invites/inv-1', '/form-schemas', '/feature-flags']) {
+    it(`sends her from ${path} to Home`, async () => {
+      await boot(path, AUNTIE_CLAIMS);
+      await waitFor(() => expect(window.location.pathname).toBe('/home'));
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      noConfigScreen();
+    });
+  }
+
+  it('treats a double-claimed account as the Auntie', async () => {
+    await boot('/invites/inv-1', DOUBLE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    noConfigScreen();
+    for (const s of CONFIG_SCREENS) expect(railLink(s.rail)).toBeNull();
+  });
+});
+
+describe('the owner and the test admin keep Invites, Form Schemas and Feature Flags', () => {
+  for (const claims of [OWNER_CLAIMS, TEST_ADMIN_CLAIMS]) {
+    const who = claims === OWNER_CLAIMS ? 'owner' : 'test admin';
+
+    it(`shows the ${who} all three rail entries`, async () => {
+      await boot('/home', claims);
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      for (const s of CONFIG_SCREENS) expect(railLink(s.rail)).not.toBeNull();
+    });
+
+    for (const s of CONFIG_SCREENS) {
+      it(`opens ${s.rail} for the ${who}`, async () => {
+        await boot(s.path, claims);
+        expect(await screen.findByText(s.sentinel)).toBeInTheDocument();
+        expect(window.location.pathname).toBe(s.path);
+      });
+    }
+
+    it(`opens one invite for the ${who}`, async () => {
+      await boot('/invites/inv-1', claims);
+      expect(await screen.findByText('INVITE DETAIL SCREEN')).toBeInTheDocument();
+      expect(window.location.pathname).toBe('/invites/inv-1');
+    });
+  }
+
+  it('keeps all three for the offline session whose claims were not read', async () => {
+    const offline = Object.assign(new Error('Failed to fetch'), { code: 'auth/network-request-failed' });
+    currentUser = USER;
+    window.history.replaceState(null, '', '/invites');
+    const { router } = await importRouterTrackingListeners();
+    getIdTokenResult.mockRejectedValue(offline);
+    lastRouter = router;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/Signed in, but out of touch/i)).toBeInTheDocument();
+    expect(await screen.findByText('INVITES SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/invites');
+    for (const s of CONFIG_SCREENS) expect(railLink(s.rail)).not.toBeNull();
+  });
 });

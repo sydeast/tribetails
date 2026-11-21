@@ -23,7 +23,8 @@ import kotlin.test.assertTrue
 class InvoiceDetailScreenTest {
 
     private fun openInvoice() = Invoice(
-        id = "1042",
+        id = "inv_1731000000000_ab12cd",
+        invoiceNumber = "1042",
         kinfolkId = "3",
         kinfolkName = null,
         client = "Buddy (Nora)",
@@ -67,6 +68,33 @@ class InvoiceDetailScreenTest {
     @Test
     fun unspentCreditWithoutPi_offersNoCardRefundAndNoHint() = runComposeUiTest {
         assertCreditOffersAccountBalanceOnly(null)
+    }
+    // #1848: the title is the invoice's number, or words when it has none. Never the stored id.
+    @Test
+    fun title_printsTheInvoiceNumber() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", openInvoice(), onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Invoice #1042").assertIsDisplayed()
+        onNodeWithText("inv_1731000000000_ab12cd", substring = true).assertDoesNotExist()
+    }
+    @Test
+    fun title_saysAnInvoiceHasNoNumber() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", openInvoice().copy(invoiceNumber = ""), onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Invoice with no number").assertIsDisplayed()
+        onNodeWithText("inv_1731000000000_ab12cd", substring = true).assertDoesNotExist()
+    }
+    @Test
+    fun title_namesAQuoteAsAQuote() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", openInvoice().copy(status = InvoiceStatus.Quote, invoiceNumber = "Q-7"), onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Quote #Q-7").assertIsDisplayed()
     }
     @Test
     fun status_rendersFriendlyLabelNotEnumName() = runComposeUiTest {
@@ -520,5 +548,60 @@ class InvoiceDetailScreenTest {
         mainClock.advanceTimeBy(16L)
         onNodeWithText("Checking payment…").assertDoesNotExist()
         onNodeWithText("Pay with Credit Card").assertDoesNotExist()
+    }
+    // ── #2402: the check ran out and no read got through ──
+    @Test
+    fun paymentNotChecked_saysSoOffersCheckAgainAndHoldsPayBack() = runComposeUiTest {
+        var again = 0
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice(),
+                payMethods = listOf(card),
+                paymentNotChecked = true,
+                onCheckPaymentAgain = { again++ },
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("We could not check this payment. Check again in a minute.").assertIsDisplayed()
+        // Nothing read since the return says the bill is still owed, so Pay is not offered.
+        onNodeWithText("Pay with Credit Card").assertDoesNotExist()
+        // Not the line that claims a read.
+        onNodeWithText("This payment has not shown up yet.", substring = true).assertDoesNotExist()
+        // The invoice itself is still on screen, with the server's status.
+        onNodeWithText("Pending").assertIsDisplayed()
+        onNodeWithText("Paid").assertDoesNotExist()
+        onNodeWithText("Check again").performClick()
+        waitForIdle()
+        assertEquals(1, again)
+    }
+    @Test
+    fun checkingWinsOverACheckThatReadNothing() = runComposeUiTest {
+        mainClock.autoAdvance = false
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice(),
+                payMethods = listOf(card),
+                checkingPayment = true,
+                paymentNotChecked = true,
+                onBack = {},
+            )
+        }
+        mainClock.advanceTimeBy(16L)
+        onNodeWithText("Checking payment…").assertIsDisplayed()
+        onNodeWithText("We could not check this payment.", substring = true).assertDoesNotExist()
+        onNodeWithText("Pay with Credit Card").assertDoesNotExist()
+    }
+    @Test
+    fun aPaidInvoice_saysNothingAboutACheckThatReadNothing() = runComposeUiTest {
+        val paid = openInvoice().copy(status = InvoiceStatus.Paid, isPaid = true, amountDue = 0.0)
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", paid, payMethods = listOf(card), paymentNotChecked = true, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("We could not check this payment.", substring = true).assertDoesNotExist()
+        onNodeWithText("Check again").assertDoesNotExist()
     }
 }

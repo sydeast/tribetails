@@ -2258,6 +2258,10 @@ class PortalApi(
                 else -> null
             },
             creditRedeemedAtMs = o["creditRedeemedAtMs"]?.jsonPrimitive?.longOrNull,
+            // #1848: no key from a server older than the field (null: not told);
+            // a present null is an invoice with no number ("").
+            invoiceNumber = if (!o.containsKey("invoiceNumber")) null
+            else (o["invoiceNumber"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty(),
             writtenOffCents = o["writtenOffCents"]?.jsonPrimitive?.longOrNull,
             paidCents = o["paidCents"]?.jsonPrimitive?.longOrNull ?: 0L,
             quoteDecision = when (o["quoteDecision"]?.jsonPrimitive?.contentOrNull) {
@@ -2292,6 +2296,9 @@ class PortalApi(
             // reads as "ask the home list instead". An EMPTY array is a real
             // answer — a settled bill offers nothing — and stays empty.
             payMethods = (o["payMethods"] as? JsonArray)?.let { decodePayMethods(it) },
+            // #2410: absent from an older server and null on a payable bill;
+            // both read as null. A blank sentence is no sentence.
+            payBlockedReason = (o["payBlockedReason"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
         )
     }
 

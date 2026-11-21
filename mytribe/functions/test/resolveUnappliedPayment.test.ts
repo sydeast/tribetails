@@ -477,3 +477,67 @@ describe('resolveUnappliedPayment: who', () => {
     expect(res.creditedCents).toBe(5000);
   });
 });
+
+/**
+ * #2453: the sentences this callable writes name an invoice by its number, or
+ * in words when it has none. The no-number invoice has an id of the shape the
+ * server mints, and no sentence may carry it or the payment's id.
+ */
+describe('#2453 resolveUnappliedPayment: no stored id in a sentence', () => {
+  const BARE = 'inv_1731000000000_ab12cd';
+  const applyOnly = { ...creditOnly, creditCents: 0, creditReason: '', applyInvoiceId: 'inv_open', applyCents: 3000 };
+  const bare = { invoices: { [BARE]: { ...openInvoice, invoiceNumber: '' } } };
+
+  it('more than a numbered invoice owes', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await expect(resolveUnappliedPaymentHandler(req({ ...applyOnly, applyCents: 3001 }))).rejects.toMatchObject({
+      message: 'Invoice INV-2 owes $30.00, so no more than that can be applied to it.',
+      details: { code: 'apply_exceeds_due' },
+    });
+  });
+
+  it('more than an invoice with no number owes', async () => {
+    mocks.dbFn.mockReturnValue(seed(bare).db);
+    const refusal = await resolveUnappliedPaymentHandler(
+      req({ ...applyOnly, applyInvoiceId: BARE, applyCents: 3001 }),
+    ).catch((e: Error) => e);
+    expect(refusal).toMatchObject({
+      message: 'Invoice with no number owes $30.00, so no more than that can be applied to it.',
+      details: { code: 'apply_exceeds_due' },
+    });
+    expect((refusal as Error).message).not.toContain(BARE);
+  });
+
+  it('an invoice that is not there', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    const refusal = await resolveUnappliedPaymentHandler(req({ ...applyOnly, applyInvoiceId: BARE })).catch(
+      (e: Error) => e,
+    );
+    expect(refusal).toMatchObject({
+      message: 'That invoice could not be found, so nothing can be applied to it.',
+      details: { code: 'apply_invoice_not_found' },
+    });
+  });
+
+  it('the Activity Log line reads in dollars and keeps both ids in the payload', async () => {
+    mocks.dbFn.mockReturnValue(seed(bare).db);
+    await resolveUnappliedPaymentHandler(
+      req({ ...applyOnly, applyInvoiceId: BARE, applyCents: 2000, creditCents: 1000, creditReason: 'The rest' }),
+    );
+    const entry = (writeAuditEntry as any).mock.calls[0][0];
+    expect(entry.description).toBe(
+      'Held card payment of $50.00 decided: $10.00 to account credit, $20.00 to an invoice with no number and $20.00 kept as recorded',
+    );
+    expect(entry.description).not.toContain(BARE);
+    expect(entry.description).not.toContain(PAY);
+    expect(entry.payload).toMatchObject({ paymentId: PAY, appliedInvoiceId: BARE });
+  });
+
+  it('the Activity Log line names a numbered invoice, and leaves out what got nothing', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await resolveUnappliedPaymentHandler(req(applyOnly));
+    expect((writeAuditEntry as any).mock.calls[0][0].description).toBe(
+      'Held card payment of $50.00 decided: $30.00 to invoice INV-2 and $20.00 kept as recorded',
+    );
+  });
+});

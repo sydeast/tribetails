@@ -94,6 +94,33 @@ export interface GeneratedDraftRow {
    * for review. See `api/kinTaleDraftActions.ts`.
    */
   publishedReportId?: string | undefined;
+  /**
+   * #2293: what the last `sendHouseholdPush` attempt answered for a Push draft
+   * (`sent`, `listed` or `held`), and why, stamped by the server on every
+   * attempt. `held` means nothing reached the household yet.
+   */
+  pushOutcome?: string | undefined;
+  pushReason?: string | undefined;
+  /**
+   * #2428: stamped by the `sendGeneratedDraft` callable on an Email or Text
+   * draft once the provider has taken the message: when, on which channel
+   * (`email` or `sms`) and to which masked address. `sentAt` set means the
+   * household has it. `approvedAt` is when it was approved, which on a draft an
+   * older version of the app sent is the only date there is. See
+   * `lib/draftSent.ts`.
+   */
+  sentAt?: string | undefined;
+  sentChannel?: string | undefined;
+  sentTo?: string | undefined;
+  approvedAt?: string | undefined;
+  /**
+   * #2452: the server's claim on an Email or Text draft while it sends
+   * (`sendClaimedAt`), and its mark when the send got no answer
+   * (`sendUnconfirmedAt`). A claim with no `sentAt` beside it is a send nobody
+   * can vouch for. See `lib/draftSent.ts#messageDraftStanding`.
+   */
+  sendClaimedAt?: string | undefined;
+  sendUnconfirmedAt?: string | undefined;
 }
 
 /**
@@ -121,6 +148,12 @@ export interface GeneratedDraftRow {
  * from two different reads of the same collection. The consequences the list
  * screen has to state on screen instead of hiding: the cap is 50, and the
  * window is applied client-side (see `lib/kinTaleList.ts#draftsInWindow`).
+ *
+ * WHO SEES WHAT. The owner's read is this spec as written, every type of draft.
+ * An Auntie reads KinTale drafts only, and rules refuse her a list that does
+ * not say so, so `useCollection` adds `communication_type == 'visit_report'` to
+ * this spec when she is signed in (`lib/caretakerScope.ts`). Do not add that
+ * filter here: the owner's Drafts bucket lists held pushes too.
  */
 export const GENERATED_DRAFTS_MAX = 50;
 

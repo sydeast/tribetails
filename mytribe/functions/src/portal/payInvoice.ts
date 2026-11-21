@@ -19,7 +19,13 @@ import {
   checkoutRoundOf,
 } from '../lib/invoiceCheckoutDedupe';
 import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
-import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
+import { amountDueCentsOf } from '../lib/amountDueRule';
+import {
+  cardCheckoutRefusal,
+  cardCheckoutRefusalSentence,
+  INVOICE_CANNOT_TAKE_PAYMENT_CODE,
+} from '../lib/cardPaymentApply';
+import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import {
   INVOICE_CANCELLED_CODE,
@@ -30,7 +36,16 @@ import {
 } from '../lib/invoicePaidGate';
 import { INVOICE_WRITTEN_OFF_CODE, isWrittenOff } from '../lib/invoiceArchive';
 import { OPEN_CHECKOUT_SESSIONS_FIELD } from '../lib/checkoutSessionSweep';
+import {
+  chargeTimeMsOf,
+  checkoutSessionIdsToRead,
+  finishedCheckoutOf,
+  holdsPay,
+  PAYMENT_BEING_RECORDED,
+  PAYMENT_BEING_RECORDED_CODE,
+} from '../lib/checkoutBeingRecorded';
 import { hiddenFromHousehold } from '../lib/quoteDecision';
+import { invoiceLeadName, invoiceNumberText } from '../lib/invoiceNaming';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
@@ -150,13 +165,14 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // screen just offered would be the disagreement this issue closes, moved one
   // step along.
   //
-  // THE PAYMENT ROWS ARE READ, and only for that shape. This handler charges a
-  // CARD: deriving a balance from a status label alone, when the invoice's own
-  // rows could say the bill was settled before `amountDue` existed, would risk
-  // charging a household twice for one bill — and there are no refunds. One
-  // document, one extra read, and only when the document states nothing. An
-  // invoice that states its balance takes the same path it always did, for the
-  // same cost.
+  // THE PAYMENT ROWS ARE READ. This handler charges a CARD: deriving a balance
+  // from a status label alone, when the invoice's own rows could say the bill
+  // was settled before `amountDue` existed, would risk charging a household
+  // twice for one bill, and there are no refunds. Until #2410 they were read
+  // only for an invoice that states no balance. They are read for every
+  // invoice now, because the check below (`cardCheckoutRefusal`) needs them to
+  // say what the webhook would do with the payment. A stated balance is still
+  // charged as stated: the rule returns it untouched, rows or no rows.
   // #2090: the business wrote off what was left. Nothing is owed, so no
   // checkout is opened, and the household is told so in its own words.
   if (isWrittenOff(inv as Record<string, unknown>)) {
@@ -174,17 +190,14 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
       code: INVOICE_CANCELLED_CODE,
     });
   }
-  let legacyPaidCents: number | null = null;
-  if (statesNoBalance(inv)) {
-    const rows = await invoiceSnap.ref.collection('payments').get();
-    legacyPaidCents = paidCentsFromPayments(rows.docs.map((d) => d.data() as PaymentAmount));
-  }
+  const paymentRows = (await invoiceSnap.ref.collection('payments').get()).docs.map((d) => d.data() as PaymentAmount);
+  const rowsPaidCents = paidCentsFromPayments(paymentRows);
   // A PAID INVOICE TAKES NO PAYMENT (operator ruling 2026-09-27, docket Q5).
   // Asked BEFORE the balance and before the session reuse below, because the
   // mark alone is enough: an invoice labelled paid whose stated balance still
   // reads positive is the partial-payment corruption the admin repairs, not a
   // bill the household can pay into. `lib/invoicePaidGate.ts` is the rule.
-  if (invoiceIsPaid(inv, legacyPaidCents)) {
+  if (invoiceIsPaid(inv, rowsPaidCents)) {
     logEvent({
       severity: 'info',
       function: 'payInvoice',
@@ -194,8 +207,37 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     });
     throw new HttpsError('failed-precondition', PAID_INVOICE_REFUSAL, { code: PAID_INVOICE_REFUSAL_CODE });
   }
-  const amountCents = amountDueCentsOf(inv, legacyPaidCents);
+  const amountCents = amountDueCentsOf(inv, rowsPaidCents);
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
+  // #2410: NO CHECKOUT FOR A PAYMENT THE INVOICE COULD NOT TAKE. Since #2385
+  // the webhook keeps such a payment off the invoice for the owner to decide
+  // on, and tells the household nothing. Opening the checkout anyway charged
+  // the card, left the invoice reading owed, and let the household pay it
+  // again. So the webhook's own rule is asked here, before the session reuse,
+  // the settings read and Stripe: an invoice that states a balance while
+  // nothing is owed on its total (it has no total, or its payment rows already
+  // cover it), a credit that states a balance, and a quote the household has
+  // not accepted (#2264). `lib/cardPaymentApply.ts#cardCheckoutRefusal` has
+  // the rule; `getMyInvoices` ships the same answer so the screens offer no
+  // Pay on these.
+  const refusal = cardCheckoutRefusal({
+    invoiceId: args.invoiceId,
+    doc: inv as InvoiceDoc,
+    existingPayments: paymentRows,
+    kinfolkId,
+  });
+  if (refusal !== null) {
+    logEvent({
+      severity: 'warn',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.refused.unpayable',
+      uid,
+      extra: { invoiceId: args.invoiceId, kinfolkId, reason: refusal, amountCents },
+    });
+    throw new HttpsError('failed-precondition', cardCheckoutRefusalSentence(refusal), {
+      code: INVOICE_CANNOT_TAKE_PAYMENT_CODE,
+    });
+  }
 
   // WHICH SETTLEMENT ROUND THIS SESSION BELONGS TO (issue #826).
   //
@@ -326,8 +368,12 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
             currency: 'usd',
             unit_amount: amountCents,
             product_data: {
-              name: `Invoice #${args.invoiceId}`,
-              description: typeof inv['client'] === 'string' ? (inv['client'] as string) : `Tribe ${kinfolkId}`,
+              // #2453: the household reads this on Stripe's page. Its number, never its id.
+              name: checkoutLineName(inv['invoiceNumber']),
+              // The household's name when the invoice carries one. No name, no line: a stored id is never shown.
+              ...(typeof inv['client'] === 'string' && inv['client'].trim() !== ''
+                ? { description: inv['client'] }
+                : {}),
             },
           },
         },
@@ -389,7 +435,44 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // Fail-soft throughout: any doubt, including an unreadable session, mints a
   // fresh one. A household must never be unable to pay a bill because a stale
   // id could not be inspected.
-  const reusable = await findReusableSession(stripe, {
+  //
+  // #2437: BUT FIRST, A CHECKOUT THAT HAS FINISHED AND WHOSE PAYMENT IS NOT ON
+  // THE INVOICE YET. Between the household paying at Stripe and the webhook
+  // recording it, the invoice still reads owed, and the reuse below treated a
+  // finished session exactly like an expired one: it made a new checkout, and
+  // a second payment is a second real charge. So every checkout stored on this
+  // invoice is read once here (the pending one is the same read the reuse
+  // makes, shared through `readSession`), and Pay is refused while one of them
+  // is finished, paid and not yet claimed by the webhook.
+  // `lib/checkoutBeingRecorded.ts` has the rule, the window after which a
+  // payment that never lands stops holding Pay, and why any doubt opens the
+  // checkout.
+  const sessionReads = new Map<string, Promise<unknown>>();
+  const readSession = (id: string): Promise<unknown> => {
+    let read = sessionReads.get(id);
+    if (read === undefined) {
+      read = stripe.checkout.sessions.retrieve(id);
+      sessionReads.set(id, read);
+    }
+    return read;
+  };
+  const recording = await paymentBeingRecorded(stripe, {
+    sessionIds: checkoutSessionIdsToRead(inv),
+    invoiceId: args.invoiceId,
+    readSession,
+    uid,
+  });
+  if (recording !== null) {
+    logEvent({
+      severity: 'info',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.refused.recording',
+      uid,
+      extra: { invoiceId: args.invoiceId, kinfolkId, amountCents, ...recording },
+    });
+    throw new HttpsError('failed-precondition', PAYMENT_BEING_RECORDED, { code: PAYMENT_BEING_RECORDED_CODE });
+  }
+  const reusable = await findReusableSession({ checkout: { sessions: { retrieve: readSession } } }, {
     sessionId: typeof inv['pendingCheckoutSessionId'] === 'string' ? (inv['pendingCheckoutSessionId'] as string) : null,
     invoiceId: args.invoiceId,
     amountCents,
@@ -555,6 +638,81 @@ async function findReusableSession(
 }
 
 /**
+ * #2437: the finished card payment on one of this invoice's stored checkouts
+ * that the webhook has not recorded yet, or null when there is none and a
+ * checkout may open. `lib/checkoutBeingRecorded.ts` has the rule; this does
+ * its reads.
+ *
+ *   the stored checkouts   one Stripe read each, at most
+ *                          `MAX_CHECKOUT_SESSIONS_READ`, together. One that
+ *                          cannot be read is skipped.
+ *   recorded or not        `stripePayments/{paymentIntentId}`, the claim the
+ *                          webhook writes with its decision.
+ *   when it was charged    one more Stripe read, made only for a payment that
+ *                          is finished and unclaimed: the PaymentIntent with
+ *                          its charge. Unreadable means nothing is held.
+ *
+ * Nothing is written. The webhook alone records a payment.
+ */
+async function paymentBeingRecorded(
+  stripe: { paymentIntents?: { retrieve: (id: string, params: { expand: string[] }) => Promise<unknown> } },
+  want: {
+    sessionIds: readonly string[];
+    invoiceId: string;
+    readSession: (id: string) => Promise<unknown>;
+    uid: string;
+  },
+): Promise<{ sessionId: string; paymentIntentId: string; paidAtMs: number } | null> {
+  if (want.sessionIds.length === 0) return null;
+  const sessions = await Promise.all(want.sessionIds.map((id) => want.readSession(id).catch(() => null)));
+  const seen = new Set<string>();
+  for (const raw of sessions) {
+    const finished = finishedCheckoutOf(raw, want.invoiceId);
+    if (finished === null || seen.has(finished.paymentIntentId)) continue;
+    seen.add(finished.paymentIntentId);
+    const claim = await db().collection('stripePayments').doc(finished.paymentIntentId).get();
+    if (claim.exists) continue;
+    let paidAtMs: number | null = null;
+    let unreadable: string | undefined;
+    try {
+      paidAtMs = chargeTimeMsOf(
+        await stripe.paymentIntents!.retrieve(finished.paymentIntentId, { expand: ['latest_charge'] }),
+      );
+    } catch (err) {
+      unreadable = (err as Error)?.message;
+    }
+    if (paidAtMs === null) {
+      // A finished payment with no time to measure from holds nothing: with
+      // no time there is no end to the hold either.
+      logEvent({
+        severity: 'warn',
+        function: 'payInvoice',
+        event: 'portal.invoice.checkout.recording.unreadable',
+        uid: want.uid,
+        errorMessage: unreadable,
+        extra: { invoiceId: want.invoiceId, ...finished },
+      });
+      continue;
+    }
+    if (!holdsPay(paidAtMs, Date.now())) {
+      // Charged, and still not recorded after the window: the webhook is late
+      // or is not arriving. Pay is offered again, and this line is how the
+      // operator finds out (docs/runbooks/stripe.md).
+      logEvent({
+        severity: 'warn',
+        function: 'payInvoice',
+        event: 'portal.invoice.checkout.recording.overdue',
+        uid: want.uid,
+        extra: { invoiceId: want.invoiceId, ...finished, paidAtMs },
+      });
+      continue;
+    }
+    return { ...finished, paidAtMs };
+  }
+  return null;
+}
+
+/**
  * Is this the specific Stripe refusal that means "the account has not
  * activated that payment method type"?
  *
@@ -626,3 +784,14 @@ export const payInvoice = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'STRIPE_SECRET_KEY', 'AUNTIE_OPERATOR_UIDS'] },
   wrapCallable('payInvoice', payInvoiceHandler),
 );
+
+/**
+ * #2453: the one line on Stripe's checkout page, "Invoice #1042". It used to
+ * carry the invoice's stored id. An invoice with no number reads "Invoice with
+ * no number". Stripe matches nothing on this name: the invoice is found by the
+ * session's metadata.
+ */
+export function checkoutLineName(invoiceNumber: unknown): string {
+  const n = invoiceNumberText(invoiceNumber);
+  return n === '' ? invoiceLeadName('') : `Invoice #${n}`;
+}

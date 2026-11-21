@@ -75,7 +75,11 @@ export const NAV: readonly NavEntry[] = [
   // household view, and "who never accepted" is a question asked cold — so a
   // rail entry is the only way it gets found. Beside Directory because it is
   // about the households Directory lists.
-  { dest: 'invites', title: 'Invites', group: 'den', slug: 'invites' },
+  //
+  // The owner's: the list (`listAllInvites`), one invite (`getInvite`), and
+  // sending or revoking one all refuse an Auntie, because an invite grants a
+  // person portal access. The screen could only fail to load for her.
+  { dest: 'invites', title: 'Invites', group: 'den', slug: 'invites', ownerOnly: true },
   { dest: 'kintales', title: 'KinTales', group: 'den', slug: 'kintales' },
   { dest: 'gallery', title: 'Gallery', group: 'den', slug: 'gallery' },
 
@@ -108,14 +112,21 @@ export const NAV: readonly NavEntry[] = [
   // #2163, operator ruling 2026-11-13: an Auntie sees neither Settings nor
   // Templates (email, SMS, push). KinTale templates below stays hers.
   { dest: 'settings', title: 'Settings', group: 'more', slug: 'settings', ownerOnly: true },
-  { dest: 'trainingDocs', title: 'Tribal Intel', group: 'more', slug: 'tribal-intel' },
+  // The owner's notes about a household, a Kinfolk or a Kin. They feed the
+  // dossiers, the household records and the 411s, and only the owner reads or
+  // writes them: an Auntie reads the 411 a note about a Kin ends up in.
+  { dest: 'trainingDocs', title: 'Tribal Intel', group: 'more', slug: 'tribal-intel', ownerOnly: true },
   { dest: 'templates', title: 'Templates', group: 'more', slug: 'templates', ownerOnly: true },
   // The visit-recap / checklist template editor (kintale_templates), distinct
   // from the email "Templates" above. Reachable from KinTales conceptually; a
   // pinned rail entry so it is discoverable next to the other authoring screens.
   { dest: 'kinTaleTemplates', title: 'KinTale templates', group: 'more', slug: 'kintale-templates' },
-  { dest: 'formSchemas', title: 'Form Schemas', group: 'more', slug: 'form-schemas' },
-  { dest: 'featureFlags', title: 'Feature Flags', group: 'more', slug: 'feature-flags' },
+  // Business configuration, the owner's. Form Schemas could not load for an
+  // Auntie (`listFormSchemas`), and every Feature Flags switch was refused
+  // (`setFeatureFlags`), so both are off her rail and their addresses send
+  // her Home.
+  { dest: 'formSchemas', title: 'Form Schemas', group: 'more', slug: 'form-schemas', ownerOnly: true },
+  { dest: 'featureFlags', title: 'Feature Flags', group: 'more', slug: 'feature-flags', ownerOnly: true },
   // The business notification gate had a pinned entry here from #396/#435
   // onward (reachable at /notification-gate, beside Templates and Feature
   // Flags as the third what-the-platform-emits screen). #718 reverses that:

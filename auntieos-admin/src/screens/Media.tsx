@@ -84,9 +84,17 @@ export interface MediaProps {
    * sentinel).
    */
   targetId: string;
+  /**
+   * #2438: an Auntie is signed in, from the access the admin layout resolved
+   * before the screen drew. Deleting a file is the owner's (`deleteMediaFile`
+   * is not in `AUNTIE_ALLOWED_CALLABLES`, and the rules refuse every client
+   * delete), so her tiles carry no delete control. Upload and "set as the
+   * profile photo" stay hers.
+   */
+  isAuntie?: boolean;
 }
 
-export function Media({ targetType, targetId }: MediaProps) {
+export function Media({ targetType, targetId, isAuntie = false }: MediaProps) {
   const hasTarget = !isBlankTargetId(targetId);
   const label = targetTypeLabel(targetType);
   const spec = useMemo(() => mediaTargetQuery(targetId), [targetId]);
@@ -222,7 +230,7 @@ export function Media({ targetType, targetId }: MediaProps) {
                 typeFilter={typeFilter}
                 onTypeFilterChange={setTypeFilter}
                 onOpen={setViewerMedia}
-                onDelete={setPendingDelete}
+                onDelete={isAuntie ? null : setPendingDelete}
                 onSetProfile={(m) => void promoteToProfile(m)}
                 promotingId={promotingId}
               />
@@ -244,7 +252,7 @@ export function Media({ targetType, targetId }: MediaProps) {
         />
       )}
 
-      {pendingDelete && (
+      {pendingDelete && !isAuntie && (
         <Dialog
           // Copy below is the mock's, verbatim (auntieos-media-gallery-*.html:
           // "Delete Media" / "Are you sure you want to delete this {fileType
@@ -333,7 +341,8 @@ interface MediaGridProps {
   typeFilter: string | null;
   onTypeFilterChange: (next: string | null) => void;
   onOpen: (media: MediaFile) => void;
-  onDelete: (media: MediaFile) => void;
+  /** Null for an Auntie (#2438): no delete control is drawn. */
+  onDelete: ((media: MediaFile) => void) | null;
   onSetProfile: (media: MediaFile) => void;
   /** The row whose profile-photo call is in flight, or null. */
   promotingId: string | null;
@@ -466,8 +475,8 @@ interface MediaTileProps {
   media: MediaFile;
   /** Opens the fullscreen viewer for this tile's media (#388). */
   onOpen: (media: MediaFile) => void;
-  /** Asks for the confirm dialog. The tile never deletes anything itself (#397 S2). */
-  onDelete: (media: MediaFile) => void;
+  /** Asks for the confirm dialog. The tile never deletes anything itself (#397 S2). Null for an Auntie (#2438): no control is drawn. */
+  onDelete: ((media: MediaFile) => void) | null;
   onSetProfile: (media: MediaFile) => void;
   /** This tile's own set-profile call is in flight. */
   promoting: boolean;
@@ -591,14 +600,16 @@ function MediaTile({ media, onOpen, onDelete, onSetProfile, promoting, actionsLo
             onClick={() => onSetProfile(media)}
           />
         )}
-        <IconButton
-          icon={<CloseGlyph />}
-          label={`Delete ${accessibleLabel}`}
-          destructive
-          size={26}
-          disabled={promoting || actionsLocked}
-          onClick={() => onDelete(media)}
-        />
+        {onDelete !== null && (
+          <IconButton
+            icon={<CloseGlyph />}
+            label={`Delete ${accessibleLabel}`}
+            destructive
+            size={26}
+            disabled={promoting || actionsLocked}
+            onClick={() => onDelete(media)}
+          />
+        )}
       </div>
 
       {/* Announced, not just spun: a set-profile call is a network round trip

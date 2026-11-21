@@ -699,3 +699,29 @@ describe('Media screen, tile structure (#397 S2)', () => {
   });
 });
 
+
+/**
+ * #2438: deleting a file is the owner's. `deleteMediaFile` is not on the
+ * Auntie's callable list and the rules refuse every client delete, so a
+ * Delete on her tile ended in a refusal. She gets no delete control; "set as
+ * the profile photo" (`setMediaProfilePhoto` is hers) and Upload stay.
+ */
+describe('Media screen, an Auntie gets no Delete (#2438)', () => {
+  it('draws no delete control for an Auntie and keeps set-as-profile', async () => {
+    setMediaProfilePhoto.mockResolvedValue({ ok: true });
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7' })] };
+    render(<Media targetType="household" targetId="fam1" isAuntie />);
+    expect(screen.getByRole('button', { name: 'Open Rufus at the park' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Delete / })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Upload media' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Set Rufus at the park as the profile photo' }));
+    await waitFor(() => expect(setMediaProfilePhoto).toHaveBeenCalled());
+    expect(deleteMediaFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps the delete control for the owner', () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    expect(deleteButton('Rufus at the park')).toBeInTheDocument();
+  });
+});

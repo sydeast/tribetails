@@ -57,20 +57,27 @@ private val STRIPE_ONLY_FALLBACK = listOf(
 internal fun payMethodsFor(invoice: Invoice, homeMethods: List<PayMethod>): List<PayMethod> =
     invoice.payMethods ?: homeMethods
 /**
- * #2366: WHERE STRIPE SENDS THE HOUSEHOLD BACK TO. The MyTribe web portal's
- * own invoice page, the same two addresses the web portal sends
- * (`InvoiceDetail.tsx` `checkoutReturnUrls`): the invoice with a marker on
- * success, the bare invoice on cancel. This app used to send
- * `/portal/payment-success`, a page the portal does not have.
+ * #2366, #2401: WHERE STRIPE SENDS THE HOUSEHOLD BACK TO. An address on the
+ * MyTribe web portal's origin that THIS APP claims, `/app/invoices/{id}`: the
+ * marker on success, the bare address on cancel. The server only accepts a
+ * return address on the portal's own origins (`requirePortalReturnUrls`), so
+ * it is an https address there and never the app's own scheme.
  *
- * The browser shows that page, and the web portal there reads the bill again
- * until the webhook's verdict shows. Back in this app, [InvoicesController]
- * does the same check on its own copy (see [InvoicesController.onAppReturned]).
+ * The phone opens this app on that invoice ([checkoutReturnFromLink],
+ * [InvoicesController.onCheckoutReturn]). When the browser keeps the page, the
+ * web portal shows a signed-out page there that points back to this app
+ * (`AppCheckoutReturn.tsx`).
+ *
+ * History, because the server still has to accept all three. Before #2366 this
+ * app sent `/portal/payment-success`, a page the portal does not have. #2366
+ * sent the web portal's own `/invoices/{id}`, which needs a web sign-in a
+ * household who lives in this app has usually never done in that browser
+ * (#2401). Builds from both eras are still installed and must still pay.
  */
-internal const val PORTAL_ORIGIN = "https://kinfolk.tribetails.com"
+internal const val PORTAL_ORIGIN = "https://$APP_RETURN_HOST"
 internal fun checkoutReturnUrls(invoiceId: String): Pair<String, String> {
-    val page = "$PORTAL_ORIGIN/invoices/${encodePathSegment(invoiceId)}"
-    return "$page?checkout=done" to page
+    val page = "$PORTAL_ORIGIN/app/invoices/${encodePathSegment(invoiceId)}"
+    return "$page?$CHECKOUT_RETURN_PARAM=$CHECKOUT_RETURN_DONE" to page
 }
 /** Percent-encodes everything outside RFC 3986's unreserved set, as `encodeURIComponent` does for a path. */
 internal fun encodePathSegment(raw: String): String = buildString {
@@ -161,10 +168,30 @@ class InvoicesController internal constructor(
     /** #2366: the invoice whose check ran out with the bill still owed, or null. */
     var paymentNotSeen by mutableStateOf<String?>(null)
         private set
+    /**
+     * #2402: the invoice whose check ran out with NO read getting through, or
+     * null. Nothing is known about the payment, so the screens keep Pay held
+     * back and offer Check again: a second payment would be a second real
+     * charge, and there are no refunds. Cleared by the next read that works.
+     */
+    var paymentNotChecked by mutableStateOf<String?>(null)
+        private set
+    /**
+     * #2437: the invoice whose Pay the server refused because a payment on it
+     * has finished at Stripe and is not recorded yet, or null. The household
+     * pressed Pay from a screen that did not know: a second window of this
+     * app, or a return by hand. The refusal starts the same check a return
+     * from Stripe does, and while that check runs the screens print the
+     * server's sentence where Pay was ([PAYMENT_BEING_RECORDED]).
+     */
+    var paymentBeingRecorded by mutableStateOf<String?>(null)
+        private set
     /** The invoice handed to Stripe and not yet checked. Set on hand-off, spent on return. */
     private var awaitingCheckout: String? = null
     private var checkJob: Job? = null
     private var checkToken: Any? = null
+    /** True while the running check was started by focus coming back and by nothing surer. See [onCheckoutReturn]. */
+    private var checkStartedByFocus = false
 
     /**
      * Q6: the account credit history. Loaded beside the invoices and never
@@ -183,18 +210,36 @@ class InvoicesController internal constructor(
     // They used to be awaited one after the other, and getMyInvoices and
     // getAccountCreditHistory carry no minInstances, so a first open paid two
     // cold starts in a row.
-    suspend fun reload(): Unit = coroutineScope {
+    suspend fun reload() {
+        read(quietFailure = false)
+    }
+
+    /**
+     * One read of the invoices, the pay methods and the credit history.
+     * Answers whether the INVOICES were read.
+     *
+     * [quietFailure] is the payment check's read (#2402). The check reads every
+     * few seconds on a phone that has just come back from Stripe, and a read
+     * that did not get through there must not replace a list the household
+     * already has with "Couldn't load invoices": the check has its own cue and
+     * tries again on the next tick. With nothing loaded yet the failure is
+     * still reported, because there is nothing else to show.
+     */
+    private suspend fun read(quietFailure: Boolean): Boolean = coroutineScope {
         val invoicesFetch = async { attempt { portalApi.getMyInvoices(kinfolkId) } }
         val homeFetch = async { attempt { portalApi.getMyHome(kinfolkId) } }
         val creditFetch = async { attempt { portalApi.getAccountCreditHistory(kinfolkId) } }
-        try {
+        val invoicesRead = try {
             data = invoicesFetch.await().getOrThrow()
             error = null
+            true
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            error = t.message ?: "Could not load invoices"
+            if (!quietFailure || data == null) error = t.message ?: "Could not load invoices"
+            false
         }
+        if (invoicesRead) settleUncheckedPayment()
         // Independent of the invoices fetch above and never lets a payMethods
         // failure block the invoice list: a failed or empty result just
         // leaves payMethods at STRIPE_ONLY_FALLBACK.
@@ -209,6 +254,23 @@ class InvoicesController internal constructor(
             // degraded one, so there is no error worth showing the household.
         }
         creditHistory = creditHistoryStateOf(creditFetch.await())
+        invoicesRead
+    }
+
+    /**
+     * #2402: a read has got through after a check gave up with nothing read.
+     * The bill is known again: paid is said, and a bill still owed gets the
+     * ordinary "has not shown up" line, with Pay offered beside it.
+     */
+    private fun settleUncheckedPayment() {
+        val invoiceId = paymentNotChecked ?: return
+        paymentNotChecked = null
+        val invoice = find(invoiceId) ?: return
+        if (offersPayment(invoice)) {
+            paymentNotSeen = invoiceId
+        } else if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) {
+            statusBanner = PAYMENT_RECEIVED
+        }
     }
 
     /** 16.2: render the invoice PDF server-side and open the returned URL. */
@@ -281,8 +343,15 @@ class InvoicesController internal constructor(
         // The server refuses too (`payInvoice`), with the same sentence.
         if (!offersPayment(invoice)) {
             if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) error = PAID_INVOICE_REFUSAL
+            // #2410: the server's own sentence for a bill that cannot take a payment.
+            payBlockedReason(invoice)?.let { error = it }
             return
         }
+        // #2366, #2402: Pay is held back while a payment just made is being
+        // checked, and after a check that could not read the bill at all. The
+        // screens already hide the button; this is the same rule for a caller
+        // that skips them.
+        if (checkingPayment == invoice.id || paymentNotChecked == invoice.id) return
         paying = invoice.id
         scope.launch {
             try {
@@ -303,13 +372,24 @@ class InvoicesController internal constructor(
                     // #2366: set BEFORE the hand-off, so the return to this
                     // app (window focus coming back) finds it.
                     awaitingCheckout = invoice.id
+                    // #2401: and whatever an earlier return link said about
+                    // this invoice does not answer for this checkout.
+                    PendingCheckoutReturn.handedOff(invoice.id)
                     paymentNotSeen = null
                     openUrl(res.checkoutUrl)
                 }
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                error = t.message ?: "Could not start payment"
+                // #2437: not a failure to report. A payment on this bill is
+                // still being recorded, so Pay is held back and the bill is
+                // read again until it shows. The sentence is printed once,
+                // where Pay was, and not as an error as well.
+                if (isPaymentBeingRecorded(t)) {
+                    startPaymentCheck(invoice.id, byFocus = false, beingRecorded = true)
+                } else {
+                    error = t.message ?: "Could not start payment"
+                }
             } finally {
                 paying = null
             }
@@ -325,25 +405,118 @@ class InvoicesController internal constructor(
      * reads the bill again until the read shows it settled, and if that has
      * not happened inside [PAYMENT_CHECK_FOR_MS] it stops, says the payment has
      * not shown up, and offers Pay again. It never says paid on its own.
+     *
+     * #2401: this is the fallback now. The return link normally brings the
+     * household back ([onCheckoutReturn]), and it DOES say which address the
+     * browser opened. So when a link for this invoice is waiting to be opened,
+     * this stands down and the link decides. Focus alone is what is left when
+     * the household closes the browser and switches back by hand.
+     *
+     * One more case: Android opened the link in a second window of this app,
+     * and the household has now backed out to this one, which still remembers
+     * the hand-off. If that link said the checkout was cancelled, nothing is
+     * checked here either. If it said finished, or said nothing, this window
+     * checks for itself: the other window's check ended with that window, and
+     * a bill that may still be landing is never shown with a live Pay button.
      */
     fun onAppReturned() {
         val invoiceId = awaitingCheckout ?: return
+        if (PendingCheckoutReturn.isWaitingFor(invoiceId)) return
         awaitingCheckout = null
-        startPaymentCheck(invoiceId)
+        if (PendingCheckoutReturn.wasCancelled(invoiceId)) {
+            // No payment was made. Show the bill as it stands.
+            scope.launch { read(quietFailure = true) }
+            return
+        }
+        startPaymentCheck(invoiceId, byFocus = true)
     }
+
+    /**
+     * #2401: THE RETURN LINK OPENED THIS APP. Works by itself: Android may
+     * have ended this app while the household was at Stripe, and then nothing
+     * here remembers the hand-off, so the invoice and the outcome both come
+     * from the link ([checkoutReturnFromLink]).
+     *
+     * A FINISHED checkout starts the check, unless one is already running for
+     * this invoice.
+     *
+     * A CANCELLED checkout starts none, and calls off a check that only focus
+     * coming back had started: no payment was made, so there is nothing to
+     * wait for, and Pay is offered again at once instead of after a minute. The
+     * bill is read once so the screen shows it as it stands.
+     *
+     * WHAT A LINK MAY AND MAY NOT DO. Any app or web page can fire one. It
+     * never says paid: the read does. And a cancelled link is believed only
+     * while nothing better is known. It cannot stop a check that a finished
+     * link started or confirmed, or one the household asked for with Check
+     * again, so a forged or stale cancel cannot put a live Pay button in front
+     * of a payment that is still landing. The one wait it can end is the one
+     * that began on a guess, focus coming back.
+     *
+     * NOR MAY A LINK TAKE THE HOLD OFF ANOTHER BILL. There is one check at a
+     * time, and a new one replaces the one running. A finished link naming any
+     * other id (it needs no real one) used to do exactly that, and Pay came
+     * back on the bill whose payment was still landing. So a finished link
+     * replaces a check running on another invoice only when THIS window handed
+     * that link's invoice to Stripe, which no link can fake: it takes a tap on
+     * Pay here. Any other link for another invoice costs one read.
+     */
+    fun onCheckoutReturn(ret: CheckoutReturn) {
+        val handedOffHere = awaitingCheckout == ret.invoiceId
+        if (handedOffHere) awaitingCheckout = null
+        if (ret.finished) {
+            PendingCheckoutReturn.markFinished(ret.invoiceId)
+            val running = checkingPayment
+            when {
+                // Stripe's own address confirms the check focus started.
+                running == ret.invoiceId -> checkStartedByFocus = false
+                // Another bill is being checked and this window never sent
+                // this one to Stripe. The running check keeps its place.
+                running != null && !handedOffHere -> scope.launch { read(quietFailure = true) }
+                else -> startPaymentCheck(ret.invoiceId, byFocus = false)
+            }
+            return
+        }
+        val believed = PendingCheckoutReturn.markCancelled(ret.invoiceId)
+        if (believed && checkingPayment == ret.invoiceId && checkStartedByFocus) stopPaymentCheck()
+        scope.launch { read(quietFailure = true) }
+    }
+
     /** #2366: "Check again" after a check ran out, or "Tap to sync" during one. */
-    fun checkPaymentAgain(invoiceId: String) = startPaymentCheck(invoiceId)
-    private fun startPaymentCheck(invoiceId: String) {
+    fun checkPaymentAgain(invoiceId: String) = startPaymentCheck(invoiceId, byFocus = false)
+
+    private fun stopPaymentCheck() {
+        checkJob?.cancel()
+        checkJob = null
+        checkToken = null
+        checkingPayment = null
+        paymentBeingRecorded = null
+        checkStartedByFocus = false
+    }
+
+    private fun startPaymentCheck(invoiceId: String, byFocus: Boolean, beingRecorded: Boolean = false) {
         checkJob?.cancel()
         val token = Any()
         checkToken = token
+        checkStartedByFocus = byFocus
+        // #2437: the server's sentence stays up only for the check its own
+        // refusal started. Any other check replaces it.
+        paymentBeingRecorded = if (beingRecorded) invoiceId else null
         paymentNotSeen = null
+        // Only this invoice's own hold is lifted here. Another bill's check
+        // that read nothing stays held until a read gets through
+        // ([settleUncheckedPayment]), whatever this check was started for.
+        if (paymentNotChecked == invoiceId) paymentNotChecked = null
         checkingPayment = invoiceId
         checkJob = scope.launch {
             try {
                 var waited = 0L
+                // #2402: whether any read since the return got through. A read
+                // that failed keeps the list already in hand and is tried again
+                // on the next tick; it is not an answer about the payment.
+                var readSinceReturn = false
                 while (true) {
-                    reload()
+                    if (read(quietFailure = true)) readSinceReturn = true
                     val invoice = find(invoiceId)
                     if (invoice != null && !offersPayment(invoice)) {
                         if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) statusBanner = PAYMENT_RECEIVED
@@ -353,10 +526,15 @@ class InvoicesController internal constructor(
                     delay(PAYMENT_CHECK_EVERY_MS)
                     waited += PAYMENT_CHECK_EVERY_MS
                 }
-                paymentNotSeen = invoiceId
+                // "Has not shown up" claims a read. With none, say that instead
+                // and keep Pay held back.
+                if (readSinceReturn) paymentNotSeen = invoiceId else paymentNotChecked = invoiceId
             } finally {
                 // A newer check owns the state now; this one leaves it alone.
-                if (checkToken === token) checkingPayment = null
+                if (checkToken === token) {
+                    checkingPayment = null
+                    paymentBeingRecorded = null
+                }
             }
         }
     }
@@ -372,6 +550,8 @@ class InvoicesController internal constructor(
         // a Venmo/PayPal/Cash App URL that never reaches the server.
         if (!offersPayment(invoice)) {
             if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) error = PAID_INVOICE_REFUSAL
+            // #2410: the server's own sentence for a bill that cannot take a payment.
+            payBlockedReason(invoice)?.let { error = it }
             return
         }
         when (method.kind) {
@@ -473,6 +653,8 @@ fun rememberInvoicesController(kinfolkId: String, portalApi: PortalApi): Invoice
 }
 /** #2366: said once the fresh read shows the bill paid, never before. */
 internal const val PAYMENT_RECEIVED = "Payment received."
+/** #2402: said when a payment check ran out and no read got through. Same words as the web portal. */
+internal const val PAYMENT_NOT_CHECKED = "We could not check this payment. Check again in a minute."
 
 
 private fun formatCents(cents: Long): String = formatUsd(cents.toDouble() / 100.0)

@@ -411,3 +411,47 @@ describe('markInvoicePaid on a quote the household accepted', () => {
     expect(w.data.editScope).toBe('none');
   });
 });
+
+/** #2453: the Activity Log line and the refusal name the invoice by its number or in words, never by its id. */
+describe('#2453 markInvoicePaid: no stored id in a sentence', () => {
+  const BARE = { kinfolkId: 'fam1', status: 'open', amountDue: 40, total: 40 };
+
+  it('a partial payment on a numbered invoice, and on one with no number', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 20 }));
+    expect((writeAuditEntry as any).mock.calls[0][0].description).toBe(
+      'Partial payment recorded against invoice INV-9; a balance is still owed',
+    );
+    (writeAuditEntry as any).mockClear();
+    mocks.dbFn.mockReturnValue(seed(BARE).db);
+    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 20 }));
+    const entry = (writeAuditEntry as any).mock.calls[0][0];
+    expect(entry.description).toBe(
+      'Partial payment recorded against an invoice with no number; a balance is still owed',
+    );
+    expect(entry.description).not.toContain('inv1');
+    expect(entry.payload.invoiceId).toBe('inv1');
+  });
+
+  it('a payment that settles a numbered invoice, and one with no number', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40 }));
+    expect((writeAuditEntry as any).mock.calls[0][0].description).toBe(
+      'Invoice INV-9 settled by a manually-recorded payment',
+    );
+    (writeAuditEntry as any).mockClear();
+    mocks.dbFn.mockReturnValue(seed(BARE).db);
+    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40 }));
+    const entry = (writeAuditEntry as any).mock.calls[0][0];
+    expect(entry.description).toBe('Invoice with no number settled by a manually-recorded payment');
+    expect(entry.description).not.toContain('inv1');
+  });
+
+  it('an invoice that is not there', async () => {
+    mocks.dbFn.mockReturnValue(seed(null).db);
+    await expect(markInvoicePaidHandler(req({ invoiceId: 'inv_1731000000000_ab12cd', amount: 20 }))).rejects.toMatchObject({
+      code: 'not-found',
+      message: 'Invoice not found.',
+    });
+  });
+});

@@ -121,6 +121,38 @@ class FirestoreClient {
                 ?: WriteResult.Err("publishGeneratedDraft returned no reportId")
         }
     }
+    /**
+     * #2061/#2293: send an approved Push draft to its household through the
+     * `sendHouseholdPush` callable. The server checks the draft belongs to the
+     * household, applies the send gate and the household's settings, and says
+     * what happened. Returns the callable's raw answer; decode it with
+     * `decodeHouseholdPushResult`.
+     */
+    suspend fun sendHouseholdPush(kinfolkId: String, draftId: String, body: String): WriteResult<String> {
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(kinfolkId.trim()))
+            put("draftId", JsonPrimitive(draftId.trim()))
+            put("body", JsonPrimitive(body.trim()))
+        }
+        return platformInvokeCallable("sendHouseholdPush", callableJson.encodeToString(JsonObject.serializer(), payload))
+    }
+    /**
+     * #2428: approve and send a Communicate Email or Text draft through the
+     * `sendGeneratedDraft` callable. The server claims the draft, sends it to
+     * the address on the household's own record and stamps the draft sent, so
+     * there is no address here and no approve write before it. A repeat for a
+     * draft that went out answers `already_sent` and sends nothing. Returns the
+     * callable's raw answer; decode it with `decodeDraftSendResult`.
+     */
+    suspend fun sendGeneratedDraft(draftId: String, kinfolkId: String, body: String, subject: String?): WriteResult<String> {
+        val payload = buildJsonObject {
+            put("draftId", JsonPrimitive(draftId.trim()))
+            put("kinfolkId", JsonPrimitive(kinfolkId.trim()))
+            put("body", JsonPrimitive(body.trim()))
+            if (!subject.isNullOrBlank()) put("subject", JsonPrimitive(subject.trim()))
+        }
+        return platformInvokeCallable("sendGeneratedDraft", callableJson.encodeToString(JsonObject.serializer(), payload))
+    }
     /** #1563: delete an unsent generated draft. The server refuses one already sent. */
     suspend fun deleteGeneratedDraft(draftId: String): WriteResult<Unit> {
         val payload = buildJsonObject { put("draftId", JsonPrimitive(draftId.trim())) }
@@ -1593,6 +1625,20 @@ class FirestoreClient {
         return when (val r = platformInvokeCallable("getAccountCreditHistory", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeAccountCreditHistory(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
+    /**
+     * #2333: the invoice's payments, through `getInvoiceLedger`, in cents the
+     * server resolved. See [InvoiceLedgerPayments] for why the console stopped
+     * reading the root `payments` collection for this.
+     */
+    suspend fun getInvoiceLedgerPayments(invoiceId: String): WriteResult<InvoiceLedgerPayments> {
+        val payload = invoiceLedgerPayload(invoiceId)
+        return when (val r = platformInvokeCallable("getInvoiceLedger", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeInvoiceLedgerPayments(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
@@ -4107,7 +4153,102 @@ data class GeneratedDraft(
     val generated_title: String = "",
     /** #1563: the kin_care_reports id this draft was sent as; set by `publishGeneratedDraft`. */
     val publishedReportId: String = "",
+    /**
+     * #2293: what the last `sendHouseholdPush` attempt answered for a Push
+     * draft (sent, listed or held) and why. Stamped by the server, never null.
+     */
+    val pushOutcome: String = "",
+    val pushReason: String = "",
+    /**
+     * #2428: when `sendGeneratedDraft` handed an Email or Text draft to the
+     * provider. Set means the household has it. Stamped by the server only.
+     */
+    val sentAt: String = "",
+    /**
+     * #2452: the server's claim on an Email or Text draft while it sends, and
+     * its mark when the send got no answer. A claim with no [sentAt] beside it
+     * is a send nobody can vouch for. Stamped by the server only.
+     */
+    val sendClaimedAt: String = "",
+    val sendUnconfirmedAt: String = "",
 ) {
+    /**
+     * #2428: a Push the household was sent: on their notifications list, and
+     * on their phone when the answer is `sent`. It opens as sent, with no
+     * Approve and no Delete. A held Push and an unanswered one reached nobody
+     * and are not this.
+     */
+    val isSentPush: Boolean get() =
+        type().lowercase() == "push" && status.trim().lowercase() == "approved" && pushOutcome.trim() in setOf("sent", "listed")
+    /**
+     * #2428: the channel an Email or Text draft went out on (`email` or `sms`),
+     * or null when the draft is not one or has not gone. Gone means stamped
+     * [sentAt], or approved: approving one is what sends it, on every version
+     * of every client, so an approved one with no stamp went out the old way.
+     * The type counts when either spelling carries it.
+     */
+    val sentMessageChannel: String? get() {
+        val types = setOf(communicationType.trim().lowercase(), communication_type.trim().lowercase())
+        val channel = when {
+            "email" in types -> "email"
+            "sms" in types -> "sms"
+            else -> return null
+        }
+        return if (sentAt.isNotBlank() || status.trim().lowercase() == "approved") channel else null
+    }
+    /** #2428: already went to its household as a KinTale, a Push, an Email or a Text. */
+    val wentOut: Boolean get() = isPublished || isSentPush || sentMessageChannel != null
+
+    /**
+     * #2452: where an Email or Text draft stands, read off the stamps the
+     * server writes, or null for any other type and for one nobody approved.
+     * The server reads them the same way (`draftSendStanding`), and so do the
+     * web admin and the phone. Asked before anything says "sent":
+     * [sentMessageChannel] is also set for a send that got no answer.
+     */
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    fun messageStanding(nowMs: Long): MessageDraftStanding? {
+        if (sentMessageChannel == null) return null
+        if (sentAt.isNotBlank()) return MessageDraftStanding.Sent
+        if (sendClaimedAt.isBlank()) return MessageDraftStanding.Approved
+        if (sendUnconfirmedAt.isNotBlank()) return MessageDraftStanding.Unconfirmed
+        val claimedMs = runCatching { kotlin.time.Instant.parse(sendClaimedAt.trim()).toEpochMilliseconds() }.getOrNull()
+            ?: return MessageDraftStanding.Unconfirmed
+        return if (nowMs - claimedMs < DRAFT_SEND_LEASE_MS) MessageDraftStanding.Sending else MessageDraftStanding.Unconfirmed
+    }
+
+    /**
+     * #2440: where the KinTales list files a Communicate draft that is past
+     * approving, or null for every other draft (the Drafts bucket has its own
+     * rule, and a sent KinTale is listed as its report).
+     */
+    fun listPlace(nowMs: Long): DraftListPlace? {
+        if (isPublished) return null
+        if (isSentPush) return DraftListPlace.Sent
+        return when (messageStanding(nowMs)) {
+            MessageDraftStanding.Sent, MessageDraftStanding.Approved -> DraftListPlace.Sent
+            MessageDraftStanding.Unconfirmed -> DraftListPlace.Unconfirmed
+            MessageDraftStanding.Sending -> DraftListPlace.Sending
+            null -> null
+        }
+    }
+
+    /**
+     * #2293: an approved Push draft the server held back. Nothing reached the
+     * household, so KinTales lists it under Drafts again and Communicate opens
+     * it with its Try again. Not part of [isUnsent]: Home's count is unchanged.
+     */
+    val isHeldPush: Boolean get() =
+        type().lowercase() == "push" && status.trim().lowercase() == "approved" && pushOutcome.trim() == "held"
+    /**
+     * #2381: an approved Push draft with no answer on it. Its send was cut off
+     * (a dropped connection, a timeout) before the server could say what
+     * happened, so it is listed under Drafts and opens with Try again, like a
+     * held one. Not part of [isUnsent] either.
+     */
+    val isUnansweredPush: Boolean get() =
+        type().lowercase() == "push" && status.trim().lowercase() == "approved" && pushOutcome.isBlank()
+
     fun householdId(): String = kinfolkId.trim().ifBlank { kinfolk_id.trim() }
     fun household(): String = kinfolkName.trim().ifBlank { kinfolk_name.trim() }
     fun body(): String = generatedCopy.ifBlank { generated_copy }
@@ -4130,6 +4271,74 @@ data class GeneratedDraft(
  */
 fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
     drafts.filter { it.isUnsent }.sortedByDescending { it.created() }
+
+/**
+ * #2293: the drafts KinTales files under Drafts: every one awaiting review, plus
+ * an approved Push draft the server held, so it can be opened and sent again.
+ * #2381: and one whose send never answered, which used to drop off this list.
+ * Home keeps [draftsAwaitingReview]. Pure; tested.
+ */
+fun kinTaleListDrafts(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
+    drafts.filter { it.isUnsent || it.isHeldPush || it.isUnansweredPush }.sortedByDescending { it.created() }
+
+/** How long the server's claim reads as "being sent right now" (`DRAFT_SEND_LEASE_MS` on the server). */
+const val DRAFT_SEND_LEASE_MS = 120_000L
+
+/**
+ * #2452: an Email or Text draft that is past approving.
+ *
+ *  - [Sent]: stamped `sentAt`, the provider took it.
+ *  - [Sending]: claimed under two minutes ago, the send is running.
+ *  - [Unconfirmed]: the send got no answer, or its claim was left by a call
+ *    that died. It may have reached the household. It is not sent again from
+ *    this draft.
+ *  - [Approved]: approved with no stamp and no claim. An older version of the
+ *    app approved it and sent it.
+ */
+enum class MessageDraftStanding { Sent, Sending, Unconfirmed, Approved }
+
+/** #2440: the three places the KinTales list files a Communicate draft that is past approving. */
+enum class DraftListPlace { Sent, Unconfirmed, Sending }
+
+/**
+ * #2440: the Communicate drafts the KinTales list files outside Drafts, newest
+ * first: the ones that went out (under Sent), and an Email or Text whose send
+ * got no answer or is still running. The list dropped all of them, so a sent
+ * Email, Text or Push could not be found from it. Pure; tested.
+ */
+fun kinTaleGoneDrafts(drafts: List<GeneratedDraft>, nowMs: Long): List<GeneratedDraft> =
+    drafts.filter { it.listPlace(nowMs) != null }.sortedByDescending { it.created() }
+
+/**
+ * #2440: the generated drafts one bucket lists. [unsent] is the Drafts bucket
+ * as it was; [gone] are filed by [GeneratedDraft.listPlace]: Sent for one that
+ * went out, Needs another look for an Email or Text whose send got no answer
+ * (#2452), and Drafts for one still being sent. [bucket] is the bucket's name.
+ * Pure; tested.
+ */
+fun kinTaleDraftsInBucket(
+    bucket: String,
+    unsent: List<GeneratedDraft>,
+    gone: List<GeneratedDraft>,
+    nowMs: Long,
+): List<GeneratedDraft> {
+    fun placed(place: DraftListPlace) = gone.filter { it.listPlace(nowMs) == place }
+    return when (bucket) {
+        "Failed" -> placed(DraftListPlace.Unconfirmed)
+        "Drafts" -> unsent + placed(DraftListPlace.Sending)
+        "Sent" -> placed(DraftListPlace.Sent)
+        else -> emptyList()
+    }
+}
+
+/** #2440: the words on a draft row's pill, by where the list files it. Pure; tested. */
+fun kinTaleDraftPillLabel(place: DraftListPlace?): String = when (place) {
+    DraftListPlace.Sent -> "Sent"
+    DraftListPlace.Unconfirmed -> "Not confirmed"
+    DraftListPlace.Sending -> "Sending"
+    // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
+    null -> "Draft"
+}
 
 /**
  * KinCareReport - the "KinTale" visit recap that goes home to a kinfolk after a

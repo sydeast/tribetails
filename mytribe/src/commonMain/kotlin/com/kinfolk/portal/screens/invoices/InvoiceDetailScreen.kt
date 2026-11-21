@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinGhostButton
@@ -80,6 +81,17 @@ fun InvoiceDetailScreen(
     checkingPayment: Boolean = false,
     /** #2366: the check ran out with the bill still owed. */
     paymentNotSeen: Boolean = false,
+    /**
+     * #2402: the check ran out and no read got through. Nothing is known about
+     * the payment, so Pay stays held back and the screen offers Check again.
+     */
+    paymentNotChecked: Boolean = false,
+    /**
+     * #2437: the check is running because the server refused a Pay: a payment
+     * on this invoice is still being recorded. Its sentence is printed where
+     * Pay was, above the check.
+     */
+    paymentBeingRecorded: Boolean = false,
     onCheckPaymentAgain: () -> Unit = {},
     onPayMethod: (PayMethod) -> Unit = {},
     /** `true` accepts the quote, `false` declines it. */
@@ -116,7 +128,7 @@ fun InvoiceDetailScreen(
                     tint = KinfolkBrand.Navy,
                 )
             }
-            Text("${invoiceDocNoun(invoice)} #${invoice.id}", style = type.heritageTitle)
+            Text(invoiceName(invoice), style = type.heritageTitle)
         }
         GlassCard(
             modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
@@ -263,11 +275,35 @@ fun InvoiceDetailScreen(
         } else if (offersPayment(invoice) && checkingPayment) {
             // #2366: a second payment while the first is still landing would
             // go to account credit, and there are no refunds.
+            if (paymentBeingRecorded) {
+                Text(
+                    PAYMENT_BEING_RECORDED,
+                    style = type.sansMeta,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = KinfolkSpacing.l)
+                        .testTag("invoice-payment-being-recorded"),
+                )
+            }
             KinLoading(
                 text = "Checking payment…",
                 onSync = onCheckPaymentAgain,
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
             )
+        } else if (offersPayment(invoice) && paymentNotChecked) {
+            // #2402: no read since the household came back says this bill is
+            // still owed, so Pay is not offered on the copy from before.
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
+                verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
+            ) {
+                Text(PAYMENT_NOT_CHECKED, style = type.sansMeta)
+                KinGhostButton(
+                    label = "Check again",
+                    onClick = onCheckPaymentAgain,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         } else if (offersPayment(invoice)) {
             if (paymentNotSeen) {
                 Column(
@@ -292,6 +328,19 @@ fun InvoiceDetailScreen(
                 onPayMethod = onPayMethod,
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
             )
+        } else {
+            // #2410: an open bill the server says cannot take a payment. No
+            // pay option is drawn, and its sentence goes where they would be.
+            payBlockedReason(invoice)?.let { why ->
+                Text(
+                    why,
+                    style = type.sansMeta,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s)
+                        .testTag("invoice-pay-blocked"),
+                )
+            }
         }
 
         // 16.2 LIVE: renders the invoice PDF server-side (getMyInvoicePdf) and

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
@@ -8,7 +9,7 @@ import {
   declinedRowLabel,
   formatCentsUsd,
   formatUsd,
-  documentNoun,
+  invoiceName,
   invoiceRowStatusInfo,
   invoiceStatusInfo,
   longDateLabel,
@@ -33,6 +34,13 @@ import { viewOfQuery } from '../lib/queryState';
 import { errorLine, usePortalMutation, type MutationPhase } from '../lib/mutationState';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { announceSaved } from '../lib/saveNotice';
+import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
+import {
+  checkoutReturnUrls,
+  PAYMENT_CHECK_EVERY_MS,
+  PAYMENT_CHECK_FOR_MS,
+  paymentBeingRecorded,
+} from '../lib/checkoutReturn';
 import '../styles/invoices.css';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 
@@ -47,17 +55,76 @@ import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 export function Invoices() {
   const queryClient = useQueryClient();
   const kinfolkId = getActiveKinfolkId();
-  const invoices = useQuery({ queryKey: myInvoicesKey(kinfolkId), queryFn: () => getMyInvoices(kinfolkId) });
+  /**
+   * #2437: A PAYMENT ON ONE OF THESE BILLS IS STILL BEING RECORDED. Set when
+   * `payInvoice` refuses a Pay now for that reason (the household finished at
+   * Stripe in another window, or came back by hand, and the payment is not on
+   * the invoice yet). While it stands the row offers no Pay now, the server's
+   * sentence is printed under it, and the list is read again on the invoice
+   * page's own cadence until the payment shows. If it has not shown after
+   * `PAYMENT_CHECK_FOR_MS` the row goes back to Pay now, and the server
+   * decides again on the next tap.
+   */
+  const [recording, setRecording] = useState<{ invoiceId: string; since: number; why: string } | null>(null);
+  const invoices = useQuery({
+    queryKey: myInvoicesKey(kinfolkId),
+    queryFn: () => getMyInvoices(kinfolkId),
+    refetchInterval: recording ? PAYMENT_CHECK_EVERY_MS : false,
+  });
+  const recordingBill =
+    recording && invoices.data
+      ? [...invoices.data.open, ...invoices.data.paid, ...invoices.data.credits].find((i) => i.id === recording.invoiceId)
+      : undefined;
+  // Only a read that finished after the refusal says anything about the payment.
+  const recordingSettled =
+    recording !== null && invoices.dataUpdatedAt >= recording.since && recordingBill !== undefined && !offersPayment(recordingBill);
+  const recordingPaid = recordingBill ? recordingBill.isPaid || recordingBill.status === 'paid' : false;
+  useEffect(() => {
+    if (recording === null) return;
+    if (recordingSettled) {
+      setRecording(null);
+      if (recordingPaid) announceSaved('Payment received');
+      return;
+    }
+    const left = recording.since + PAYMENT_CHECK_FOR_MS - Date.now();
+    const timer = setTimeout(() => setRecording(null), Math.max(0, left));
+    return () => clearTimeout(timer);
+  }, [recording, recordingSettled, recordingPaid]);
   // #1039: the viewer's own uid, so a declined quote's meta line can tell
   // "you declined this" from "Sam declined this" instead of assuming the
   // reader is always the one who answered.
   const auth = useAuth();
   const viewerUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
+  /**
+   * #2400, #825: ONE CHECKOUT KEY PER INVOICE, held across a re-tap. This
+   * button sent no key at all, so a reply lost on the way back from Stripe and
+   * a second tap opened a second live session (`lib/moneyIdempotency.ts`). A
+   * map and not one held key, because this screen has a Pay button per row: a
+   * household can tap one bill, fail, and tap another, and one held key would
+   * carry the first invoice's key to the second invoice's checkout. Same shape
+   * as the MyTribe Android app's `checkoutKeys`.
+   */
+  const checkoutKeys = useRef(new Map<string, string>());
   const pay = usePortalMutation({
-    mutationFn: (invoiceId: string) =>
-      payInvoice(invoiceId, `${window.location.origin}/invoices/${invoiceId}`, `${window.location.origin}/invoices/${invoiceId}`, kinfolkId),
-    onSuccess: (res) => {
+    mutationFn: (invoiceId: string) => {
+      let key = checkoutKeys.current.get(invoiceId);
+      if (key === undefined) {
+        key = mintCheckoutIdempotencyKey();
+        checkoutKeys.current.set(invoiceId, key);
+      }
+      // #2400: the same two addresses the invoice page sends. This button sent
+      // the bare invoice page for both, so a finished checkout came back with
+      // no marker: no "Checking payment…", and a live Pay button while the
+      // payment was still landing.
+      const { successUrl, cancelUrl } = checkoutReturnUrls(window.location.origin, invoiceId);
+      return payInvoice(invoiceId, successUrl, cancelUrl, kinfolkId, key);
+    },
+    onSuccess: (res, invoiceId) => {
+      // Dropped BEFORE the redirect, as on the invoice page: a household that
+      // comes back to pay a different balance must not reuse a key Stripe
+      // still holds.
+      checkoutKeys.current.delete(invoiceId);
       // WHAT THIS REDIRECT GUARANTEES (#826). `window.location.href` unloads
       // the page, so this list cannot hold two live Checkout Sessions — and
       // for a while that was the only thing stopping a household being charged
@@ -67,6 +134,12 @@ export function Invoices() {
       // credit, so an in-page transition here is no longer a billing decision.
       // The longer version of this note is on `InvoiceDetail`'s copy.
       if (res.checkoutUrl) window.location.href = res.checkoutUrl;
+    },
+    // #2437: no checkout was opened because a payment on this bill is still
+    // being recorded. The row stops offering Pay now and says so.
+    onError: (err, invoiceId) => {
+      const why = paymentBeingRecorded(err);
+      if (why !== null) setRecording({ invoiceId, since: Date.now(), why });
     },
   }, { policy: 'abandon', what: 'your payment' });
 
@@ -194,7 +267,15 @@ export function Invoices() {
                     divider={i > 0}
                     payPhase={pay.variables === inv.id ? pay.phase : 'idle'}
                     onPay={() => pay.mutate(inv.id)}
-                    payError={pay.variables !== inv.id ? null : errorLine(pay, "Couldn't open checkout. Try again.")}
+                    // #2437: the "still being recorded" refusal has its own
+                    // line under the row and is never printed as a failure.
+                    payError={
+                      pay.variables !== inv.id || paymentBeingRecorded(pay.error) !== null
+                        ? null
+                        : errorLine(pay, "Couldn't open checkout. Try again.")
+                    }
+                    recording={recording?.invoiceId === inv.id ? recording.why : null}
+                    onCheckAgain={() => void invoices.refetch()}
                     viewerUid={viewerUid}
                   />
                 ))
@@ -252,7 +333,7 @@ export function Invoices() {
 }
 
 function invoiceTitle(inv: InvoiceDto): string {
-  return inv.client ?? `${documentNoun(inv)} #${inv.id}`;
+  return inv.client ?? invoiceName(inv);
 }
 
 function OpenRow(props: {
@@ -261,6 +342,9 @@ function OpenRow(props: {
   payPhase: MutationPhase;
   onPay: () => void;
   payError?: string | null;
+  /** #2437: the server's sentence while a payment on this bill is still being recorded, else null. */
+  recording?: string | null;
+  onCheckAgain?: () => void;
   viewerUid: string | null;
 }) {
   const { invoice: inv, payPhase, onPay, payError, viewerUid } = props;
@@ -286,7 +370,8 @@ function OpenRow(props: {
     : inv.status === 'zero' ? 'No charge'
     : `Due ${shortDateLabel(inv.dueDate) ?? '—'}`;
   // One rule with the detail screen, and never on a paid invoice (docket Q5).
-  const payable = offersPayment(inv);
+  // #2437: and not while a payment on this bill is still being recorded.
+  const payable = offersPayment(inv) && !props.recording;
 
   return (
     <>
@@ -303,7 +388,7 @@ function OpenRow(props: {
         <div className="info">
           <b>{invoiceTitle(inv)}</b>
           <small className="id">
-            {inv.client ? `${documentNoun(inv)} #${inv.id}` : dueLabel}
+            {inv.client ? invoiceName(inv) : dueLabel}
             {inv.client ? ` · ${dueLabel}` : ''}
           </small>
         </div>
@@ -333,6 +418,14 @@ function OpenRow(props: {
         </div>
       </Link>
       <OfflineMutationNotice phase={payPhase} what="your payment" check="this invoice" />
+      {props.recording && (
+        <div className="pay-check" data-testid="payment-being-recorded">
+          <p className="pay-blocked">{props.recording}</p>
+          <LoadingLine what="your payment" retry={props.onCheckAgain}>
+            Checking payment…
+          </LoadingLine>
+        </div>
+      )}
       {payError && <p style={{ color: 'var(--red)', marginTop: 8 }}>{payError}</p>}
     </>
   );
@@ -359,7 +452,7 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
       <div className="info">
         <b>{invoiceTitle(inv)}</b>
         <small className="id">
-          {inv.client ? `${documentNoun(inv)} #${inv.id} · ${paidLabel}` : paidLabel}
+          {inv.client ? `${invoiceName(inv)} · ${paidLabel}` : paidLabel}
         </small>
       </div>
       <div className="amt">
@@ -386,7 +479,7 @@ function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeemPhase: 
       <div className="cmeta">
         <b>{invoiceTitle(inv)}</b>
         <small>
-          Invoice #{inv.id}.{' '}
+          {invoiceName(inv)}.{' '}
           {redeemed ? 'It is in your account balance.' : 'Save it to your account balance to spend it.'}
         </small>
         {redeemed && (

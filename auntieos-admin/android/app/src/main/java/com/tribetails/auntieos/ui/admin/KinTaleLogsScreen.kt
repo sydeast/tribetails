@@ -58,9 +58,11 @@ import com.composables.icons.lucide.TriangleAlert
 import com.composables.icons.lucide.UserPlus
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.data.model.Draft
+import com.tribetails.auntieos.data.model.DraftListPlace
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.isUntriagedOrphan
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
@@ -116,6 +118,8 @@ fun KinTaleLogsScreen(
 ) {
     val reports by viewModel.kinCareReports.collectAsState()
     val generatedDrafts by viewModel.generatedDrafts.collectAsState()
+    // #2440: the Communicate drafts that are past approving.
+    val goneDrafts by viewModel.goneGeneratedDrafts.collectAsState()
     val draftsError by viewModel.generatedDraftsError.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val kinfolkList by viewModel.kinfolkDirectory.collectAsState()
@@ -153,8 +157,12 @@ fun KinTaleLogsScreen(
     val grouped = sortReports(matching, sortMode).groupBy { bucketFor(it) }
     // #1563: the generated drafts join the Drafts bucket and every count.
     val matchingDrafts = generatedDrafts.filter { matchesDraftSearch(it, searchQuery) }
-    val loadedCount = nonOrphanActive.size + generatedDrafts.size
-    val matchingCount = matching.size + matchingDrafts.size
+    // #2440: a draft that went out is listed under Sent. #2452: one whose
+    // send got no answer is under Needs another look, never Sent.
+    val nowMs = remember(goneDrafts) { System.currentTimeMillis() }
+    val matchingGone = goneDrafts.filter { matchesDraftSearch(it, searchQuery) }
+    val loadedCount = nonOrphanActive.size + generatedDrafts.size + goneDrafts.size
+    val matchingCount = matching.size + matchingDrafts.size + matchingGone.size
 
     // The two readings of that filter, both decided in one place so the chip in
     // the heading and the list below it can never tell different stories.
@@ -261,12 +269,13 @@ fun KinTaleLogsScreen(
                         ListOutcome.NoMatch -> NoMatchState()
                         ListOutcome.Rows    -> Bucket.entries.forEach { bucket ->
                             val items = grouped[bucket].orEmpty()
-                            val drafts = if (bucket == Bucket.Drafts) matchingDrafts else emptyList()
+                            val drafts = draftsInBucket(bucket.name, matchingDrafts, matchingGone, nowMs)
                             if (items.isNotEmpty() || drafts.isNotEmpty()) {
                                 BucketGroup(
                                     bucket       = bucket,
                                     reports      = items,
                                     drafts       = drafts,
+                                    nowMs        = nowMs,
                                     serviceRates = serviceRates,
                                     onOpenReport = onOpenReport,
                                     onOpenDraft  = onOpenDraft,
@@ -454,7 +463,7 @@ private fun OrphanRow(
 internal fun bodyPreview(body: String): String {
     val cleaned = body.replace(Regex("\\s+"), " ").trim()
     if (cleaned.isBlank()) return "(empty body)"
-    return if (cleaned.length <= 80) cleaned else cleaned.take(80) + "…"
+    return if (cleaned.length <= 80) cleaned else cutWhole(cleaned, 80) + "…"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -660,6 +669,7 @@ private fun BucketGroup(
     bucket: Bucket,
     reports: List<KinCareReport>,
     drafts: List<Draft> = emptyList(),
+    nowMs: Long = System.currentTimeMillis(),
     serviceRates: Map<String, String> = emptyMap(),
     onOpenReport: (sessionId: String) -> Unit = {},
     onOpenDraft: (draftId: String) -> Unit = {},
@@ -672,18 +682,55 @@ private fun BucketGroup(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
             reports.forEach { ReportRow(it, onOpenReport, serviceRates) }
-            drafts.forEach { GeneratedDraftRow(it, onOpenDraft) }
+            drafts.forEach { GeneratedDraftRow(it, onOpenDraft, it.listPlace(nowMs)) }
         }
     }
+}
+/**
+ * #2440: the generated drafts one bucket lists. [unsent] is the Drafts bucket
+ * as it was; [gone] are the Communicate drafts past approving, filed by
+ * [Draft.listPlace]: Sent for one that went out, Needs another look for an
+ * Email or Text whose send got no answer (#2452), and Drafts for one still
+ * being sent. [bucket] is the bucket's name. Pure; tested.
+ */
+internal fun draftsInBucket(bucket: String, unsent: List<Draft>, gone: List<Draft>, nowMs: Long): List<Draft> {
+    fun placed(place: DraftListPlace) = gone.filter { it.listPlace(nowMs) == place }
+    return when (bucket) {
+        "Failed" -> placed(DraftListPlace.Unconfirmed)
+        "Drafts" -> unsent + placed(DraftListPlace.Sending)
+        "Sent" -> placed(DraftListPlace.Sent)
+        else -> emptyList()
+    }
+}
+/** #2440: the words on a draft row's pill, by where the list files it. Pure; tested. */
+internal fun draftRowPillLabel(place: DraftListPlace?): String = when (place) {
+    DraftListPlace.Sent -> "Sent"
+    DraftListPlace.Unconfirmed -> "Not confirmed"
+    DraftListPlace.Sending -> "Sending"
+    // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
+    null -> "Draft"
 }
 /**
  * #1563: one `generated_drafts` doc in the Drafts bucket. Same frame as
  * [ReportRow]; the submeta names the draft's type ("visit report", "sms"),
  * because the generator writes every kind of message into this collection.
  * Always tappable: it opens the draft in Communicate.
+ *
+ * #2440: [place] is where the list files a Communicate draft that is past
+ * approving. It picks the tile and the pill; null is a draft.
  */
 @Composable
-internal fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> Unit) {
+internal fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> Unit, place: DraftListPlace? = null) {
+    val tone = when (place) {
+        DraftListPlace.Sent -> AuntieStatusTone.Success
+        DraftListPlace.Unconfirmed -> AuntieStatusTone.Error
+        DraftListPlace.Sending, null -> AuntieStatusTone.Neutral
+    }
+    val icon = when (place) {
+        DraftListPlace.Sent -> Lucide.MailCheck
+        DraftListPlace.Unconfirmed -> Lucide.TriangleAlert
+        DraftListPlace.Sending, null -> Lucide.FileText
+    }
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val name = draft.kinfolkName.orEmpty()
@@ -699,7 +746,7 @@ internal fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> U
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(13.dp),
     ) {
-        AuntieIconTile(icon = Lucide.FileText, tone = AuntieStatusTone.Neutral, size = 36.dp)
+        AuntieIconTile(icon = icon, tone = tone, size = 36.dp)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 text  = name.ifBlank { "Unnamed Kinfolk" },
@@ -717,8 +764,7 @@ internal fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> U
             )
             kinTaleRowHeadline(draft.generatedTitle)?.let { KinTaleRowHeadline(it) }
         }
-        // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
-        AuntieStatusPill(label = "Draft", tone = AuntieStatusTone.Neutral, compact = true)
+        AuntieStatusPill(label = draftRowPillLabel(place), tone = tone, compact = true)
     }
 }
 

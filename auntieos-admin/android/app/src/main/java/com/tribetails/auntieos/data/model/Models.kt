@@ -418,11 +418,11 @@ data class Kin(
     var status: String = "active",
     var profilePictureUrl: String = "",   // Kin (pet) photo; parity with web Kin.profilePictureUrl
 
-    // Both are DERIVED, never edited here. `updateKinFields` writes
-    // familyKinPath only when the loaded Kin has none (#2115: a portal-added
-    // Kin's link names a household copy under another id, so it is never
-    // re-derived) and writes updatedAt as a serverTimestamp, so these two are
-    // a read-only view.
+    // Both are DERIVED, never edited here. familyKinPath, the link to the
+    // household's copy of this Kin, is set by the server alone (#2115, #2290:
+    // this app cannot know which household copy is the Kin's, and its own
+    // guess made a second copy). `updateKinFields` writes updatedAt as a
+    // serverTimestamp. So these two are a read-only view.
     // familyKinPath is set on 24 of 24 live kin; updatedAt on 23, as a Firestore
     // Timestamp, so it is held raw and read via updatedAtIso() (same pattern as
     // KinCareSession.updatedAt) rather than typed String.
@@ -1429,9 +1429,41 @@ data class Draft(
     // with status "published": the household has that report now.
     var generatedTitle: String = "",
     var publishedReportId: String = "",
+    // #2293: what the last `sendHouseholdPush` attempt answered for a Push
+    // draft (sent, listed or held) and why. Stamped by the server, never null.
+    var pushOutcome: String = "",
+    var pushReason: String = "",
+    // #2428: when `sendGeneratedDraft` handed an Email or Text draft to the
+    // provider. Set means the household has it. Stamped by the server only.
+    var sentAt: String = "",
+    // #2452: the server's claim on an Email or Text draft while it sends, and
+    // its mark when the send got no answer. A claim with no `sentAt` beside it
+    // is a send nobody can vouch for. Stamped by the server only.
+    var sendClaimedAt: String = "",
+    var sendUnconfirmedAt: String = "",
 ) {
     /** #1563: already sent to the household as a KinTale; the report is its record now. */
     val isPublished: Boolean get() = publishedReportId.isNotBlank()
+    /**
+     * #2293: an approved Push draft the server held back. Nothing reached the
+     * household, so the KinTales list files it under Drafts again and
+     * Communicate opens it with its Try again. Not part of [isUnsent], so
+     * Home's pending count is unchanged.
+     */
+    val isHeldPush: Boolean get() =
+        communicationType.trim().lowercase() == "push" &&
+            status.trim().lowercase() == "approved" &&
+            pushOutcome.trim() == "held"
+    /**
+     * #2381: an approved Push draft with no answer on it. Its send was cut off
+     * (a dropped connection, a timeout) before the server could say what
+     * happened, so it is listed under Drafts and opens with Try again, like a
+     * held one. Not part of [isUnsent] either.
+     */
+    val isUnansweredPush: Boolean get() =
+        communicationType.trim().lowercase() == "push" &&
+            status.trim().lowercase() == "approved" &&
+            pushOutcome.isBlank()
 
     /**
      * #1563: waiting on a decision. Not sent, and in a status that means nobody
@@ -1440,7 +1472,90 @@ data class Draft(
      * unknown are not "pending".
      */
     val isUnsent: Boolean get() = !isPublished && status.trim().lowercase() in setOf("pending", "generated", "")
+    /**
+     * #2428: a Push the household was sent: on their notifications list, and
+     * on their phone when the answer is `sent`. It opens as sent, with no
+     * Approve and no Delete. A held Push and an unanswered one reached nobody
+     * and are not this.
+     */
+    val isSentPush: Boolean get() =
+        communicationType.trim().lowercase() == "push" &&
+            status.trim().lowercase() == "approved" &&
+            pushOutcome.trim() in setOf("sent", "listed")
+    /**
+     * #2428: the channel an Email or Text draft went out on (`email` or `sms`),
+     * or null when the draft is not one or has not gone. Gone means stamped
+     * [sentAt], or approved: approving one is what sends it, on every version
+     * of every client, so an approved one with no stamp went out the old way.
+     */
+    val sentMessageChannel: String? get() {
+        val type = communicationType.trim().lowercase()
+        if (type != "email" && type != "sms") return null
+        return if (sentAt.isNotBlank() || status.trim().lowercase() == "approved") type else null
+    }
+    /** #2428: already went to its household as a KinTale, a Push, an Email or a Text. */
+    val wentOut: Boolean get() = isPublished || isSentPush || sentMessageChannel != null
+    /**
+     * #2452: where an Email or Text draft stands, read off the stamps the
+     * server writes, or null for any other type and for one nobody approved.
+     * The server reads them the same way (`draftSendStanding`), and so do the
+     * web admin and the desktop console. Asked before anything says "sent":
+     * [sentMessageChannel] is also set for a send that got no answer.
+     */
+    fun messageStanding(nowMs: Long): MessageDraftStanding? {
+        val type = communicationType.trim().lowercase()
+        if (type != "email" && type != "sms") return null
+        if (sentAt.isNotBlank()) return MessageDraftStanding.Sent
+        if (status.trim().lowercase() != "approved") return null
+        if (sendClaimedAt.isBlank()) return MessageDraftStanding.Approved
+        if (sendUnconfirmedAt.isNotBlank()) return MessageDraftStanding.Unconfirmed
+        val claimedMs = try {
+            java.time.Instant.parse(sendClaimedAt.trim()).toEpochMilli()
+        } catch (_: Exception) {
+            return MessageDraftStanding.Unconfirmed
+        }
+        return if (nowMs - claimedMs < DRAFT_SEND_LEASE_MS) MessageDraftStanding.Sending else MessageDraftStanding.Unconfirmed
+    }
+    /**
+     * #2440: where the KinTales list files a Communicate draft that is past
+     * approving, or null for every other draft (the Drafts bucket has its own
+     * rule, and a sent KinTale is listed as its report).
+     */
+    fun listPlace(nowMs: Long): DraftListPlace? {
+        if (isPublished) return null
+        if (isSentPush) return DraftListPlace.Sent
+        return when (messageStanding(nowMs)) {
+            MessageDraftStanding.Sent, MessageDraftStanding.Approved -> DraftListPlace.Sent
+            MessageDraftStanding.Unconfirmed -> DraftListPlace.Unconfirmed
+            MessageDraftStanding.Sending -> DraftListPlace.Sending
+            null -> null
+        }
+    }
 }
+/** How long the server's claim reads as "being sent right now" (`DRAFT_SEND_LEASE_MS` on the server). */
+const val DRAFT_SEND_LEASE_MS = 120_000L
+/**
+ * #2452: an Email or Text draft that is past approving.
+ *
+ *  - [Sent]: stamped `sentAt`, the provider took it.
+ *  - [Sending]: claimed under two minutes ago, the send is running.
+ *  - [Unconfirmed]: the send got no answer, or its claim was left by a call
+ *    that died. It may have reached the household. It is not sent again from
+ *    this draft.
+ *  - [Approved]: approved with no stamp and no claim. An older version of the
+ *    app approved it and sent it.
+ */
+enum class MessageDraftStanding { Sent, Sending, Unconfirmed, Approved }
+/** #2440: the three places the KinTales list files a Communicate draft that is past approving. */
+enum class DraftListPlace { Sent, Unconfirmed, Sending }
+/**
+ * #2440: the Communicate drafts the KinTales list files outside Drafts, newest
+ * first: the ones that went out (under Sent), and an Email or Text whose send
+ * got no answer or is still running. The list dropped all of them, so a sent
+ * Email, Text or Push could not be found from it. Pure; tested.
+ */
+fun goneGeneratedDrafts(drafts: List<Draft>, nowMs: Long): List<Draft> =
+    drafts.filter { it.listPlace(nowMs) != null }.sortedByDescending { it.createdOn }
 /**
  * #1563: one `generated_drafts` doc, read from BOTH spellings the collection is
  * written in (see [Draft]'s WRITER MISMATCH note). `toObject(Draft::class.java)`
@@ -1475,6 +1590,11 @@ fun draftFromFields(id: String, data: Map<String, Any?>): Draft {
         approvedBy = str("approvedBy"),
         generatedTitle = either("generatedTitle", "generated_title"),
         publishedReportId = str("publishedReportId"),
+        pushOutcome = str("pushOutcome"),
+        pushReason = str("pushReason"),
+        sentAt = str("sentAt"),
+        sendClaimedAt = str("sendClaimedAt"),
+        sendUnconfirmedAt = str("sendUnconfirmedAt"),
     )
 }
 

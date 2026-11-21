@@ -64,7 +64,12 @@ import './VetClinics.css';
  * household's id and drop them out of the fan-out permanently. The control is
  * named "Retire" and wears an archive glyph, and the mock is amended to match.
  */
-export function VetClinics() {
+export function VetClinics({ isAuntie = false }: { isAuntie?: boolean } = {}) {
+  // An Auntie may propose a clinic (`submitVetClinic` is on her list) and read
+  // the bank. Curating it is the owner's: `updateVetClinic` and
+  // `archiveVetClinic` refuse her, so a card carries no Approve, Edit, Reject,
+  // Retire or Restore for her. `isAuntie` is the access the admin layout
+  // resolved before the screen drew (`routes/VetClinicsView.tsx`).
   const clinics = useVetClinics();
   const households = useCollection<VetLinkedHousehold>(HOUSEHOLD_DATA_QUERY);
   const [query, setQuery] = useState('');
@@ -107,6 +112,7 @@ export function VetClinics() {
             onQuery={setQuery}
             adding={adding}
             onAddDone={() => setAdding(false)}
+            canCurate={!isAuntie}
           />
         )}
       </AsyncRegion>
@@ -131,6 +137,8 @@ interface BankProps {
   onQuery: (q: string) => void;
   adding: boolean;
   onAddDone: () => void;
+  /** False for an Auntie: the cards carry no curating controls. */
+  canCurate: boolean;
 }
 
 function ClinicBank({
@@ -141,6 +149,7 @@ function ClinicBank({
   onQuery,
   adding,
   onAddDone,
+  canCurate,
 }: BankProps) {
   const pending = useMemo(() => pendingClinics(rows), [rows]);
   const bank = useMemo(() => activeClinics(rows), [rows]);
@@ -149,6 +158,7 @@ function ClinicBank({
 
   const card = (c: VetClinic, flags: { pending?: boolean; retired?: boolean } = {}) => (
     <ClinicCard
+      canCurate={canCurate}
       key={c._id}
       clinic={c}
       all={rows}
@@ -228,9 +238,11 @@ interface CardProps {
   usageKnown: boolean;
   pending?: boolean;
   retired?: boolean;
+  /** False for an Auntie: no Approve, Edit, Reject, Retire or Restore. */
+  canCurate: boolean;
 }
 
-function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardProps) {
+function ClinicCard({ clinic, all, usage, usageKnown, pending, retired, canCurate }: CardProps) {
   const { showToast } = useToast();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ClinicDraft>(() => draftFromClinic(clinic));
@@ -394,6 +406,7 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
 
           <footer className="vetcard-base">
             <UsageBadge usage={usage} known={usageKnown} />
+            {canCurate && (
             <div className="vetcard-actions">
               {pending === true && (
                 <PrimaryButton
@@ -437,6 +450,7 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
                 />
               )}
             </div>
+            )}
           </footer>
         </>
       )}

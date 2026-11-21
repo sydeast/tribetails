@@ -308,6 +308,14 @@ class AdminDataViewModel(
     // unsent ones are listed; see [unsentGeneratedDrafts].
     private val _generatedDrafts = MutableStateFlow<List<Draft>>(emptyList())
     val generatedDrafts: StateFlow<List<Draft>> = _generatedDrafts.asStateFlow()
+    /**
+     * #2440: the Communicate drafts the KinTales list files outside Drafts: the
+     * ones that went out, and an Email or Text whose send got no answer or is
+     * still running. They were dropped at this load, so a sent Email, Text or
+     * Push could not be found from the list.
+     */
+    private val _goneGeneratedDrafts = MutableStateFlow<List<Draft>>(emptyList())
+    val goneGeneratedDrafts: StateFlow<List<Draft>> = _goneGeneratedDrafts.asStateFlow()
     private val _generatedDraftsError = MutableStateFlow<String?>(null)
     val generatedDraftsError: StateFlow<String?> = _generatedDraftsError.asStateFlow()
     // Kinfolk list - populated on demand by orphan triage flow so the
@@ -651,6 +659,8 @@ class AdminDataViewModel(
             _generatedDraftsError.value = null
             repository.getGeneratedDrafts().onSuccess { drafts ->
                 _generatedDrafts.value = unsentGeneratedDrafts(drafts)
+                _goneGeneratedDrafts.value =
+                    com.tribetails.auntieos.data.model.goneGeneratedDrafts(drafts, System.currentTimeMillis())
             }.onFailure { throwable ->
                 _generatedDraftsError.value = throwable.message ?: "Failed to load drafts"
             }
@@ -1518,10 +1528,16 @@ internal fun isNotificationUnread(entry: com.tribetails.auntieos.data.admin.Noti
  * (`generated` from generate.js, `pending` from the n8n era, or blank). The
  * same positive match the web list makes (`draftStatusAsKinTaleStatus`). Newest
  * first. Pure; tested.
+ *
+ * #2293: an approved Push draft the server held ([Draft.isHeldPush]) is listed
+ * here too, the web list's rule, so it can be opened and sent again.
+ *
+ * #2381: so is an approved Push draft whose send never answered
+ * ([Draft.isUnansweredPush]). It used to drop off this list for good.
  */
 internal fun unsentGeneratedDrafts(drafts: List<Draft>): List<Draft> =
     drafts
-        .filter { it.isUnsent }
+        .filter { it.isUnsent || it.isHeldPush || it.isUnansweredPush }
         .sortedByDescending { it.createdOn }
 /**
  * #1675: what the notifications screen says after answering a waiting request

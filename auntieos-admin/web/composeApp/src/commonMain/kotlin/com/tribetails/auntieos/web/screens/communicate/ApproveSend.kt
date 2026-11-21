@@ -18,7 +18,8 @@ import com.tribetails.auntieos.web.data.WriteResult
 internal fun approveDeliveryChannel(type: MessageType): ExternalChannel? = when (type) {
     MessageType.Email -> ExternalChannel.Email
     MessageType.Text -> ExternalChannel.Sms
-    MessageType.Visit, MessageType.Blog -> null
+    // A Push is sent by `sendHouseholdPush`, not an external channel (#2294).
+    MessageType.Visit, MessageType.Blog, MessageType.Push -> null
 }
 
 private fun Kinfolk.nameForCopy(): String =

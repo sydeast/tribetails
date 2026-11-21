@@ -306,7 +306,7 @@ export async function dispatchVisitNotificationCore(
       recipientUid: '',
       stream: 'kinfolk',
       familyId: args.familyId,
-      docId: noticeLineIdForEvent('no_account', noAccountKey, `key:${visitDedupeKey(visitId, args)}`, ''),
+      docId: await noticeLineIdForEvent('no_account', noAccountKey, `key:${visitDedupeKey(visitId, args)}`, ''),
     });
     const { householdNoticeNotSent } = await import('../notifications/householdNotice.js');
     return {

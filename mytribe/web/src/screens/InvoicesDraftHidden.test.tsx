@@ -47,7 +47,7 @@ vi.mock('../lib/auth', () => ({
 }));
 
 const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
-  id: 'inv-open-1',
+  id: 'inv-open-1', invoiceNumber: '1042',
   kinfolkId: 'kin-fam-1',
   kinfolkName: 'The Test Family',
   client: 'The Test Family',
@@ -73,6 +73,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditTarget: null,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  // #2410: null on an invoice that can be paid.
+  payBlockedReason: null,
   payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 

@@ -12,7 +12,7 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
 });
 
-import { createTrainingDocumentHandler } from '../src/admin/createTrainingDocument';
+import { createTrainingDocumentHandler, TRAINING_DOCUMENT_KIND_NOTE } from '../src/admin/createTrainingDocument';
 import { updateTrainingDocumentHandler } from '../src/admin/updateTrainingDocument';
 import { deleteTrainingDocumentHandler } from '../src/admin/deleteTrainingDocument';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
@@ -285,6 +285,66 @@ describe('createTrainingDocument', () => {
       content: 'note', targetType: 'KINFOLK', targetKinfolkId: 'kf1', attachments: many,
     }))).rejects.toMatchObject({ code: 'invalid-argument' });
   });
+
+  // What kind of row a save writes. The copy generator sends only rows marked
+  // `voice_example` to the model as examples, so a save must never write one.
+  it('HAPPY: every target saves as a note, and says so', async () => {
+    const targets = [
+      { targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1' },
+      { targetType: 'KINFOLK', targetKinfolkId: 'kf1' },
+      { targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: 'k9' },
+    ];
+    for (const target of targets) {
+      const ctx = buildDbMock({ docs: roster() });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await createTrainingDocumentHandler(req({ content: 'Side gate code is 4321.', ...target }));
+      const add = ctx.adds.find((a) => a.collection === 'training_documents');
+      expect(add?.data.documentKind, target.targetType).toBe('note');
+      expect(TRAINING_DOCUMENT_KIND_NOTE).toBe('note');
+    }
+  });
+
+  it('NEGATIVE: a caller cannot choose the kind; a note stays a note', async () => {
+    const ctx = buildDbMock({ docs: roster() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createTrainingDocumentHandler(req({
+      content: 'Side gate code is 4321.', targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1',
+      documentKind: 'voice_example',
+    }));
+    const add = ctx.adds.find((a) => a.collection === 'training_documents');
+    expect(add?.data.documentKind).toBe('note');
+  });
+
+  it('HAPPY: a note filed under a message type is still a note about its household', async () => {
+    // `communicationType` is the label the list groups by. It is kept as sent
+    // and decides nothing about what kind of row this is.
+    for (const communicationType of ['email', 'sms', 'push', 'social_post', 'blog_post', 'general', 'visit_report']) {
+      const ctx = buildDbMock({ docs: roster() });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await createTrainingDocumentHandler(req({
+        content: 'Prefers a text over a call.', communicationType,
+        targetType: 'KINFOLK', targetKinfolkId: 'kf1',
+      }));
+      const add = ctx.adds.find((a) => a.collection === 'training_documents');
+      expect(add?.data.communicationType).toBe(communicationType);
+      expect(add?.data.documentKind, communicationType).toBe('note');
+      expect(add?.data.targetKinfolkId).toBe('kf1');
+      expect(add?.data.kinfolkRef).toBe('kf1');
+    }
+  });
+
+  it('SAD: a save with no target is refused, so nothing unanchored is ever written', async () => {
+    const ctx = buildDbMock({ docs: roster() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'A piece of writing with no household.', communicationType: 'email',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(createTrainingDocumentHandler(req({
+      content: 'A piece of writing with no household.', communicationType: 'email',
+      targetType: 'HOUSEHOLD', targetKinfolkId: '',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.adds.find((a) => a.collection === 'training_documents')).toBeUndefined();
+  });
 });
 
 describe('updateTrainingDocument', () => {
@@ -392,6 +452,55 @@ describe('updateTrainingDocument', () => {
     const call = (writeAuditEntry as any).mock.calls.map((c: any[]) => c[0])
       .find((c: any) => c.event === 'UPDATE_TRAINING_DOCUMENT');
     expect(call).toBeDefined();
+  });
+
+  it('HAPPY: an edit says the row is a note, a row saved before the kind existed included', async () => {
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/legacy1': { kinfolkRef: 'kf1', communicationType: 'email' } }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateTrainingDocumentHandler(req({
+      docId: 'legacy1', title: 'Imported', content: 'Still true.', communicationType: 'email',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1',
+    }));
+    const write = ctx.writes.find((w) => w.path === 'training_documents/legacy1');
+    expect(write?.data.documentKind).toBe('note');
+    expect(write?.data.communicationType).toBe('email');
+  });
+
+  it('HAPPY: a row that arrived as a voice example becomes a note once it is given a target', async () => {
+    // The save merges, so the old mark would survive unless the save writes
+    // its own. A row cannot be both about a household and a voice example.
+    const ctx = buildDbMock({
+      docs: roster({ 'training_documents/v1': { documentKind: 'voice_example', communicationType: 'email', content: 'A porch hello.' } }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateTrainingDocumentHandler(req({
+      docId: 'v1', content: 'A porch hello.', communicationType: 'email',
+      targetType: 'KINFOLK', targetKinfolkId: 'kf1',
+    }));
+    const write = ctx.writes.find((w) => w.path === 'training_documents/v1');
+    expect(write?.merge).toBe(true);
+    expect(write?.data.documentKind).toBe('note');
+    expect(write?.data.targetKinfolkId).toBe('kf1');
+  });
+
+  it('NEGATIVE: an edit cannot turn a note into a voice example', async () => {
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/d1': { documentKind: 'note', targetType: 'KINFOLK' } }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateTrainingDocumentHandler(req({
+      docId: 'd1', content: 'x', targetType: 'KINFOLK', targetKinfolkId: 'kf1',
+      documentKind: 'voice_example',
+    }));
+    const write = ctx.writes.find((w) => w.path === 'training_documents/d1');
+    expect(write?.data.documentKind).toBe('note');
+  });
+
+  it('SAD: an edit that would strip the target is refused', async () => {
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/d1': { documentKind: 'note', targetType: 'KINFOLK' } }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(updateTrainingDocumentHandler(req({
+      docId: 'd1', content: 'x', communicationType: 'email',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes.find((w) => w.path === 'training_documents/d1')).toBeUndefined();
   });
 });
 

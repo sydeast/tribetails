@@ -1,4 +1,5 @@
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useRouteContext } from '@tanstack/react-router';
+import { isAuntieAccess } from '../lib/access';
 import { kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { AsyncLoading } from '../components/AsyncRegion';
 import { ErrorHint } from '../components/DenScreenKit';
@@ -27,6 +28,9 @@ import { HouseholdMembers } from '../screens/HouseholdMembers';
 export function HouseholdMembersView() {
   const { kinfolkId } = useParams({ from: '/admin/household-members/$kinfolkId' });
   const navigate = useNavigate();
+  // Whether an Auntie is signed in, from the access the admin layout already
+  // resolved, so the owner's controls are never drawn for her.
+  const { access } = useRouteContext({ from: '/admin' });
   const household = useDocById<Kinfolk>('kinfolk', kinfolkId);
   if (household.status === 'loading') {
     return <AsyncLoading what="household" retry={household.retry} />;
@@ -42,6 +46,7 @@ export function HouseholdMembersView() {
       kinfolkId={kinfolkId}
       kinfolkName={kinfolkDisplayName(household.data)}
       kinfolkEmail={typeof household.data.email === 'string' ? household.data.email : ''}
+      isAuntie={isAuntieAccess(access)}
       onBack={() => void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })}
     />
   );

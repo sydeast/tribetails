@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { reviewAndSendDraftInvoiceHandler } from './reviewAndSendDraftInvoice';
 
 /**
@@ -264,23 +265,15 @@ export async function postInvoiceEventHandler(req: CallableRequest<unknown>): Pr
   const ref = db().collection('invoices').doc(args.invoiceId);
   const snap = await ref.get();
   if (!snap.exists) {
-    throw new HttpsError(
-      'not-found',
-      `Invoice '${args.invoiceId}' not found. postInvoiceEvent no longer creates invoices; ` +
-        `use createInvoice or createQuote.`,
-    );
+    // #2453: no id and no function name in a sentence a person reads.
+    throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
   }
   // `kinfolkId` used to be stamped from the caller's `familyId` on every call,
   // so a mismatched id moved the invoice to another household without a word.
   // It is now a precondition, never a write.
   const storedKinfolkId = (snap.data() as { kinfolkId?: unknown } | undefined)?.kinfolkId;
   if (typeof storedKinfolkId === 'string' && storedKinfolkId.length > 0 && storedKinfolkId !== args.familyId) {
-    throw new HttpsError(
-      'permission-denied',
-      `Invoice '${args.invoiceId}' belongs to household '${storedKinfolkId}', not ` +
-        `'${args.familyId}'. postInvoiceEvent no longer reassigns an invoice to another ` +
-        `household; use updateInvoice.`,
-    );
+    throw new HttpsError('permission-denied', 'That invoice belongs to a different household.');
   }
 
   // The delegation. `reviewAndSendDraftInvoice` owns the draft precondition,
