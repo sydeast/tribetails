@@ -277,7 +277,11 @@ export function kinCareToDto(
     timeBlockEndTime: blocks.timeBlockEndTime,
     kinIds: Array.isArray(data['kinIds']) ? (data['kinIds'] as string[]) : [],
     kinNames: Array.isArray(data['kinNames']) ? (data['kinNames'] as string[]) : [],
-    auntieDisplayName: stringOrNull(data['auntieDisplayName']),
+    // #1836: a completed visit nobody was assigned to (the office worked it
+    // itself) is signed by its sent KinTale, never "Not yet assigned".
+    auntieDisplayName:
+      stringOrNull(data['auntieDisplayName']) ??
+      (completedSession !== null ? (extras.kinTaleAuthorBySession.get(completedSession) ?? null) : null),
     auntieAvatarUrl: stringOrNull(data['auntieAvatarUrl']),
     notes: stringOrNull(data['notes']),
     requestedByUid: stringOrNull(data['requestedByUid']),
