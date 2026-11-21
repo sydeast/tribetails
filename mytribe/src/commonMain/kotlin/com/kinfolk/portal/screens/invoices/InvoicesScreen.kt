@@ -485,10 +485,13 @@ internal fun quoteActorLabel(invoice: Invoice, viewerUid: String?): String? = wh
  * The stored id used to stand after the "#", a string nobody can quote. An
  * invoice with no number reads "Invoice with no number" (or "Quote with no
  * number"), the words the office's apps, the web portal and the server use.
+ *
+ * A server older than the field does not say (null). That is not "has no
+ * number", so the name is the bare noun: "Invoice".
  */
 internal fun invoiceName(invoice: Invoice): String {
-    val number = invoice.invoiceNumber?.trim().orEmpty()
     val noun = invoiceDocNoun(invoice)
+    val number = invoice.invoiceNumber?.trim() ?: return noun
     return if (number.isEmpty()) "$noun with no number" else "$noun #$number"
 }
 

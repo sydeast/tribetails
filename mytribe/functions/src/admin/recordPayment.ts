@@ -54,6 +54,7 @@ import {
   settlementLedgerRowId,
 } from '../lib/paymentAppliedOwner';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
+import { invoiceLeadName, invoiceNumberText } from '../lib/invoiceNaming';
 
 /**
  * Creates a row in the ROOT `payments` collection. W2-1 of ADR-0002
@@ -671,6 +672,10 @@ export async function recordPaymentHandler(
   // A credited balance whose payment row failed to write would be money from
   // nowhere, which is why the increment was already staged beside the row; it
   // still is, and now a replay stages neither.
+  // #2453: the number on the linked invoice as this transaction read it, for the
+  // Activity Log line. The caller's `invoiceNumber` is not used for that line: it
+  // defaults to '' and is whatever the app sent.
+  let linkedInvoiceNumber = '';
   const committed = await db().runTransaction(async (tx) => {
     // FIRESTORE REQUIRES EVERY READ BEFORE EVERY WRITE, which happens to be the
     // order the guard needs anyway.
@@ -756,6 +761,7 @@ export async function recordPaymentHandler(
       : undefined;
     // The same rule as before the transaction, on this transaction's own read.
     if (linkedInvoice) refuseLinkToAnotherHousehold(linkedInvoice, kinfolkId);
+    linkedInvoiceNumber = invoiceNumberText(linkedInvoice?.['invoiceNumber']);
     // #2296: THE SETTLEMENT THIS CALL NAMES ALREADY HAS ITS LEDGER ROW. A call
     // naming a settlement records that one payment's row, and a settlement is
     // one payment. An older two-call build that sends its second step again
@@ -1157,7 +1163,9 @@ export async function recordPaymentHandler(
   // entrypoint's cold start does not pay for the module.
   const duplicateWords =
     possibleDuplicateOf !== null
-      ? (await import('../lib/activityWords.js')).paymentPossibleDuplicateWords(args.invoiceNumber)
+      ? (await import('../lib/activityWords.js')).paymentPossibleDuplicateWords(
+          application?.invoiceNumber || linkedInvoiceNumber,
+        )
       : null;
   if (possibleDuplicateOf !== null) {
     logEvent({
@@ -1181,9 +1189,9 @@ export async function recordPaymentHandler(
       duplicateWords !== null
         ? duplicateWords
         : args.invoiceId
-          ? // #2453: the number on the invoice when this payment was applied to it, else the one the caller sent. Never the id.
+          ? // #2453: the number on the invoice as this call read it. Never the id, and never what the caller sent.
             (await import('../lib/activityWords.js')).paymentRowRecordedWords(
-              application?.invoiceNumber || args.invoiceNumber,
+              application?.invoiceNumber || linkedInvoiceNumber,
             )
           : 'Standalone payment row recorded',
     payload: {
@@ -1452,10 +1460,9 @@ export const LINK_WRONG_HOUSEHOLD_CODE = 'link_wrong_household';
 function refuseLinkToAnotherHousehold(invoice: Record<string, unknown>, kinfolkId: string): void {
   const invoiceKin = typeof invoice['kinfolkId'] === 'string' ? invoice['kinfolkId'] : '';
   if (kinfolkId === '' || invoiceKin === '' || invoiceKin === kinfolkId) return;
-  const number = typeof invoice['invoiceNumber'] === 'string' ? invoice['invoiceNumber'].trim() : '';
   throw new HttpsError(
     'failed-precondition',
-    `${number === '' ? 'That invoice' : `Invoice ${number}`} belongs to a different household than this payment.`,
+    `${invoiceLeadName(invoice['invoiceNumber'])} belongs to a different household than this payment.`,
     { code: LINK_WRONG_HOUSEHOLD_CODE },
   );
 }

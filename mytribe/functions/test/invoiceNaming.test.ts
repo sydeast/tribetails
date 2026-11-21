@@ -261,17 +261,37 @@ describe('no source sentence carries an invoice id', () => {
     expect(files.length).toBeGreaterThan(100);
   });
 
+  it('the guard catches the sentences this change removed', () => {
+    // If the patterns below stop matching these, the guard is blind.
+    const ID = String.raw`\$\{[^}]*(\b\w*[Ii]nvoice\w*Id\b|\b\w*[Ii]nv\w*\.id\b)[^}]*\}`;
+    const NAMED_BY_ID = new RegExp(`\`[^\`]*\\b([Ii]nvoice|[Qq]uote) #?'?${ID}`);
+    for (const was of [
+      "throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);",
+      "throw new HttpsError('not-found', `Quote '${args.invoiceId}' not found.`);",
+      '`Invoice ${plannedApply.step.invoiceNumber || applyInvoiceId} owes ${usd(1)}, `',
+      '? `Invoice ${data.invoiceNumber ?? args.invoiceId} settled by a manually-recorded payment`',
+      'name: `Invoice #${args.invoiceId}`,',
+    ]) {
+      expect(NAMED_BY_ID.test(was), was).toBe(true);
+    }
+  });
+
   it('in a thrown refusal, a refusal message or an Activity Log description', () => {
-    const ID_IN_SENTENCE =
-      /(HttpsError\(\s*'[a-z-]+',\s*`|message:\s*`|description:\s*`)[^`]*\$\{[^}]*\b(invoiceId|invoice\.id|invoiceRef\.id|applyInvoiceId|appliedInvoiceId)\b[^}]*\}/;
-    const NAMED_BY_ID = /`[^`]*\b[Ii]nvoice #?'?\$\{[^}]*\b(invoiceId|\.id)\b[^}]*\}/;
+    // Any `${...}` that reads an invoice's id: invoiceId, applyInvoiceId, invoice.id, invoiceRef.id and the like.
+    const ID = String.raw`\$\{[^}]*(\b\w*[Ii]nvoice\w*Id\b|\b\w*[Ii]nv\w*\.id\b)[^}]*\}`;
+    const SENTENCE_KEY = String.raw`(HttpsError\(\s*'[a-z-]+',|message:|description:|refuse\()`;
+    const ID_IN_SENTENCE = new RegExp(`${SENTENCE_KEY}\\s*\`[^\`]*${ID}`);
+    const KEY_ENDS_LINE = new RegExp(`${SENTENCE_KEY}\\s*$`);
+    const ID_IN_TEMPLATE = new RegExp(`\`[^\`]*${ID}`);
+    const NAMED_BY_ID = new RegExp(`\`[^\`]*\\b([Ii]nvoice|[Qq]uote) #?'?${ID}`);
     const hits: string[] = [];
     for (const file of files) {
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, i) => {
         const code = line.trim();
         if (code.startsWith('*') || code.startsWith('//') || code.startsWith('/*')) return;
-        if (ID_IN_SENTENCE.test(line) || NAMED_BY_ID.test(line)) hits.push(`${relative(SRC, file)}:${i + 1}`);
+        const keyAbove = i > 0 && KEY_ENDS_LINE.test(lines[i - 1] ?? '') && ID_IN_TEMPLATE.test(line);
+        if (ID_IN_SENTENCE.test(line) || NAMED_BY_ID.test(line) || keyAbove) hits.push(`${relative(SRC, file)}:${i + 1}`);
       });
     }
     expect(hits).toEqual([]);

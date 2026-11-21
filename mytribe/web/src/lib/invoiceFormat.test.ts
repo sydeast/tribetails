@@ -268,9 +268,12 @@ describe('#1848: how the portal names an invoice', () => {
     expect(invoiceName({ status: 'open', invoiceNumber: null })).toBe('Invoice with no number');
     expect(invoiceName({ status: 'open', invoiceNumber: '' })).toBe('Invoice with no number');
     expect(invoiceName({ status: 'open', invoiceNumber: '   ' })).toBe('Invoice with no number');
-    // A server older than the field sends no key at all.
-    expect(invoiceName({ status: 'open' })).toBe('Invoice with no number');
     expect(invoiceName({ status: 'quote', invoiceNumber: null })).toBe('Quote with no number');
+  });
+
+  it('a server older than the field sends no key: the bare noun, not a claim that there is no number', () => {
+    expect(invoiceName({ status: 'open' })).toBe('Invoice');
+    expect(invoiceName({ status: 'quote' })).toBe('Quote');
   });
 
   it('names the invoice a credit was spent on by its number, or in words', () => {

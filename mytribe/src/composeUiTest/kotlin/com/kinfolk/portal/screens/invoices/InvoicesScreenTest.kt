@@ -9,6 +9,7 @@ import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -59,6 +60,7 @@ class InvoicesScreenTest {
             put("paid", buildJsonArray {
                 add(buildJsonObject {
                     put("id", "1000")
+                    put("invoiceNumber", JsonNull)
                     put("kinfolkId", "3")
                     put("amountDue", 0.0)
                     put("total", 250.0)
@@ -365,6 +367,7 @@ class InvoicesScreenTest {
                 })
                 add(buildJsonObject {
                     put("id", "inv_1731000000001_ef34gh")
+                    put("invoiceNumber", JsonNull)
                     put("kinfolkId", "3")
                     put("amountDue", -10.0)
                     put("total", 0.0)

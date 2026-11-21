@@ -148,7 +148,11 @@ data class Invoice(
      * than the field, which reads as not blocked.
      */
     val payBlockedReason: String? = null,
-    /** #1848: the number a Kinfolk can quote, or null when the invoice has none (or the server is older than the field). */
+    /**
+     * #1848: the number a Kinfolk can quote. `""` when the server says the
+     * invoice has none. Null when the server is older than the field and did
+     * not say; [invoiceName] then prints the bare noun.
+     */
     val invoiceNumber: String? = null,
 )
 

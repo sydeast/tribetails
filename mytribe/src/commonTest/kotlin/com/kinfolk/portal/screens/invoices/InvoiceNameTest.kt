@@ -59,12 +59,12 @@ class InvoiceNameTest {
     @Test
     fun `a quote is named as a quote`() {
         assertEquals("Quote #Q-7", invoiceName(invoice("Q-7", InvoiceStatus.Quote)))
-        assertEquals("Quote with no number", invoiceName(invoice(null, InvoiceStatus.Quote)))
+        assertEquals("Quote with no number", invoiceName(invoice("", InvoiceStatus.Quote)))
     }
 
     @Test
     fun `an invoice with no number says so in words and never shows its id`() {
-        for (none in listOf(null, "", "   ")) {
+        for (none in listOf("", "   ")) {
             val name = invoiceName(invoice(none))
             assertEquals("Invoice with no number", name)
             assertFalse(name.contains(storedId))
@@ -98,9 +98,15 @@ class InvoiceNameTest {
     }
 
     @Test
-    fun `no number, a blank one and a server older than the field all decode to none`() = runTest {
-        assertEquals(null, decodedNumber { put("invoiceNumber", JsonNull) })
-        assertEquals(null, decodedNumber { put("invoiceNumber", "  ") })
+    fun `a server older than the field did not say, so the name is the bare noun`() {
+        assertEquals("Invoice", invoiceName(invoice(null)))
+        assertEquals("Quote", invoiceName(invoice(null, InvoiceStatus.Quote)))
+    }
+
+    @Test
+    fun `no number and a blank one decode to none, and a missing key to not told`() = runTest {
+        assertEquals("", decodedNumber { put("invoiceNumber", JsonNull) })
+        assertEquals("", decodedNumber { put("invoiceNumber", "  ") })
         assertEquals(null, decodedNumber { })
     }
 }

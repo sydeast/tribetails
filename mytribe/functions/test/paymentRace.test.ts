@@ -1417,7 +1417,7 @@ describe('a payment links only to its own household\'s invoice', () => {
     docs[INVOICE] = { ...OPEN, invoiceNumber: '' };
     const refusal = await refusalOf(linked());
     expect(refusal).toMatchObject({ code: 'link_wrong_household' });
-    expect(refusal!.message).toBe('That invoice belongs to a different household than this payment.');
+    expect(refusal!.message).toBe('Invoice with no number belongs to a different household than this payment.');
     expect(ledgerRows()).toEqual([]);
   });
   it('the rule is held on the read the row is written from: an invoice that changes household mid-call is refused', async () => {

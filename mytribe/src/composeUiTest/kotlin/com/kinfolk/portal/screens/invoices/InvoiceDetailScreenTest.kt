@@ -82,7 +82,7 @@ class InvoiceDetailScreenTest {
     @Test
     fun title_saysAnInvoiceHasNoNumber() = runComposeUiTest {
         setThemedContent {
-            InvoiceDetailScreen("The Foster", openInvoice().copy(invoiceNumber = null), onBack = {})
+            InvoiceDetailScreen("The Foster", openInvoice().copy(invoiceNumber = ""), onBack = {})
         }
         waitForIdle()
         onNodeWithText("Invoice with no number").assertIsDisplayed()

@@ -237,10 +237,15 @@ type NamedInvoice = Pick<InvoiceDto, 'status'> & { invoiceNumber?: string | null
  * The stored id used to stand after the "#", a string nobody can quote. An
  * invoice with no number reads "Invoice with no number" (or "Quote with no
  * number"), the words the office's apps and the server use.
+ *
+ * A server older than the field sends no key. That is "not told", not "has no
+ * number", so the name is the bare noun: "Invoice". The portal's main channel
+ * runs against the released server, which may be older than this page.
  */
 export function invoiceName(invoice: NamedInvoice): string {
-  const number = (invoice.invoiceNumber ?? '').trim();
   const noun = documentNoun(invoice);
+  if (invoice.invoiceNumber === undefined) return noun;
+  const number = (invoice.invoiceNumber ?? '').trim();
   return number === '' ? `${noun} with no number` : `${noun} #${number}`;
 }
 /**
