@@ -380,9 +380,10 @@ test('the invoice ledger tables span their panel at 390px, and only Payment Hist
       // GROSS tip, with $2.71 of processor fee taken out of the proceeds.
       //
       // BOTH ROWS RECONCILE, AND THEY DO NOT COVER THE BALANCE. The sum
-      // `ledgerCoversBalance` takes is `amountCents` per row (#2413: the tip is
-      // inside the amount), so it is $137.50 + $30.00 = $167.50 of ledger
-      // against $180.00 owed. Under it by $12.50, which keeps the per-row caveat banner
+      // `ledgerCoversBalance` takes is `amountCents - tipCents` per row (#2413:
+      // the tip is inside the amount and never goes toward a bill), so it is
+      // ($137.50 - $10.00) + ($30.00 - $0.00) = $157.50 of ledger against
+      // $180.00 owed. Under it by $22.50, which keeps the per-row caveat banner
       // and the "the ledger shows money this balance does not" banner both off
       // the screen: what is measured below is the table, not a banner standing
       // beside it.

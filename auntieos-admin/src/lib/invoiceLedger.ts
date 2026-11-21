@@ -86,8 +86,8 @@ export function sessionServiceLabel(serviceType: string, catalog: BookingCatalog
  * KEPT, AND NOTHING ON SCREEN USES IT. On the operator's real data `amount`
  * ALREADY CONTAINS the tip, so adding them counts the gratuity twice. The
  * table stopped rendering it first, and `ledgerCoversBalance` stopped summing
- * it in #2413. It stays because payment code is not deleted here, but nothing
- * new should reach for it.
+ * it in #2413 (it takes `ledgerRowTowardBillCents` now). It stays because
+ * payment code is not deleted here, but nothing new should reach for it.
  */
 export function ledgerRowTotalCents(
   row: Pick<GetInvoiceLedgerResultLedgerPayment, 'amountCents' | 'tipCents'>,
@@ -214,6 +214,11 @@ export function sessionsWithBrokenBacklink(
  * covers it. That is not a contradiction to resolve on the client; it is the
  * disagreement the panel has to name, so the operator does not either chase a
  * paid invoice or write off an unpaid one.
+ *
+ * #2413: WHAT A ROW CAN PUT TOWARD THE BILL IS ITS AMOUNT LESS ITS TIP. The
+ * amount is gross and the tip is inside it, and a tip is never applied to a
+ * bill (an overpayment is all tip). So a $100.00 payment carrying a $10.00 tip
+ * covers $90.00 of an invoice, and against $100.00 owed it raises no warning.
  */
 export function ledgerCoversBalance(input: {
   amountDueCents: number;
@@ -221,11 +226,27 @@ export function ledgerCoversBalance(input: {
 }): boolean {
   if (input.amountDueCents <= 0) return false;
   if (input.ledgerPayments.length === 0) return false;
-  // #2413: each row's amount, once. The amount is gross, so the tip is already
-  // inside it; adding `tipCents` on top counted every tip twice and raised the
-  // warning over rows that did not cover the balance.
-  const ledgerTotal = input.ledgerPayments.reduce((sum, r) => sum + r.amountCents, 0);
-  return ledgerTotal >= input.amountDueCents;
+  const towardBill = input.ledgerPayments.reduce((sum, r) => sum + ledgerRowTowardBillCents(r), 0);
+  return towardBill >= input.amountDueCents;
+}
+/**
+ * #2413: the part of a payment row that can go toward a bill: its gross amount
+ * less the tip inside it, and never below zero.
+ *
+ * NOT THE ROW'S `appliedCents`, though the row carries one. That field is what
+ * the payment DID settle, and it is zero on exactly the rows the warning above
+ * exists for: a card payment written to the history without settling the
+ * invoice stores no applied amount at all. Summing it would silence the
+ * warning on every invoice it was written to catch.
+ *
+ * FLOORED PER ROW, not on the sum. A row whose stored tip is larger than its
+ * amount puts nothing toward the bill; it must not take money away from the
+ * rows beside it.
+ */
+export function ledgerRowTowardBillCents(
+  row: Pick<GetInvoiceLedgerResultLedgerPayment, 'amountCents' | 'tipCents'>,
+): number {
+  return Math.max(0, row.amountCents - row.tipCents);
 }
 
 /**
