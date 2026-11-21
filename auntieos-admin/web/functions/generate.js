@@ -384,28 +384,56 @@ function taleBackgroundText(background) {
 /** Words in a row a draft must share with the background to count as repeating it. */
 const BACKGROUND_RUN_WORDS = 6;
 
+/** At most this many repeated passages are named back to the model. */
+const BACKGROUND_PASSAGES_NAMED = 3;
+
+function wordsOf(text) {
+  return String(text || '').toLowerCase().replace(/['’‘ʼ]/gu, "'").match(/[\p{L}\p{N}']+/gu) || [];
+}
+
 function wordRuns(text, n) {
-  const words = String(text || '').toLowerCase().replace(/['’‘ʼ]/gu, "'").match(/[\p{L}\p{N}']+/gu) || [];
+  const words = wordsOf(text);
   const out = new Set();
   for (let i = 0; i + n <= words.length; i += 1) out.add(words.slice(i, i + n).join(' '));
   return out;
 }
 
 /**
- * True when a draft repeats the household background word for word: a run of
- * BACKGROUND_RUN_WORDS words that the background holds and the rest of the
- * request (the visit facts, the ticked tasks, the notes) does not. The
- * background is never quoted (#2052 ruling), so such a draft is not handed over.
+ * The passages of a draft that repeat the household background word for
+ * word: each is a run of BACKGROUND_RUN_WORDS words or more that the
+ * background holds and the rest of the request (the visit facts, the ticked
+ * tasks, the notes) does not, overlapping runs joined into one passage, in
+ * the draft's own lowercase words. Empty when there is none. The background
+ * is never quoted (#2052 ruling), so a draft with one is not handed over.
  */
-function repeatsBackground(draft, backgroundText, visitText) {
-  if (!backgroundText) return false;
-  const background = wordRuns(backgroundText, BACKGROUND_RUN_WORDS);
-  if (background.size === 0) return false;
-  const visit = wordRuns(visitText, BACKGROUND_RUN_WORDS);
-  for (const run of wordRuns(draft, BACKGROUND_RUN_WORDS)) {
-    if (background.has(run) && !visit.has(run)) return true;
+function backgroundPassagesIn(draft, backgroundText, visitText) {
+  if (!backgroundText) return [];
+  const n = BACKGROUND_RUN_WORDS;
+  const background = wordRuns(backgroundText, n);
+  if (background.size === 0) return [];
+  const visit = wordRuns(visitText, n);
+  const words = wordsOf(draft);
+  const passages = [];
+  let start = -1;
+  let end = -1;
+  for (let i = 0; i + n <= words.length; i += 1) {
+    const run = words.slice(i, i + n).join(' ');
+    if (!background.has(run) || visit.has(run)) continue;
+    if (start !== -1 && i <= end) {
+      end = i + n;
+    } else {
+      if (start !== -1) passages.push(words.slice(start, end).join(' '));
+      start = i;
+      end = i + n;
+    }
   }
-  return false;
+  if (start !== -1) passages.push(words.slice(start, end).join(' '));
+  return passages;
+}
+
+/** True when a draft repeats the household background word for word. */
+function repeatsBackground(draft, backgroundText, visitText) {
+  return backgroundPassagesIn(draft, backgroundText, visitText).length > 0;
 }
 
 /**
@@ -932,14 +960,19 @@ async function readTaleBackground(db, kinfolkId, onVisit, offVisit) {
   // used only when no office record of another household, or of no household,
   // holds its id. A record that cannot be read is not used.
   const ownerOk = new Map();
+  let unreadKin = 0;
   await Promise.all([...byKinId.keys()].map(async (kinId) => {
     try {
       const snap = await db.collection('kin').doc(kinId).get();
       ownerOk.set(kinId, !snap.exists || textOf((snap.data() || {}).kinfolkId) === kinfolkId);
     } catch (_) {
       ownerOk.set(kinId, false);
+      unreadKin += 1;
     }
   }));
+  if (unreadKin > 0) {
+    console.error('generate: Kin records could not be read for a KinTale, so their 411s are left out', unreadKin);
+  }
   for (const kin of onVisit) {
     const found = [...kin.ids].map((id) => (ownerOk.get(id) ? byKinId.get(id) : null)).find(Boolean);
     if (found && kin.name) four11s.push({ name: kin.name, four11: recordWithoutKinNames(found, hidden) });
@@ -1222,7 +1255,7 @@ async function generateTitle(anthropic, bodyText, model, leftMs = MODEL_CALL_TIM
  */
 function correctionFor(problems) {
   const lines = [];
-  const { strays, borrowed, placeholder, quotesBackground } = problems;
+  const { strays, borrowed, placeholder, backgroundPassages = [] } = problems;
   if (strays.length) {
     lines.push(
       `CORRECTION: your last draft named ${listNames(strays)}, who ${strays.length === 1 ? 'is' : 'are'} ` +
@@ -1242,10 +1275,17 @@ function correctionFor(problems) {
       'using only the names this request carries.',
     );
   }
-  if (quotesBackground) {
+  if (backgroundPassages.length) {
+    // The model already holds the background, so naming the words back to it
+    // reveals nothing new. They go to the model only: never on screen, never
+    // in the log, never in a draft row. Without them the second draft has
+    // nothing to steer by, and an everyday phrase that the background happens
+    // to hold is often written again.
+    const named = backgroundPassages.slice(0, BACKGROUND_PASSAGES_NAMED).map((p) => `"${p}"`).join(', ');
     lines.push(
-      'CORRECTION: your last draft repeated wording from the household background. The background is ' +
-      'never quoted. Write the tale again from the visit facts, the ticked tasks and the notes, in your own words.',
+      `CORRECTION: your last draft repeated wording from the household background: ${named}. The background ` +
+      'is never quoted. Write the tale again from the visit facts, the ticked tasks and the notes, in your own ' +
+      'words, and do not use those words in a row again.',
     );
   }
   return lines.join('\n');
@@ -1325,11 +1365,13 @@ async function runGenerate(deps, body) {
     // A name the off-visit rule already called out is not called out twice.
     const stray = new Set(strays.map((n) => n.toLowerCase()));
     const borrowed = sampleNamesIn(draft, sampleNames, requestText, carriedNames).filter((n) => !stray.has(n.toLowerCase()));
+    const backgroundPassages = backgroundPassagesIn(draft, backgroundText, visitOnlyText);
     return {
       strays,
       borrowed,
       placeholder: hasPlaceholder(draft),
-      quotesBackground: repeatsBackground(draft, backgroundText, visitOnlyText),
+      backgroundPassages,
+      quotesBackground: backgroundPassages.length > 0,
     };
   };
   const any = (p) => p.strays.length > 0 || p.borrowed.length > 0 || p.placeholder || p.quotesBackground;
@@ -1491,6 +1533,7 @@ module.exports = {
   buildVisitReportMessage,
   taleBackgroundText,
   repeatsBackground,
+  backgroundPassagesIn,
   readTaleBackground,
   offVisitKinNamed,
   TITLE_INSTRUCTION,
