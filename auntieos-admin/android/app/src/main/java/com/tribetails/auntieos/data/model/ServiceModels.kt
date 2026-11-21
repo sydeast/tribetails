@@ -227,6 +227,16 @@ data class EnhancedBooking(
     var kinfolkName: String = "",
     var kinIds: List<String> = emptyList(), // Multiple pets can be in one booking
     var kinNames: List<String> = emptyList(),
+    /**
+     * #2347 (lead decision 2026-11-21): true when [kinIds] were chosen on a form
+     * that drew the Kin picker with choosing Kin switched on. Approval
+     * (`createKinCareSession` with `enhancedBookingId`) keeps a subset only from
+     * a draft that says so; a draft without it (an Android build from before
+     * 2026-11-14, whose picker was not gated) is booked for every Kin in care.
+     * Written only by the New Booking form (`KinChoice.chosenWithFlagOn`); every
+     * other save carries the value the draft was read with.
+     */
+    var kinChosenWithFlagOn: Boolean = false,
 
     // Service Details
     var baseServiceId: String = "",
