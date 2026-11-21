@@ -423,4 +423,9 @@ describe('visitMovedSentence: the clock line in words (#1814)', () => {
     );
     expect(visitAlreadySentence('ON_MY_WAY')).toMatch(/^Already on the way\./);
   });
+
+  it('never reads "Already ." when the server names no status', () => {
+    expect(visitAlreadySentence('')).toBe('Nothing was changed, and the time already on file is unchanged.');
+    expect(visitAlreadySentence('  ')).not.toMatch(/Already \./);
+  });
 });

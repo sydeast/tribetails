@@ -192,7 +192,9 @@ export function visitMovedSentence(from: string, to: string): string {
 
 /** #1814: a tap that found the visit already at this step. */
 export function visitAlreadySentence(status: string): string {
-  return `Already ${statusWords(status)}. Nothing was changed, and the time already on file is unchanged.`;
+  const word = statusWords(status);
+  const head = word === '' ? 'Nothing was changed' : `Already ${word}. Nothing was changed`;
+  return `${head}, and the time already on file is unchanged.`;
 }
 
 /** Whether this action tells the household anything, so whether there is a question to ask. */
