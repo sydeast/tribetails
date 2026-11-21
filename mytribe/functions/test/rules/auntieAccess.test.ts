@@ -874,6 +874,19 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
       await assertFails(db.doc(path).delete());
     }
   });
+  it('#2428: a Push the household was sent is not approved again with new words by a client', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    await seed('generated_drafts/sent-push', { ...push, status: 'approved', pushOutcome: 'sent' });
+    await seed('generated_drafts/listed-push', { ...push, status: 'approved', pushOutcome: 'listed', pushReason: 'no_device' });
+    await seed('generated_drafts/older-push', { ...older, communicationType: 'push', status: 'approved', pushOutcome: 'listed' });
+    for (const path of ['generated_drafts/sent-push', 'generated_drafts/listed-push', 'generated_drafts/older-push']) {
+      await assertSucceeds(db.doc(path).get());
+      // The approve write an installed client makes before it calls the push again.
+      await assertFails(db.doc(path).update({ ...APPROVE, generatedCopy: 'New words for a notice they already have' }));
+      await assertFails(db.doc(path).update({ generatedCopy: 'Edited after it went' }));
+    }
+  });
   it('#2428: a Push that reached nobody is still the owner\'s to approve again and to delete', async () => {
     const env = await getEnv();
     const db = asOwner(env).firestore();

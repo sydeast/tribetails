@@ -1733,8 +1733,13 @@ service cloud.firestore {
     // before it sends, so it is refused once the draft is approved: an
     // installed client cannot send an Email or Text draft a second time.
     //
-    // The type counts when EITHER spelling carries it. A Push is not covered by
-    // the update rule: `sendHouseholdPush` already sends one once per draft.
+    // The type counts when EITHER spelling carries it.
+    //
+    // A Push that reached the household (`pushOutcome` `sent` or `listed`) is
+    // refused the same update. `sendHouseholdPush` never pushes one twice, but
+    // a client that approved such a draft again with new words had the server
+    // rewrite the notice already on the household's list. A held Push, and one
+    // whose send never answered, reached nobody and are still approved again.
     //
     // A draft a household was sent is kept: a KinTale (`publishedReportId`), an
     // approved Email or Text, and a Push that reached their notifications list
@@ -1751,10 +1756,13 @@ service cloud.firestore {
       return draftTypeIsOneOf(d, ['email', 'sms'])
              && (d.get('status', '') == 'approved' || draftHasText(d, 'sentAt'));
     }
+    function isSentPushDraftData(d) {
+      return draftTypeIsOneOf(d, ['push']) && d.get('pushOutcome', '') in ['sent', 'listed'];
+    }
     function draftWentOutData(d) {
       return isApprovedMessageDraftData(d)
-             || draftHasText(d, 'publishedReportId')
-             || (draftTypeIsOneOf(d, ['push']) && d.get('pushOutcome', '') in ['sent', 'listed']);
+             || isSentPushDraftData(d)
+             || draftHasText(d, 'publishedReportId');
     }
     match /generated_drafts/{id} {
       allow get: if isOwner()
@@ -1765,7 +1773,9 @@ service cloud.firestore {
                   || (isTestAdmin() && resource.data.kinfolk_id == testScope());
       allow create: if isOwner();
       allow delete: if isOwner() && !draftWentOutData(resource.data);
-      allow update: if (isOwner() && !isApprovedMessageDraftData(resource.data))
+      allow update: if (isOwner()
+                        && !isApprovedMessageDraftData(resource.data)
+                        && !isSentPushDraftData(resource.data))
                     || (isCaretaker()
                         && isKinTaleDraftData(resource.data)
                         && isKinTaleDraftData(request.resource.data)
