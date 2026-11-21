@@ -63,6 +63,12 @@ type BookingDoc = {
    * so it can tell the admin who was told. See `officeNoticeStampChanged`.
    */
   officeNoticeStamp?: unknown;
+  /**
+   * #1822: a fresh value written by `admin/addKinToUpcomingVisits` on each
+   * household copy it adds a Kin to. That callable tells the household, the
+   * office and each Auntie ONCE for the whole change. See `kinAddedStampChanged`.
+   */
+  kinAddedStamp?: unknown;
 };
 
 /**
@@ -116,6 +122,25 @@ export function officeNoticeStampChanged(before: BookingDoc | undefined, after: 
   const now = after?.officeNoticeStamp;
   if (typeof now !== 'string' || now === '') return false;
   return before?.officeNoticeStamp !== now;
+}
+/**
+ * #1822 (lead decision 2026-11-21): true when THIS write carries a new
+ * `kinAddedStamp`, which means `admin/addKinToUpcomingVisits` made it and sends
+ * the notices itself: one `kincare.changed` for the whole change (the office
+ * copy and the household's) and one `assignment.changed` per Auntie. Without
+ * this the trigger, which runs once per VISIT, sent all three once per visit:
+ * adding a Kin to six visits was six messages to each, the fan-out #532 and
+ * #536 fixed for a request and its approval. The field name is
+ * `admin/addKinToUpcomingVisits.ts#KIN_ADDED_STAMP_FIELD`, spelled out here so
+ * this trigger loads no extra module.
+ *
+ * Only a CHANGED stamp counts, so every later write by anyone else still sends
+ * from here.
+ */
+export function kinAddedStampChanged(before: BookingDoc | undefined, after: BookingDoc | undefined): boolean {
+  const now = after?.kinAddedStamp;
+  if (typeof now !== 'string' || now === '') return false;
+  return before?.kinAddedStamp !== now;
 }
 /**
  * A stamp reduced to something comparable across revisions. Firestore hands back
@@ -447,7 +472,10 @@ export const onBookingsWrite = onDocumentWritten(
     // envelope-grained copy is the approve core's, not this one's.
     // `assignment.changed` keeps `{{bookingDate}}`: reassigned, unassigned,
     // cancelled and edited are all genuinely one-visit news.
+    // #1822: a Kin added to upcoming visits is told to her once, by the callable.
+    const kinAdded = kinAddedStampChanged(before, after);
     for (const d of assignmentDispatches(before, after, changedFieldsAll)) {
+      if (kinAdded && d.key === 'assignment.changed' && d.extra['changeKind'] === 'updated') continue;
       const extra =
         d.key === 'assignment.assigned' ? await visitDateFieldsFor(after, visitId, false) : {};
       await dispatch(d.key, { ...extra, ...d.extra, assignedAuntieUid: d.auntieUid });
@@ -526,8 +554,10 @@ export const onBookingsWrite = onDocumentWritten(
     }
 
     if (afterStatus === 'confirmed' || afterStatus === 'approved') {
-      if (changedFieldsAll.length > 0 && !officeNoticeStampChanged(before, after)) {
+      if (changedFieldsAll.length > 0 && !officeNoticeStampChanged(before, after) && !kinAdded) {
         // #2027: a stamped write is `rescheduleBooking`'s, which sent this itself.
+        // #1822: a `kinAddedStamp` write is `addKinToUpcomingVisits`', which
+        // sends one notice for every visit it changed.
         // #832: named by this write's event id (the dispatch default), so a
         // redelivery of this write dedupes and every later edit sends.
         await dispatch('kincare.changed', { changedFields: changedFieldsAll });

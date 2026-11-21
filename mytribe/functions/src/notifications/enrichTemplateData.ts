@@ -77,8 +77,23 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
     'visits',
   ],
   // Stays per visit, and stays on `{{bookingDate}}`: reassigned, unassigned,
-  // cancelled and edited are all genuinely news about ONE visit.
-  'assignment.changed': ['Business', 'bookingDate', 'kinName', 'serviceType'],
+  // cancelled and edited are all genuinely news about ONE visit. The one
+  // exception (#1822): a Kin added to her upcoming visits is told once, naming
+  // her days; `kinAdded` / `addedKinName` and the structured dates are
+  // emitter-supplied by `admin/addKinToUpcomingVisits`.
+  'assignment.changed': [
+    'Business',
+    'addedKinName',
+    'bookingDate',
+    'kinAdded',
+    'kinName',
+    'nextVisit.date',
+    'nextVisit.weekday',
+    'portalUrl',
+    'serviceType',
+    'visits',
+    'visitCount',
+  ],
   'account.welcome.kinfolk': ['kinfolkName'],
   'auth.account.locked': ['business', 'email'],
   'auth.failedLogin.attempts': ['attemptsInWindow', 'business', 'email'],
@@ -136,7 +151,22 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // operator's own words, carried on the dispatch, with no entity to hydrate
   // it from. The four below are the ones this enricher fills.
   'kincare.cancel.declined': ['Business', 'bookingDate', 'kinfolkName', 'kinName', 'note', 'serviceType'],
-  'kincare.changed': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
+  // #1822: `kinAdded` / `addedKinName` and the structured dates are
+  // emitter-supplied by `admin/addKinToUpcomingVisits`, which tells the whole
+  // change once instead of once per visit.
+  'kincare.changed': [
+    'addedKinName',
+    'bookingDate',
+    'kinAdded',
+    'kinfolkName',
+    'kinName',
+    'nextVisit.date',
+    'nextVisit.weekday',
+    'portalUrl',
+    'serviceType',
+    'visits',
+    'visitCount',
+  ],
   // #1408. `reason` (the household's words) and `note` (the office's) are
   // emitter-supplied; kinName rides on the dispatch too, and the enricher
   // fills kinfolkName from the household.

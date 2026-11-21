@@ -2646,10 +2646,20 @@ console; not in the contracts registry.
   Idempotent: a visit already carrying the Kin by either id is neither counted
   nor written. One Activity Log line (`ADD_KIN_TO_UPCOMING_VISITS`, "Added
   <Kin> to N upcoming visits") when at least one visit changed.
-- Notices: none of its own. A confirmed visit's household copy changing its
-  Kin is answered by `onBookingsWrite` with `kincare.changed`, the existing
-  visit-change rule (behind the household send gate); a request awaiting
-  approval sends nothing.
+- Every apply also puts right the envelope of an upcoming visit that already
+  carries the Kin while its envelope does not (an envelope write that failed
+  on an earlier call); such a visit is not counted in `upcoming`, and counts in
+  `added` once its envelope is written.
+- Notices: ONE per recipient for the whole change (#532/#536 shape), never one
+  per visit. Each household copy written carries a fresh `kinAddedStamp`, and
+  `onBookingsWrite` sends neither `kincare.changed` nor `assignment.changed`
+  ('updated') for that write. The callable then sends one `kincare.changed`
+  naming every confirmed visit it changed (the office copy, and the
+  household's behind the household send gate) and one `assignment.changed` per
+  assigned Auntie naming her days, with `kinAdded`, `addedKinName` and the
+  structured `visits` / `visitCount` / `nextVisit` dates; target `kinfolk`. A
+  request awaiting approval tells nobody. A call that fails part way tells
+  about the visits it changed, then throws; the retry tells about the rest.
 - GATE: owner only (`wrapAdminCallable`, not on the Auntie allowlist, and an
   explicit Auntie refusal). A Kin that is not an active Kin of the household
   counts 0 on a preview (its page draws nothing) and is `not-found`

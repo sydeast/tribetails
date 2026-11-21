@@ -48,11 +48,36 @@ import type { TimeZoneReader } from '../lib/pastVisit';
  * is not counted and not written, so a second tap, or a retry of a call whose
  * answer was lost, adds nothing and logs nothing.
  *
- * NOTICES follow the existing visit-change rules, and this callable sends none
- * of its own. Writing the household's copy of a confirmed visit is a change to
- * its Kin, which `onBookingsWrite` already answers with `kincare.changed`
- * (behind the household send gate, like every household notice). A request
- * still awaiting approval sends nothing, as for any other edit to a request.
+ * NOTICES: ONE for the whole change, never one per visit (lead decision
+ * 2026-11-21, the rule #532 and #536 set for a request and its approval).
+ * The household's copy of a confirmed visit changing its Kin used to be
+ * answered by `onBookingsWrite` once per visit, so adding a Kin to six visits
+ * sent six `kincare.changed` to the household, six office copies, and six
+ * `assignment.changed` to the Auntie. Now each household copy this callable
+ * writes carries a fresh `kinAddedStamp`, the trigger stays quiet for that
+ * write (`kinAddedStampChanged`), and this callable sends, once the writes are
+ * done:
+ *   - ONE `kincare.changed` naming every confirmed visit it changed: the office
+ *     copy (its `businessAdmins` resolver) and the household's (its
+ *     `kinfolkAcct` secondary), which the household send gate holds like any
+ *     household notice;
+ *   - ONE `assignment.changed` per Auntie those visits are assigned to, naming
+ *     her own days.
+ * A request still awaiting approval tells nobody, as before, and neither does
+ * an office row with no household copy.
+ *
+ * A PARTIAL FAILURE still tells about the visits this call did change, then
+ * reports the failure. Each visit is changed by exactly one call (a retry
+ * skips a visit that already carries the Kin), so a retry tells about the
+ * rest and nobody hears of a visit twice.
+ *
+ * ENVELOPES. The envelope names the Kin of the whole booking (the request
+ * card and the notices read it). Every apply also puts right the envelope of
+ * an upcoming visit that already carries the Kin while its envelope does not,
+ * so an envelope write that failed on one call is repaired by the next tap.
+ * Such a visit is not counted as missing the Kin: the visit has it, and a Kin
+ * put on one visit by an edit would otherwise draw the band for a visit that
+ * already shows it.
  *
  * Preview and apply are one callable: `apply: false` answers the count the
  * button names, `apply: true` writes and answers how many visits it changed.
@@ -116,6 +141,19 @@ async function isAhead(start: string, end: string, nowMs: number, tz: TimeZoneRe
 interface Visit {
   session: { id: string; data: Doc } | null;
   household: { path: string; batchPath: string; data: Doc } | null;
+  /** The booking envelope the household copy sits under, when it exists. */
+  envelope: { path: string; data: Doc } | null;
+}
+/**
+ * #1822 review: the field on a household copy that says THIS write was an
+ * `addKinToUpcomingVisits` write, so `onBookingsWrite` leaves the notices to
+ * this callable. A fresh value per call; the trigger skips only a write that
+ * changed it (`kinAddedStampChanged`), so every later edit by anyone else still
+ * sends from the trigger.
+ */
+export const KIN_ADDED_STAMP_FIELD = 'kinAddedStamp';
+function freshStamp(nowMs: number): string {
+  return `${nowMs}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function carries(data: Doc, kin: KinRosterEntry): boolean {
@@ -182,11 +220,25 @@ async function upcomingVisits(kinfolkId: string, nowMs: number, tz: TimeZoneRead
     const ok = session !== null ? await sessionUpcoming(session.data, nowMs, tz) : true;
     if (!ok || !(await householdUpcoming(data, nowMs, tz))) continue;
     const batchPath = path.split('/').slice(0, 4).join('/');
-    out.push({ session, household: { path, batchPath, data } });
+    out.push({ session, household: { path, batchPath, data }, envelope: null });
   }
   for (const [id, data] of sessions) {
     if (paired.has(id)) continue;
-    if (await sessionUpcoming(data, nowMs, tz)) out.push({ session: { id, data }, household: null });
+    if (await sessionUpcoming(data, nowMs, tz)) out.push({ session: { id, data }, household: null, envelope: null });
+  }
+  // The envelopes of those visits, each read once.
+  const batchPaths = [...new Set(out.flatMap((v) => (v.household !== null ? [v.household.batchPath] : [])))];
+  const envelopes = new Map<string, Doc>();
+  await Promise.all(
+    batchPaths.map(async (p) => {
+      const snap = await firestore.doc(p).get();
+      if (snap.exists) envelopes.set(p, (snap.data() ?? {}) as Doc);
+    }),
+  );
+  for (const v of out) {
+    if (v.household === null) continue;
+    const data = envelopes.get(v.household.batchPath);
+    if (data !== undefined) v.envelope = { path: v.household.batchPath, data };
   }
   return out;
 }
@@ -265,11 +317,16 @@ export async function addKinToUpcomingVisitsHandler(
   const { businessTimeZoneReader } = await import('../lib/pastVisit.js');
   const tz = businessTimeZoneReader();
   const visits = await upcomingVisits(args.kinfolkId, nowMs, tz);
-  const missing = visits.filter(
-    (v) => (v.session !== null && !carries(v.session.data, kin)) || (v.household !== null && !carries(v.household.data, kin)),
-  );
+  const visitLacks = (v: Visit): boolean =>
+    (v.session !== null && !carries(v.session.data, kin)) || (v.household !== null && !carries(v.household.data, kin));
+  const envelopeLacks = (v: Visit): boolean => v.envelope !== null && !carries(v.envelope.data, kin);
+  const missing = visits.filter(visitLacks);
+  // A visit that carries the Kin while its envelope does not: an envelope write
+  // that failed on an earlier call. Not counted (the visit itself has the Kin),
+  // but any apply puts the envelope right.
+  const envelopeOnly = visits.filter((v) => !visitLacks(v) && envelopeLacks(v));
 
-  if (args.apply !== true || missing.length === 0) {
+  if (args.apply !== true || (missing.length === 0 && envelopeOnly.length === 0)) {
     return validateResponse('addKinToUpcomingVisits', Result, {
       ok: true as const,
       kinId: kin.id,
@@ -280,6 +337,7 @@ export async function addKinToUpcomingVisitsHandler(
   }
 
   const firestore = db();
+  const stamp = freshStamp(nowMs);
   /**
    * CONCURRENCY. Each visit is written in its own transaction, which reads the
    * office row and the household's copy again, tests again that the visit has
@@ -287,18 +345,23 @@ export async function addKinToUpcomingVisitsHandler(
    * is still missing, and adds the Kin to the lists as they stand then, so a
    * Kin another edit put on the visit meanwhile is kept. A visit that started
    * in between is left as it is and not counted.
+   *
+   * It answers the household copy as it wrote it when the household is owed
+   * word of the change (a confirmed visit), for the one notice sent below.
    */
-  const addOne = (v: Visit): Promise<boolean> =>
+  const addOne = (v: Visit): Promise<{ changed: boolean; told: Told | null }> =>
     firestore.runTransaction(async (tx) => {
+      const none = { changed: false, told: null };
       const sessionRef = v.session !== null ? firestore.doc(`kin_care_sessions/${v.session.id}`) : null;
       const householdRef = v.household !== null ? firestore.doc(v.household.path) : null;
       const sessionSnap = sessionRef !== null ? await tx.get(sessionRef) : null;
       const householdSnap = householdRef !== null ? await tx.get(householdRef) : null;
       const session = sessionSnap?.exists ? ((sessionSnap.data() ?? {}) as Doc) : null;
       const household = householdSnap?.exists ? ((householdSnap.data() ?? {}) as Doc) : null;
-      if (sessionRef !== null && (session === null || !(await sessionUpcoming(session, nowMs, tz)))) return false;
-      if (householdRef !== null && (household === null || !(await householdUpcoming(household, nowMs, tz)))) return false;
+      if (sessionRef !== null && (session === null || !(await sessionUpcoming(session, nowMs, tz)))) return none;
+      if (householdRef !== null && (household === null || !(await householdUpcoming(household, nowMs, tz)))) return none;
       let changed = false;
+      let told: Told | null = null;
       if (sessionRef !== null && session !== null && !carries(session, kin)) {
         tx.set(
           sessionRef,
@@ -307,46 +370,68 @@ export async function addKinToUpcomingVisitsHandler(
         );
         changed = true;
       }
-      if (householdRef !== null && household !== null && !carries(household, kin)) {
-        tx.set(householdRef, { ...withKin(household, kin, roster), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      if (householdRef !== null && household !== null && v.household !== null && !carries(household, kin)) {
+        const kinLists = withKin(household, kin, roster);
+        tx.set(
+          householdRef,
+          { ...kinLists, [KIN_ADDED_STAMP_FIELD]: stamp, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
         changed = true;
+        if (HOUSEHOLD_TOLD.has(text(household['status']).toLowerCase())) {
+          const segs = v.household.path.split('/');
+          told = { visitId: segs[5] ?? '', batchId: segs[3] ?? '', data: { ...household, ...kinLists } };
+        }
       }
-      return changed;
+      return { changed, told };
     });
-
-  const changed: Visit[] = [];
+  const changed = new Set<Visit>();
+  const told: Told[] = [];
   let failure: unknown = null;
   for (let i = 0; i < missing.length && failure === null; i += PARALLEL) {
     const chunk = missing.slice(i, i + PARALLEL);
     const results = await Promise.allSettled(chunk.map(addOne));
     results.forEach((r, j) => {
       if (r.status === 'fulfilled') {
-        if (r.value) changed.push(chunk[j]!);
+        if (r.value.changed) changed.add(chunk[j]!);
+        if (r.value.told !== null) told.push(r.value.told);
       } else if (failure === null) {
         failure = r.reason;
       }
     });
   }
-
-  // The booking envelopes name the Kin of the whole booking: add the Kin to
-  // each envelope one of the changed visits belongs to, the same way.
-  const batchPaths = new Set(changed.flatMap((v) => (v.household !== null ? [v.household.batchPath] : [])));
-  for (const path of batchPaths) {
+  // The booking envelopes name the Kin of the whole booking. An envelope gets
+  // the Kin when a visit of its booking got it now, or when its visits already
+  // carry it and only the envelope does not (an envelope write that failed on
+  // an earlier call). Each in its own transaction, checked again.
+  const envelopeOwed = (v: Visit): boolean => v.envelope !== null && (changed.has(v) || envelopeOnly.includes(v));
+  const envelopePaths = new Set(visits.filter(envelopeOwed).map((v) => v.envelope!.path));
+  const envelopesWritten = new Set<string>();
+  for (const path of envelopePaths) {
     try {
-      await firestore.runTransaction(async (tx) => {
+      const wrote = await firestore.runTransaction(async (tx) => {
         const ref = firestore.doc(path);
         const snap = await tx.get(ref);
-        if (!snap.exists) return;
+        if (!snap.exists) return false;
         const data = (snap.data() ?? {}) as Doc;
-        if (carries(data, kin)) return;
+        if (carries(data, kin)) return false;
         tx.set(ref, { ...withKin(data, kin, roster), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        return true;
       });
+      if (wrote) envelopesWritten.add(path);
     } catch (err) {
       if (failure === null) failure = err;
     }
   }
-
-  if (changed.length === 0) {
+  // A visit whose only gap was its envelope counts once its envelope is put
+  // right, so the retry after a failed envelope answers what it fixed.
+  for (const v of envelopeOnly) {
+    if (v.envelope !== null && envelopesWritten.has(v.envelope.path)) changed.add(v);
+  }
+  // ONE notice per recipient for the whole change, sent before a failure is
+  // reported so the visits this call did change are told about (see the header).
+  await tellOnce({ kinfolkId: args.kinfolkId, kin, told, stamp, uid });
+  if (changed.size === 0) {
     if (failure !== null) throw failure;
     return validateResponse('addKinToUpcomingVisits', Result, {
       ok: true as const,
@@ -356,9 +441,8 @@ export async function addKinToUpcomingVisitsHandler(
       added: 0,
     });
   }
-
   const kinWords = kin.name ?? 'a Kin';
-  const visitWords = changed.length === 1 ? '1 upcoming visit' : `${changed.length} upcoming visits`;
+  const visitWords = changed.size === 1 ? '1 upcoming visit' : `${changed.size} upcoming visits`;
   await writeAuditEntry({
     event: AUDIT_EVENTS.ADD_KIN_TO_UPCOMING_VISITS,
     severity: 'info',
@@ -372,8 +456,8 @@ export async function addKinToUpcomingVisitsHandler(
     payload: {
       kinfolkId: args.kinfolkId,
       kinId: kin.id,
-      visitCount: changed.length,
-      sessionIds: changed.flatMap((v) => (v.session !== null ? [v.session.id] : [])),
+      visitCount: changed.size,
+      sessionIds: [...changed].flatMap((v) => (v.session !== null ? [v.session.id] : [])),
     },
   }).catch((err) => {
     logEvent({
@@ -384,28 +468,151 @@ export async function addKinToUpcomingVisitsHandler(
       errorMessage: (err as Error)?.message,
     });
   });
-
   logEvent({
     severity: 'info',
     function: 'addKinToUpcomingVisits',
     event: 'admin.kin.addedToUpcomingVisits',
     uid,
-    extra: { kinfolkId: args.kinfolkId, kinId: kin.id, visits: changed.length, upcoming: missing.length },
+    extra: { kinfolkId: args.kinfolkId, kinId: kin.id, visits: changed.size, upcoming: missing.length },
   });
-
   // Visits already written stay written (a retry finds them carrying the Kin
   // and skips them), and the log above names them; the rest are reported.
   if (failure !== null) throw failure;
-
   return validateResponse('addKinToUpcomingVisits', Result, {
     ok: true as const,
     kinId: kin.id,
     kinName: kin.name,
     upcoming: missing.length,
-    added: changed.length,
+    added: changed.size,
   });
 }
-
+/** The two household statuses on which a changed visit is news to the household (`visitTellsHouseholdOfChanges`). */
+const HOUSEHOLD_TOLD = new Set(['confirmed', 'approved']);
+/** A confirmed visit this call changed, as it wrote the household copy. */
+interface Told {
+  visitId: string;
+  batchId: string;
+  data: Doc;
+}
+/**
+ * The whole change, told once (lead decision 2026-11-21; #532/#536 shape):
+ *
+ *   - ONE `kincare.changed`: the office's copy and the household's (held by the
+ *     household send gate), naming every confirmed visit this call changed;
+ *   - ONE `assignment.changed` per Auntie those visits are assigned to, naming
+ *     her own days.
+ *
+ * The dates are the structured shape every multi-visit message carries
+ * (`notifications/visitDates.ts`): email lists every day, SMS and push give the
+ * count and the first day with a link. `kinAdded` and `addedKinName` select the
+ * seed's own wording for this change; `bookingDate` / `bookingTime` (the first
+ * day) are sent too, so a Firestore template imported before this wording
+ * still renders until the operator re-imports.
+ *
+ * The target is the household (`kinfolk`): the office's Open lands on it, and
+ * the household's copy opens its schedule (`householdNoticeTarget`). No visit
+ * id, because no one visit is what this is about.
+ *
+ * Never throws: the visits are written by now, and a failed send is logged at
+ * `warn` with the key. Each send is caught on its own so one recipient's
+ * failure costs nobody else their copy. Named by this call's stamp, so a
+ * redelivery dedupes and a later call (another Kin) sends.
+ */
+async function tellOnce(args: { kinfolkId: string; kin: KinRosterEntry; told: Told[]; stamp: string; uid: string }): Promise<void> {
+  const { kinfolkId, kin, told, stamp, uid } = args;
+  if (told.length === 0) return;
+  const warn = (key: string, err: unknown, extra: Record<string, unknown> = {}) =>
+    logEvent({
+      severity: 'warn',
+      function: 'addKinToUpcomingVisits',
+      event: 'notification.dispatch.failed',
+      uid,
+      extra: { kinfolkId, key, ...extra, err: (err as Error)?.message },
+    });
+  try {
+    const [dispatcher, dates, { resolveKinfolkUid }] = await Promise.all([
+      import('../notifications/dispatcher.js'),
+      import('../notifications/visitDates.js'),
+      import('../lib/resolveKinfolkUid.js'),
+    ]);
+    const rows = told
+      .map((t) => ({
+        visitId: t.visitId,
+        startTimeMs: dates.startMillisOf(t.data['startTime']) ?? dates.requestedDateNoonUtcMs(t.data['requestedDate']),
+        timeBlockId: typeof t.data['timeBlockId'] === 'string' ? (t.data['timeBlockId'] as string) : null,
+        serviceId: typeof t.data['serviceId'] === 'string' ? (t.data['serviceId'] as string) : null,
+        assignedAuntieUid: text(t.data['assignedAuntieUid']) || null,
+        serviceName: text(t.data['serviceName']) || text(t.data['serviceType']) || text(t.data['title']) || null,
+      }))
+      .filter((r): r is typeof r & { startTimeMs: number } => r.startTimeMs !== null)
+      .sort((a, b) => a.startTimeMs - b.startTimeMs);
+    if (rows.length === 0) return;
+    const tz = await dates.loadBusinessTimeZone();
+    const householdTime = await dates.loadHouseholdTimeContext();
+    const first = rows[0]!;
+    const common = {
+      kinfolkId,
+      kinId: kin.id,
+      kinName: kin.name,
+      kinAdded: true,
+      addedKinName: kin.name ?? 'A Kin',
+      changedFields: ['kinIds', 'kinNames'],
+    };
+    const dedupeKey = `kin-add:${kinfolkId}:${kin.id}:${stamp}`;
+    try {
+      const recipientUid = await resolveKinfolkUid(kinfolkId);
+      await dispatcher.enqueueNotification({
+        key: 'kincare.changed',
+        recipientUid: recipientUid ?? '',
+        data: {
+          ...common,
+          serviceName: first.serviceName,
+          startTimeMs: first.startTimeMs,
+          ...dates.buildVisitDateData(rows, tz, undefined, householdTime),
+          bookingDate: dates.formatBookingDate(first.startTimeMs, tz),
+          bookingTime: dates.formatBookingTime(first.startTimeMs, tz),
+          [dates.HOUSEHOLD_BOOKING_TIME]: dates.householdVisitTime(first, householdTime, tz),
+        },
+        targetType: 'kinfolk',
+        targetId: kinfolkId,
+        dedupeKey,
+      });
+    } catch (err) {
+      warn('kincare.changed', err);
+    }
+    const byAuntie = new Map<string, typeof rows>();
+    for (const r of rows) {
+      if (r.assignedAuntieUid === null) continue;
+      byAuntie.set(r.assignedAuntieUid, [...(byAuntie.get(r.assignedAuntieUid) ?? []), r]);
+    }
+    for (const [auntieUid, hers] of byAuntie) {
+      const herFirst = hers[0]!;
+      try {
+        await dispatcher.enqueueNotification({
+          key: 'assignment.changed',
+          recipientUid: auntieUid,
+          data: {
+            ...common,
+            assignedAuntieUid: auntieUid,
+            changeKind: 'updated',
+            serviceName: herFirst.serviceName,
+            startTimeMs: herFirst.startTimeMs,
+            ...dates.buildVisitDateData(hers, tz, dates.AUNTIE_SCHEDULE_URL),
+            bookingDate: dates.formatBookingDate(herFirst.startTimeMs, tz),
+            bookingTime: dates.formatBookingTime(herFirst.startTimeMs, tz),
+          },
+          targetType: 'kinfolk',
+          targetId: kinfolkId,
+          dedupeKey,
+        });
+      } catch (err) {
+        warn('assignment.changed', err, { auntieUid });
+      }
+    }
+  } catch (err) {
+    warn('kincare.changed', err);
+  }
+}
 export const addKinToUpcomingVisits = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('addKinToUpcomingVisits', addKinToUpcomingVisitsHandler),

@@ -1,1 +1,1 @@
-Assignment changed. Your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled. Tap to review.
+Assignment changed. {{#if kinAdded}}{{addedKinName}} is now on {{visitCount}} of your visits, starting {{nextVisit.weekday}} {{nextVisit.date}}. Tap for every date.{{else}}Your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled. Tap to review.{{/if}}

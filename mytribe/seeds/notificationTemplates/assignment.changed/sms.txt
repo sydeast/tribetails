@@ -1,1 +1,1 @@
-{{Business}}: your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled.
+{{#if kinAdded}}{{Business}}: {{addedKinName}} is now on {{visitCount}} of your visits, first {{nextVisit.weekday}} {{nextVisit.date}}. Every date: {{portalUrl}}{{else}}{{Business}}: your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled.{{/if}}
