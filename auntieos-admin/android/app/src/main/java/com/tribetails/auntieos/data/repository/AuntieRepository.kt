@@ -980,6 +980,33 @@ class AuntieRepository(
         decodeExternalSendResult(raw, channel)
     }.onFailure { AuntieLog.e("sendExternalMessage failed (channel=$channel)", it) }
     /**
+     * #2428: approves and sends a Communicate Email or Text draft through the
+     * `sendGeneratedDraft` callable. The server claims the draft, sends it to
+     * the address on the household's own record and stamps the draft sent, so
+     * there is no address here and no approve write before it. A repeat for a
+     * draft that went out answers `already_sent` and sends nothing.
+     */
+    suspend fun sendGeneratedDraft(
+        draftId: String,
+        kinfolkId: String,
+        body: String,
+        subject: String?,
+    ): Result<com.tribetails.auntieos.ui.communicate.DraftSendResult> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(draftId.isNotBlank()) { "draftId required" }
+        val payload = buildMap<String, Any> {
+            put("draftId", draftId)
+            put("kinfolkId", kinfolkId)
+            put("body", body.trim())
+            if (!subject.isNullOrBlank()) put("subject", subject.trim())
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("sendGeneratedDraft")
+            .call(payload)
+            .awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.communicate.decodeDraftSendResult(raw)
+    }.onFailure { AuntieLog.e("sendGeneratedDraft failed for draft $draftId", it) }
+    /**
      * #2061: pushes an approved Communicate "Push" draft to its household via
      * the `sendHouseholdPush` callable. The server applies the household send
      * gate and the household's own settings and says what happened; nothing

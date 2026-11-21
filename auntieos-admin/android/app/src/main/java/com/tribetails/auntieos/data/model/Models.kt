@@ -1433,6 +1433,9 @@ data class Draft(
     // draft (sent, listed or held) and why. Stamped by the server, never null.
     var pushOutcome: String = "",
     var pushReason: String = "",
+    // #2428: when `sendGeneratedDraft` handed an Email or Text draft to the
+    // provider. Set means the household has it. Stamped by the server only.
+    var sentAt: String = "",
 ) {
     /** #1563: already sent to the household as a KinTale; the report is its record now. */
     val isPublished: Boolean get() = publishedReportId.isNotBlank()
@@ -1464,6 +1467,29 @@ data class Draft(
      * unknown are not "pending".
      */
     val isUnsent: Boolean get() = !isPublished && status.trim().lowercase() in setOf("pending", "generated", "")
+    /**
+     * #2428: a Push the household was sent: on their notifications list, and
+     * on their phone when the answer is `sent`. It opens as sent, with no
+     * Approve and no Delete. A held Push and an unanswered one reached nobody
+     * and are not this.
+     */
+    val isSentPush: Boolean get() =
+        communicationType.trim().lowercase() == "push" &&
+            status.trim().lowercase() == "approved" &&
+            pushOutcome.trim() in setOf("sent", "listed")
+    /**
+     * #2428: the channel an Email or Text draft went out on (`email` or `sms`),
+     * or null when the draft is not one or has not gone. Gone means stamped
+     * [sentAt], or approved: approving one is what sends it, on every version
+     * of every client, so an approved one with no stamp went out the old way.
+     */
+    val sentMessageChannel: String? get() {
+        val type = communicationType.trim().lowercase()
+        if (type != "email" && type != "sms") return null
+        return if (sentAt.isNotBlank() || status.trim().lowercase() == "approved") type else null
+    }
+    /** #2428: already went to its household as a KinTale, a Push, an Email or a Text. */
+    val wentOut: Boolean get() = isPublished || isSentPush || sentMessageChannel != null
 }
 /**
  * #1563: one `generated_drafts` doc, read from BOTH spellings the collection is
@@ -1501,6 +1527,7 @@ fun draftFromFields(id: String, data: Map<String, Any?>): Draft {
         publishedReportId = str("publishedReportId"),
         pushOutcome = str("pushOutcome"),
         pushReason = str("pushReason"),
+        sentAt = str("sentAt"),
     )
 }
 

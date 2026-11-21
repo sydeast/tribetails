@@ -83,6 +83,7 @@ export const LONG_RUNNING_CALLABLES: ReadonlySet<string> = new Set([
   'scheduleMarketingBlast',
   'cancelMarketingBlast',
   'sendExternalMessage',
+  'sendGeneratedDraft',
   'mintInvite',
   'inviteKinfolkToPortal',
   'executePrimaryRecovery',

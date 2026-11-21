@@ -144,7 +144,7 @@ internal fun DecidePaymentDialog(
                 onSelect = onApplyInvoice,
                 optionLabel = { id ->
                     if (id.isEmpty()) DECIDE_NONE_OPTION
-                    else openInvoices.firstOrNull { it.invoiceId == id }?.let(::openInvoiceOptionLabel) ?: id
+                    else openInvoices.firstOrNull { it.invoiceId == id }?.let(::openInvoiceOptionLabel) ?: DECIDE_NONE_OPTION
                 },
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),

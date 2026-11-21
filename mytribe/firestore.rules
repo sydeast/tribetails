@@ -1721,6 +1721,46 @@ service cloud.firestore {
       return d.get('communication_type', null) == 'visit_report'
              && d.get('communicationType', 'visit_report') == 'visit_report';
     }
+    // #2428: A DRAFT THAT WENT OUT IS A RECORD, AND AN EMAIL OR TEXT GOES OUT
+    // ONCE. An Email or Text draft is sent by `sendGeneratedDraft`, which marks
+    // it `approved` and sends it in one call. Every client installed before
+    // that approved the draft with its own update here and then sent the
+    // message itself, and nothing recorded the send, so the same draft could be
+    // approved and sent again. That update is the one thing such a client does
+    // before it sends, so it is refused once the draft is approved: an
+    // installed client cannot send an Email or Text draft a second time.
+    //
+    // The type counts when EITHER spelling carries it.
+    //
+    // A Push that reached the household (`pushOutcome` `sent` or `listed`) is
+    // refused the same update. `sendHouseholdPush` never pushes one twice, but
+    // a client that approved such a draft again with new words had the server
+    // rewrite the notice already on the household's list. A held Push, and one
+    // whose send never answered, reached nobody and are still approved again.
+    //
+    // A draft a household was sent is kept: a KinTale (`publishedReportId`), an
+    // approved Email or Text, and a Push that reached their notifications list
+    // or their phone (`pushOutcome` `sent` or `listed`). The owner's delete goes
+    // through `deleteGeneratedDraft`, which refuses the same drafts; this is
+    // the same refusal for a delete made directly.
+    function draftTypeIsOneOf(d, types) {
+      return d.get('communication_type', '') in types || d.get('communicationType', '') in types;
+    }
+    function draftHasText(d, field) {
+      return d.get(field, '') is string && d.get(field, '') != '';
+    }
+    function isApprovedMessageDraftData(d) {
+      return draftTypeIsOneOf(d, ['email', 'sms'])
+             && (d.get('status', '') == 'approved' || draftHasText(d, 'sentAt'));
+    }
+    function isSentPushDraftData(d) {
+      return draftTypeIsOneOf(d, ['push']) && d.get('pushOutcome', '') in ['sent', 'listed'];
+    }
+    function draftWentOutData(d) {
+      return isApprovedMessageDraftData(d)
+             || isSentPushDraftData(d)
+             || draftHasText(d, 'publishedReportId');
+    }
     match /generated_drafts/{id} {
       allow get: if isOwner()
                  || (isCaretaker() && isKinTaleDraftData(resource.data))
@@ -1728,7 +1768,11 @@ service cloud.firestore {
       allow list: if isOwner()
                   || (isCaretaker() && resource.data.communication_type == 'visit_report')
                   || (isTestAdmin() && resource.data.kinfolk_id == testScope());
-      allow create, update, delete: if isOwner();
+      allow create: if isOwner();
+      allow delete: if isOwner() && !draftWentOutData(resource.data);
+      allow update: if isOwner()
+                    && !isApprovedMessageDraftData(resource.data)
+                    && !isSentPushDraftData(resource.data);
     }
     // #2289: ONE household record per household. A household's first record
     // is made at its own id (`household_data/{kinfolkId}`) by every creator:

@@ -34,7 +34,9 @@ fun quoteIsChangeable(invoice: Invoice): Boolean {
  */
 fun invoiceDocTitle(invoice: Invoice): String {
     val quote = isQuoteDraft(invoice) || invoiceStateOrNull(invoice) == InvoiceState.QUOTE
-    return "${if (quote) "Quote" else "Invoice"} #${invoice.invoiceNumber.ifBlank { "-" }}"
+    val noun = if (quote) "Quote" else "Invoice"
+    val number = invoice.invoiceNumber.trim()
+    return if (number.isEmpty()) "$noun with no number" else "$noun #$number"
 }
 
 /** The draft panel's line: a quote saved unsent, or a draft invoice (#2092: Kinfolk, never "client"). */
