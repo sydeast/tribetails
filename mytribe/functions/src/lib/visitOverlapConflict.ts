@@ -5,7 +5,7 @@ import { AUDIT_EVENTS } from './auditEvents';
 import { normalizeBookingStatus } from './bookingTransitions';
 import type { ActorRole } from './schema';
 import { businessTimeZone } from './bookingTimeBlocks';
-import { formatBusyWindow } from './visitWindowLabel';
+import { formatBusyWindow, windowClockFor, type WindowClock } from './visitWindowLabel';
 
 /**
  * The check no write path had: does this candidate window land on a visit that
@@ -139,8 +139,8 @@ export interface VisitOverlapConflict {
  * 2:00-3:00 PM"), the clock the operator reads on the schedule (#1168). It used
  * to be UTC, so a 2:00 PM visit read as 19:00.
  */
-export function occupiedVisitLabel(o: OccupiedVisit, timeZone: string): string {
-  return formatBusyWindow(o.startMs, o.endMs, timeZone);
+export function occupiedVisitLabel(o: OccupiedVisit, timeZone: string, clock: WindowClock = '12h'): string {
+  return formatBusyWindow(o.startMs, o.endMs, timeZone, clock);
 }
 
 /**
@@ -244,10 +244,11 @@ export function findVisitOverlapConflicts(
 export function formatVisitOverlapConflictMessage(
   conflicts: readonly VisitOverlapConflict[],
   timeZone: string,
+  clock: WindowClock = '12h',
 ): string {
   const parts = conflicts.map(
     (c) =>
-      `visit ${c.visitIndex + 1} (${formatBusyWindow(c.visitWindow.startMs, c.visitWindow.endMs, timeZone)}) overlaps a visit already booked (${occupiedVisitLabel(c.occupied, timeZone)})`,
+      `visit ${c.visitIndex + 1} (${formatBusyWindow(c.visitWindow.startMs, c.visitWindow.endMs, timeZone, clock)}) overlaps a visit already booked (${occupiedVisitLabel(c.occupied, timeZone, clock)})`,
   );
   return `That time is already taken: ${parts.join('; ')}.`;
 }
@@ -367,14 +368,16 @@ export async function guardVisitOverlapConflict(
   // Read only once a conflict is real, so a clean write path pays no extra read. The zone words the refusal (#1168).
   const settings = (await opts.firestore.doc(BUSINESS_SETTINGS_DOC).get()).data();
   const timeZone = businessTimeZone(settings);
+  // #1828: the refusal is read by whoever pressed the button.
+  const clock = windowClockFor(opts.actorRole);
   if (!opts.override) {
-    throw new HttpsError('failed-precondition', formatVisitOverlapConflictMessage(conflicts, timeZone), {
+    throw new HttpsError('failed-precondition', formatVisitOverlapConflictMessage(conflicts, timeZone, clock), {
       code: VISIT_OVERLAP_CONFLICT_CODE,
       attempt: opts.attempt,
       conflicts: conflicts.map((c) => ({
         visitIndex: c.visitIndex,
         sessionId: c.occupied.sessionId,
-        window: occupiedVisitLabel(c.occupied, timeZone),
+        window: occupiedVisitLabel(c.occupied, timeZone, clock),
       })),
     });
   }
@@ -385,7 +388,7 @@ export async function guardVisitOverlapConflict(
     severity: 'warn',
     actorRole: opts.actorRole,
     actorUid: opts.actorUid,
-    description: formatVisitOverlapConflictMessage(conflicts, timeZone),
+    description: formatVisitOverlapConflictMessage(conflicts, timeZone, clock),
     payload: {
       ...opts.auditContext,
       attempt: opts.attempt,

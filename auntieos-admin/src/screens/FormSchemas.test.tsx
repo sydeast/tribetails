@@ -255,7 +255,7 @@ describe('FormSchemas screen', () => {
     expect(version).toHaveClass('schemas__version');
     expect(version).not.toHaveClass('den-pill');
     // 2026-07-01T00:00:00Z is 2026-06-30 19:00 in America/Chicago (CDT, UTC-5).
-    expect(screen.getByText('2026-06-30 19:00')).toBeInTheDocument();
+    expect(screen.getByText('Jun 30, 2026 19:00')).toBeInTheDocument();
     expect(await screen.findByText('auntie@tribetails.example')).toBeInTheDocument();
   });
 
@@ -315,7 +315,7 @@ describe('FormSchemas screen', () => {
     ]);
     render(<FormSchemas />);
     await screen.findByText('Household intake');
-    expect(screen.getByText('2026-08-02 05:15')).toBeInTheDocument();
+    expect(screen.getByText('Aug 2, 2026 05:15')).toBeInTheDocument();
     expect(screen.queryByText(/2026-08-02T10:15:00\.000Z/)).toBeNull();
   });
 

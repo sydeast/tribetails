@@ -97,7 +97,7 @@ class MarketingBlastTest {
     @Test
     fun `fireAtMsFrom resolves the pair as local wall-clock time`() {
         val ms = fireAtMsFrom("2026-06-03", "09:00", utc)
-        assertEquals("2026-06-03 09:00", fireLabel(ms!!, utc))
+        assertEquals("Jun 3, 2026 09:00", fireLabel(ms!!, utc))
     }
 
     @Test
@@ -109,7 +109,7 @@ class MarketingBlastTest {
             val ms = fireAtMsFrom("2026-06-03", "09:00", chicago)
             // 9:00 Chicago (CDT) is 14:00Z; the LA phone's 9:00 would be 16:00Z.
             assertEquals(java.time.Instant.parse("2026-06-03T14:00:00Z").toEpochMilli(), ms)
-            assertEquals("2026-06-03 09:00", fireLabel(ms!!, chicago))
+            assertEquals("Jun 3, 2026 09:00", fireLabel(ms!!, chicago))
         } finally {
             java.util.TimeZone.setDefault(original)
         }

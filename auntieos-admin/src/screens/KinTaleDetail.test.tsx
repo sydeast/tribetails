@@ -232,7 +232,7 @@ describe('KinTaleDetail: report resolution', () => {
     await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     const hero = document.querySelector('.den-heading') as HTMLElement;
     expect(within(hero).getByText('From', { exact: false }).textContent).toBe('From Auntie Jo for The Whitfields');
-    expect(hero.querySelector('.den-heading-detail')).toHaveTextContent('07-16');
+    expect(hero.querySelector('.den-heading-detail')).toHaveTextContent('Jul 16, 2026');
     const badges = hero.querySelector('.den-heading-badges') as HTMLElement;
     expect(within(badges).getByText('SENT')).toHaveClass('den-statuspill');
     expect(within(badges).getByText('Dog Walk')).toHaveClass('den-pill');

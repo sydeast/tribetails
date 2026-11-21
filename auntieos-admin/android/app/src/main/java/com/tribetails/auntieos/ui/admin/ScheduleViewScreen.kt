@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import androidx.compose.foundation.background
@@ -1671,8 +1672,8 @@ private fun AdminBookingAgendaRow(
                         modifier = Modifier.size(14.dp),
                     )
                     Text(
-                        text = "Move to " + dragPreviewStart.format(DateTimeFormatter.ofPattern("h:mm a")) +
-                            " - " + dragPreviewEnd.format(DateTimeFormatter.ofPattern("h:mm a")),
+                        text = "Move to " + dragPreviewStart.format(AdminTime.CLOCK) +
+                            " - " + dragPreviewEnd.format(AdminTime.CLOCK),
                         style = AuntieTheme.typography.labelSmall,
                         color = c.textPrimary,
                     )
@@ -1945,7 +1946,7 @@ private fun bookingStatusBadge(booking: EnhancedBooking, zone: ZoneId): String =
 private fun bookingDateLabel(booking: EnhancedBooking, zone: ZoneId): String {
     val raw = booking.startDateTime.ifBlank { booking.endDateTime }
     // #2095: the business day, not an instant's UTC day.
-    return com.tribetails.auntieos.domain.storedBusinessDay(raw, zone).ifBlank { "Date pending" }
+    return com.tribetails.auntieos.domain.storedBusinessDayLabel(raw, zone).ifBlank { "Date pending" }
 }
 
 @Suppress("unused")
@@ -2157,7 +2158,7 @@ private fun bookingSubtitle(booking: EnhancedBooking): String {
 
 private fun bookingDisplayTime(iso: String): String = runCatching {
     val dateTime = LocalDateTime.parse(iso, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-    dateTime.format(DateTimeFormatter.ofPattern("h:mm a", Locale.US))
+    dateTime.format(AdminTime.CLOCK)
 }.getOrDefault(iso)
 
 @Composable
@@ -3216,7 +3217,7 @@ fun AgendaView(currentDate: LocalDate, events: List<Event>) {
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "${event.startTime.format(DateTimeFormatter.ofPattern("MMM dd, h:mm a"))}",
+                            event.startTime.format(AdminTime.DATE_TIME),
                             style = AuntieTheme.typography.bodyMedium,
                             color = AuntieTheme.colors.textPrimary
                         )
@@ -3431,7 +3432,7 @@ private fun visitRequestTime(ms: Long?, zone: ZoneId): String {
     if (ms == null) return "Not set"
     // #1158: on the business's clock, the same one the schedule reads.
     val local = java.time.Instant.ofEpochMilli(ms).atZone(zone)
-    return local.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d 'at' h:mm a"))
+    return local.format(java.time.format.DateTimeFormatter.ofPattern("EEE, " + AdminTime.DATE_TIME_PATTERN, java.util.Locale.US))
 }
 
 /**
@@ -3594,7 +3595,7 @@ internal fun IncomingSeriesRow(
                         value = picked?.hour,
                         options = (0..23).toList(),
                         onSelect = { h -> onSetStartTime(night.visitId, LocalTime.of(h, picked?.minute ?: 0)) },
-                        displayText = { formatClock(it, 0).replace(":00", "") },
+                        displayText = { formatClock(it, 0) },
                         label = "Start time",
                         placeholder = "Hour",
                         enabled = !actionsLocked,

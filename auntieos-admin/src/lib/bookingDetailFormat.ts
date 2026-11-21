@@ -1,6 +1,7 @@
 import type { RescheduleBookingArgs } from '../contracts/bookingContracts.generated';
 import { businessInstantMs, businessWallClock, businessWallClockToMs } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
+import { formatHHmm, formatYmd } from './time';
 
 /**
  * Pure display + arithmetic helpers for the Schedule booking detail sheet
@@ -46,14 +47,9 @@ export const NOTE_CUTOFF_MS = 3 * 60 * 60 * 1000;
 export const DEFAULT_VISIT_MINUTES = 30;
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_TIME = /^\d{2}:\d{2}$/;
-
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
 
 /**
  * A real `Date` for a free-text ISO field, or null. Never throws, never guesses.
@@ -178,7 +174,8 @@ export function buildRescheduleTimes(
   };
 }
 /**
- * "Thu, Jul 16 at 2:00 PM". `Not set` when the field is blank or unparseable:
+ * "Thu, Jul 16, 2026 14:00" (#1828: the admin day and 24-hour clock from
+ * lib/time.ts, with the weekday in front). `Not set` when the field is blank or unparseable:
  * never a fabricated date. In the BUSINESS zone when `businessZone` is given
  * (#1155, beside the reschedule fields that read the same clock), else the
  * viewer's own.
@@ -191,12 +188,10 @@ export function bookingWhenLabel(iso: string, businessZone?: string): string {
     const [y, mo, day] = dateIso.split('-').map(Number) as [number, number, number];
     const [h, m] = hhmm.split(':').map(Number) as [number, number];
     const weekday = new Date(Date.UTC(y, mo - 1, day)).getUTCDay();
-    return formatWhen(weekday, mo - 1, day, h, m);
+    return formatWhen(weekday, y, mo, day, h, m);
   }
-  return formatWhen(d.getDay(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes());
+  return formatWhen(d.getDay(), d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes());
 }
-function formatWhen(weekday: number, month: number, day: number, hour24: number, minute: number): string {
-  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
-  const meridiem = hour24 >= 12 ? 'PM' : 'AM';
-  return `${WEEKDAYS[weekday]}, ${MONTHS[month]} ${day} at ${hour12}:${pad2(minute)} ${meridiem}`;
+function formatWhen(weekday: number, year: number, month1: number, day: number, hour24: number, minute: number): string {
+  return `${WEEKDAYS[weekday]}, ${formatYmd(year, month1, day)} ${formatHHmm(hour24, minute)}`;
 }

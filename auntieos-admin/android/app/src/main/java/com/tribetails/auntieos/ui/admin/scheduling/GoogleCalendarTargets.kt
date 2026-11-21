@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import com.tribetails.auntieos.domain.AdminTime
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -168,7 +169,7 @@ data class GoogleCalendarConnection(
 
 // ── The last-push receipt ────────────────────────────────────────────────────
 
-private val PUSH_STAMP_FORMAT = DateTimeFormatter.ofPattern("MM-dd HH:mm")
+private val PUSH_STAMP_FORMAT = AdminTime.DATE_TIME
 
 private fun formatPushStamp(iso: String): String = try {
     PUSH_STAMP_FORMAT.format(Instant.parse(iso).atZone(ZoneId.systemDefault()))

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.kintales
 
+import com.tribetails.auntieos.domain.AdminTime
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -593,7 +594,7 @@ fun KinTaleReportScreen(
  * the screen stops recomposing, and this one is a promise about their work.
  */
 internal fun formatSavedAt(millis: Long): String =
-    java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+    java.text.SimpleDateFormat(AdminTime.CLOCK_PATTERN, java.util.Locale.US)
         .format(java.util.Date(millis))
 
 // ───────────────────────────── Hero ─────────────────────────────

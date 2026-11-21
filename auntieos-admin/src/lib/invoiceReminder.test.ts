@@ -45,7 +45,7 @@ describe('reminderOutcomeOf', () => {
 
 describe('reminder copy', () => {
   it('formats a time as month, day and clock time', () => {
-    expect(formatReminderTime(T, 'UTC')).toBe('Sep 14, 3:05 PM');
+    expect(formatReminderTime(T, 'UTC')).toBe('Sep 14, 2026 15:05');
   });
   it('a sent reminder says so plainly', () => {
     expect(reminderOutcomeMessage({ sent: true, reason: 'sent', lastReminderAtMs: T, nextReminderAllowedAtMs: T + DAY, appOnly: false }, 'UTC')).toBe(
@@ -59,12 +59,12 @@ describe('reminder copy', () => {
   });
   it('a refused reminder names when the earlier one went out and when the next can', () => {
     expect(reminderOutcomeMessage({ sent: false, reason: 'recent', lastReminderAtMs: T, nextReminderAllowedAtMs: T + DAY, appOnly: false }, 'UTC')).toBe(
-      'Not sent: a reminder already went out Sep 14, 3:05 PM. The next one can go out after Sep 15, 3:05 PM.',
+      'Not sent: a reminder already went out Sep 14, 2026 15:05. The next one can go out after Sep 15, 2026 15:05.',
     );
   });
   it('a press already in flight says so, and when to try again', () => {
     expect(reminderOutcomeMessage({ sent: false, reason: 'in-progress', lastReminderAtMs: null, nextReminderAllowedAtMs: T, appOnly: false }, 'UTC')).toBe(
-      'Not sent: a reminder for this invoice is already being sent. If it does not arrive, try again after Sep 14, 3:05 PM.',
+      'Not sent: a reminder for this invoice is already being sent. If it does not arrive, try again after Sep 14, 2026 15:05.',
     );
   });
   it('a suppressed reminder says nothing went out, and why', () => {
@@ -76,27 +76,27 @@ describe('reminder copy', () => {
     expect(lastReminderLabel(undefined)).toBe('none sent');
     expect(lastReminderLabel(null)).toBe('none sent');
     expect(lastReminderLabel('yesterday')).toBe('none sent');
-    expect(lastReminderLabel(T, 'UTC')).toBe('Sep 14, 3:05 PM');
+    expect(lastReminderLabel(T, 'UTC')).toBe('Sep 14, 2026 15:05');
   });
   it('#1507: the last-reminder fact says "app only" for an explicit true flag alone', () => {
-    expect(lastReminderLabel(T, 'UTC', true)).toBe('Sep 14, 3:05 PM, app only');
-    expect(lastReminderLabel(T, 'UTC', false)).toBe('Sep 14, 3:05 PM');
-    expect(lastReminderLabel(T, 'UTC', undefined)).toBe('Sep 14, 3:05 PM');
-    expect(lastReminderLabel(T, 'UTC', 'yes')).toBe('Sep 14, 3:05 PM');
+    expect(lastReminderLabel(T, 'UTC', true)).toBe('Sep 14, 2026 15:05, app only');
+    expect(lastReminderLabel(T, 'UTC', false)).toBe('Sep 14, 2026 15:05');
+    expect(lastReminderLabel(T, 'UTC', undefined)).toBe('Sep 14, 2026 15:05');
+    expect(lastReminderLabel(T, 'UTC', 'yes')).toBe('Sep 14, 2026 15:05');
     // No stamp, no time to qualify.
     expect(lastReminderLabel(null, 'UTC', true)).toBe('none sent');
   });
   it('#2515: a reminder held at its send time reads "held, not sent", never as sent or app only', () => {
     const heldAt = T + 5 * 60 * 1000;
-    expect(lastReminderLabel(T, 'UTC', false, heldAt)).toBe('Sep 14, 3:05 PM, held, not sent');
-    expect(lastReminderLabel(T, 'UTC', true, heldAt)).toBe('Sep 14, 3:05 PM, held, not sent');
+    expect(lastReminderLabel(T, 'UTC', false, heldAt)).toBe('Sep 14, 2026 15:05, held, not sent');
+    expect(lastReminderLabel(T, 'UTC', true, heldAt)).toBe('Sep 14, 2026 15:05, held, not sent');
     // Held in the same millisecond it was stamped: still held.
-    expect(lastReminderLabel(T, 'UTC', false, T)).toBe('Sep 14, 3:05 PM, held, not sent');
+    expect(lastReminderLabel(T, 'UTC', false, T)).toBe('Sep 14, 2026 15:05, held, not sent');
     // A reminder sent after the hold stamps a later time and reads as sent.
-    expect(lastReminderLabel(heldAt + 60 * 60 * 1000, 'UTC', false, heldAt)).toBe('Sep 14, 4:10 PM');
+    expect(lastReminderLabel(heldAt + 60 * 60 * 1000, 'UTC', false, heldAt)).toBe('Sep 14, 2026 16:10');
     // No held stamp, or not a number: as before.
-    expect(lastReminderLabel(T, 'UTC', false, null)).toBe('Sep 14, 3:05 PM');
-    expect(lastReminderLabel(T, 'UTC', false, 'held')).toBe('Sep 14, 3:05 PM');
+    expect(lastReminderLabel(T, 'UTC', false, null)).toBe('Sep 14, 2026 15:05');
+    expect(lastReminderLabel(T, 'UTC', false, 'held')).toBe('Sep 14, 2026 15:05');
     // No sent stamp, nothing on record whatever the held stamp says.
     expect(lastReminderLabel(null, 'UTC', false, heldAt)).toBe('none sent');
   });

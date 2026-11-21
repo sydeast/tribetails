@@ -1,3 +1,4 @@
+import { formatWhen } from '../lib/time';
 import { useCallback, useEffect, useState } from 'react';
 import type { NotificationCatalogEntry, NotificationMatrix, UngatedSend } from '../api/myNotifications';
 import { listNotificationDeliveries, type DeliveryEvidence } from '../api/notificationDeliveries';
@@ -35,17 +36,15 @@ import { humanizeKey } from '../lib/notificationsFeed';
  * happens for a row someone actually opened.
  */
 
-const pad = (n: number): string => String(n).padStart(2, '0');
 /** A channel as a word ("Email", "SMS", "Push"); an unknown one as it is. */
 function channelWord(channel: string): string {
   return channel === 'email' || channel === 'sms' || channel === 'push' ? channelLabel(channel) : channel;
 }
 
-/** LOCAL `MM-DD HH:mm`, matching `lib/time.ts` formatWhen but from epoch ms. */
+/** `lib/time.ts` formatWhen from epoch ms, "Nov 10, 2026 22:32" (#1828). */
 function whenMs(ms: number | null): string {
   if (ms === null) return 'no time recorded';
-  const d = new Date(ms);
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatWhen(ms);
 }
 
 export function BadgeRow({ badges }: { badges: RowBadge[] }) {

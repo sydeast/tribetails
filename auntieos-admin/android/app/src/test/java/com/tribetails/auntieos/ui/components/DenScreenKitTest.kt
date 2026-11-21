@@ -83,20 +83,20 @@ class DenScreenKitTest {
 
     @Test
     fun formatTime_renders_12h_with_am_pm() {
-        assertEquals("6:38p", formatTime("2025-08-06T18:38:00"))
-        assertEquals("7:18a", formatTime("2025-08-28T07:18:00"))
-        assertEquals("12:00p", formatTime("2025-08-10T12:00:00")) // noon -> 12p
-        assertEquals("12:30a", formatTime("2025-08-10T00:30:00")) // midnight -> 12a
+        assertEquals("18:38", formatTime("2025-08-06T18:38:00"))
+        assertEquals("07:18", formatTime("2025-08-28T07:18:00"))
+        assertEquals("12:00", formatTime("2025-08-10T12:00:00")) // noon
+        assertEquals("00:30", formatTime("2025-08-10T00:30:00")) // after midnight
     }
 
     @Test
     fun formatTime_reads_an_instant_on_the_business_clock() {
         val chicago = java.time.ZoneId.of("America/Chicago")
         // #2095: 11:30 PM Chicago on Nov 11 is 05:30 UTC on Nov 12.
-        assertEquals("11:30p", formatTime("2026-11-12T05:30:00.000Z", chicago))
-        assertEquals("11:30p", formatTime("2026-11-11T23:30:00", chicago))
+        assertEquals("23:30", formatTime("2026-11-12T05:30:00.000Z", chicago))
+        assertEquals("23:30", formatTime("2026-11-11T23:30:00", chicago))
         // The night clocks go forward: 00:30 CST on Mar 8 is 06:30 UTC.
-        assertEquals("12:30a", formatTime("2026-03-08T06:30:00Z", chicago))
+        assertEquals("00:30", formatTime("2026-03-08T06:30:00Z", chicago))
     }
     @Test
     fun formatTime_echoes_unparsable_input() {

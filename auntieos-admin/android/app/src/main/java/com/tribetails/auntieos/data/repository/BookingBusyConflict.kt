@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.data.repository
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.google.firebase.firestore.FirebaseFirestore
 import com.tribetails.auntieos.data.model.BookingTimeSlot
 import com.tribetails.auntieos.data.model.TimeSlotSource
@@ -77,20 +78,18 @@ internal class BookingBusyConflictException(message: String) : Exception(message
  * Words a window in the BUSINESS zone, the clock the operator reads on the
  * schedule (#1164); the twin of `formatBusyWindow` in
  * `lib/bookingBusyConflict.ts`. It used to read "2026-08-07 19:00 UTC to ..."
- * for a block drawn at 2:00 PM. "Aug 7, 2:00-3:00 PM" when both ends share a
- * day, "Aug 7, 10:00 PM to Aug 8, 2:00 AM" when they do not. Plain hyphens and
+ * for a block drawn at 14:00. "Aug 7, 14:00-15:00" when both ends share a
+ * day, "Aug 7, 22:00 to Aug 8, 02:00" when they do not (#1828: 24-hour). Plain hyphens and
  * "to", never a dash character.
  */
 internal fun formatBusyWindow(start: Instant, end: Instant, zone: ZoneId): String {
     val day = DateTimeFormatter.ofPattern("MMM d", Locale.US).withZone(zone)
-    val clock = DateTimeFormatter.ofPattern("h:mm", Locale.US).withZone(zone)
-    val meridiem = DateTimeFormatter.ofPattern("a", Locale.US).withZone(zone)
-    fun time(i: Instant) = "${clock.format(i)} ${meridiem.format(i)}"
+    val clock = AdminTime.CLOCK.withZone(zone)
+    fun time(i: Instant) = clock.format(i)
     val startDay = day.format(start)
     val endDay = day.format(end)
     return when {
         startDay != endDay -> "$startDay, ${time(start)} to $endDay, ${time(end)}"
-        meridiem.format(start) == meridiem.format(end) -> "$startDay, ${clock.format(start)}-${time(end)}"
         else -> "$startDay, ${time(start)}-${time(end)}"
     }
 }

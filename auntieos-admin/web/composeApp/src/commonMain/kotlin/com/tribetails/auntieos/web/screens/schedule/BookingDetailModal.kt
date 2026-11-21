@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.schedule
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import com.tribetails.auntieos.web.screens.HouseholdNotice
 import com.tribetails.auntieos.web.screens.HouseholdNoticeKeys
 import com.tribetails.auntieos.web.screens.HouseholdNoticePreview
@@ -764,11 +765,8 @@ private fun displayDateTime(iso: String, zone: TimeZone): String {
         ?: runCatchingCancellable { LocalDateTime.parse(iso) }.getOrNull()
         ?: return iso
     val dow = ldt.date.dayOfWeek.name.take(3).lowercase().replaceFirstChar(Char::titlecase)
-    val month = ldt.date.month.name.take(3).lowercase().replaceFirstChar(Char::titlecase)
-    val ampm = if (ldt.hour >= 12) "PM" else "AM"
-    val hour12 = when (ldt.hour % 12) { 0 -> 12; else -> ldt.hour % 12 }
-    val minute = ldt.minute.toString().padStart(2, '0')
-    return "$dow, $month ${ldt.date.day} at $hour12:$minute $ampm"
+    // #1828: the admin day and 24-hour clock, with the weekday in front.
+    return "$dow, ${AdminTime.dateTime(ldt)}"
 }
 
 /**

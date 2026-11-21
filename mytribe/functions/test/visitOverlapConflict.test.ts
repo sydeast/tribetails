@@ -244,7 +244,8 @@ describe('guardVisitOverlapConflict', () => {
     expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
   });
 
-  // #1168: the operator reads 10:00 AM on the schedule, so the refusal must not say 15:00.
+  // #1168: the operator reads 10:00 on the schedule, so the refusal must not say 15:00.
+  // #1828: an admin refusal reads the admin's 24-hour clock.
   it('words the refusal and details.window in the business zone, never UTC', async () => {
     const ctx = ctxWith('2026-08-24T15:00:00.000Z', '2026-08-24T16:00:00.000Z');
     const err = await guardVisitOverlapConflict({
@@ -255,9 +256,9 @@ describe('guardVisitOverlapConflict', () => {
       attempt: 'block_time',
     }).catch((e) => e);
     expect(err.message).toBe(
-      'That time is already taken: visit 1 (Aug 24, 10:30-11:30 AM) overlaps a visit already booked (Aug 24, 10:00-11:00 AM).',
+      'That time is already taken: visit 1 (Aug 24, 10:30-11:30) overlaps a visit already booked (Aug 24, 10:00-11:00).',
     );
-    expect(err.details.conflicts[0].window).toBe('Aug 24, 10:00-11:00 AM');
+    expect(err.details.conflicts[0].window).toBe('Aug 24, 10:00-11:00');
     expect(err.message).not.toMatch(/UTC|15:00/);
   });
 
@@ -266,10 +267,10 @@ describe('guardVisitOverlapConflict', () => {
     const visits = [{ startTimeMs: at('2026-08-24T15:30:00.000Z'), endTimeMs: at('2026-08-24T16:30:00.000Z') }];
     const base = { visits, actorUid: 'admin1', actorRole: 'AUNTIE' as const, attempt: 'block_time' };
     const laErr = await guardVisitOverlapConflict({ ...base, firestore: la.db }).catch((e) => e);
-    expect(laErr.details.conflicts[0].window).toBe('Aug 24, 8:00-9:00 AM');
+    expect(laErr.details.conflicts[0].window).toBe('Aug 24, 08:00-09:00');
     const none = ctxWith('2026-08-24T15:00:00.000Z', '2026-08-24T16:00:00.000Z', {});
     const noneErr = await guardVisitOverlapConflict({ ...base, firestore: none.db }).catch((e) => e);
-    expect(noneErr.details.conflicts[0].window).toBe('Aug 24, 10:00-11:00 AM');
+    expect(noneErr.details.conflicts[0].window).toBe('Aug 24, 10:00-11:00');
   });
 
   it('an explicit override writes it through, and audits exactly what was written over', async () => {
@@ -295,8 +296,8 @@ describe('guardVisitOverlapConflict', () => {
     });
     // #1168: the audit sentence reads on the operator's clock too.
     const description = mocks.writeAuditEntryFn.mock.calls[0][0].description as string;
-    expect(description).toContain('(Aug 24, 10:30-11:30 AM)');
-    expect(description).toContain('(Aug 24, 10:00-11:00 AM)');
+    expect(description).toContain('(Aug 24, 10:30-11:30)');
+    expect(description).toContain('(Aug 24, 10:00-11:00)');
     expect(description).not.toContain('UTC');
   });
 

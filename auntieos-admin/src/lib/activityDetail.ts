@@ -3,7 +3,7 @@ import { type ActivityLogEntry } from '../api/activityLog';
 import { type StaffRole } from '../api/staff';
 import { businessInstantMs, businessWallClock } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
-import { formatTime } from './denFormat';
+import { dayKeyLabel, formatHHmm } from './time';
 import { activityDescriptionWords, noticeNotSentWords } from './activityWords';
 
 /**
@@ -55,11 +55,11 @@ export function activityDetailRows(
     if (value.trim() !== '') rows.push({ label, value });
   };
 
-  push('When', str(entry.timestamp));
-  // The stored stamp is UTC; the row above it reads in the business zone (#1585).
-  // Showing both is what lets someone reconcile the two without doing the sum.
+  // #1828: read on the business's calendar in the admin shape, "Nov 10, 2026
+  // 22:32". The stored UTC stamp used to sit here as written, a machine
+  // string beside the readable one (#1585 added the business reading).
   const when = activityWhen(str(entry.timestamp), zone);
-  if (when !== null) push('Business time', `${when.dayKey} ${when.clock}`);
+  push('When', when !== null ? `${dayKeyLabel(when.dayKey)} ${when.clock}` : str(entry.timestamp));
   push('Action', str(entry.actionType));
   push('Status', activityStatusWords(entry));
   push('Severity', str(entry.severity));
@@ -417,7 +417,7 @@ export function activityDayLabel(day: string, today: string): string {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** A log timestamp read on the business's calendar: its day key and its compact clock ("9:34p"). */
+/** A log timestamp read on the business's calendar: its day key and its 24-hour clock ("21:34", #1828). */
 export interface ActivityWhen {
   dayKey: string;
   clock: string;
@@ -435,7 +435,8 @@ export function activityWhen(timestamp: string, zone: string = DEFAULT_BUSINESS_
   const ms = businessInstantMs(timestamp, zone);
   if (ms === null) return null;
   const wc = businessWallClock(ms, zone);
-  return { dayKey: wc.dateIso, clock: formatTime(`${wc.dateIso}T${wc.hhmm}`) };
+  const [h, m] = wc.hhmm.split(':').map(Number) as [number, number];
+  return { dayKey: wc.dateIso, clock: formatHHmm(h, m) };
 }
 /** Local `YYYY-MM-DD` for a Date, the shape `activityDayLabel` compares against. */
 export function localDayKey(d: Date): string {

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -137,13 +138,11 @@ internal fun formatMiles(meters: Double): String {
     return String.format(Locale.US, "%.1f miles", miles)
 }
 
-/** LOCAL `h:mma`: "12:05pm", "9:01am". Empty for a blank or unparseable stamp. */
+/** LOCAL 24-hour "12:05", "09:01" (#1828). Empty for a blank or unparseable stamp. */
 internal fun clockTime(iso: String?): String {
     val millis = visitInstantMillis(iso) ?: return ""
     val at = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault())
-    val h24 = at.hour
-    val h = if (h24 % 12 == 0) 12 else h24 % 12
-    return "$h:${at.minute.toString().padStart(2, '0')}${if (h24 < 12) "am" else "pm"}"
+    return AdminTime.clock(at.hour, at.minute)
 }
 
 private fun plural(count: Long, unit: String): String = "$count $unit${if (count == 1L) "" else "s"}"

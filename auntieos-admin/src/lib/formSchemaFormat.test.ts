@@ -57,7 +57,7 @@ describe('formSchemaUpdatedFull', () => {
   it('renders a well-formed instant as LOCAL YYYY-MM-DD HH:mm, with the year', () => {
     // The exact row from the visual harness: v4 / e2e-admin / this instant.
     // 10:15 UTC is 05:15 in America/Chicago (CDT, UTC-5).
-    expect(formSchemaUpdatedFull('2026-08-02T10:15:00.000Z')).toBe('2026-08-02 05:15');
+    expect(formSchemaUpdatedFull('2026-08-02T10:15:00.000Z')).toBe('Aug 2, 2026 05:15');
     expect(formSchemaUpdatedFull('2026-08-02T10:15:00.000Z')).not.toContain('T');
     expect(formSchemaUpdatedFull('2026-08-02T10:15:00.000Z')).not.toContain('Z');
   });
@@ -65,7 +65,7 @@ describe('formSchemaUpdatedFull', () => {
   it('shows the LOCAL calendar day, not the UTC one (AO-18)', () => {
     // 01:00 UTC on the 17th is 20:00 on the 16th in Chicago. A raw ISO slice
     // would have printed the 17th.
-    expect(formSchemaUpdatedFull('2026-07-17T01:00:00.000Z')).toBe('2026-07-16 20:00');
+    expect(formSchemaUpdatedFull('2026-07-17T01:00:00.000Z')).toBe('Jul 16, 2026 20:00');
   });
 
   it('is null for a null updatedAt, the value the server really sends', () => {

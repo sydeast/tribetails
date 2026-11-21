@@ -55,10 +55,10 @@ class KinCareRouteMapHelpersTest {
 
     @Test
     fun `clock time reads noon as 12pm and midnight as 12am`() {
-        assertEquals("12:05pm", clockTime("2026-08-11T12:05:00"))
-        assertEquals("9:01am", clockTime("2026-08-11T09:01:00"))
-        assertEquals("1:09pm", clockTime("2026-08-11T13:09:00"))
-        assertEquals("12:00am", clockTime("2026-08-11T00:00:00"))
+        assertEquals("12:05", clockTime("2026-08-11T12:05:00"))
+        assertEquals("09:01", clockTime("2026-08-11T09:01:00"))
+        assertEquals("13:09", clockTime("2026-08-11T13:09:00"))
+        assertEquals("00:00", clockTime("2026-08-11T00:00:00"))
     }
 
     @Test
@@ -98,7 +98,7 @@ class KinCareRouteMapHelpersTest {
             nowMillis = now,
         )
         assertEquals("Completed in 1:04", strip.lead)
-        assertEquals("Arrived at 12:05pm - Departed at 1:09pm - 0.1 miles", strip.detail)
+        assertEquals("Arrived at 12:05 - Departed at 13:09 - 0.1 miles", strip.detail)
         assertEquals("1 month ago", strip.age)
     }
 
@@ -117,7 +117,7 @@ class KinCareRouteMapHelpersTest {
             durationSeconds = null,
             nowMillis = now,
         )
-        assertEquals(true, strip.detail.contains("Departed at 1:09pm"))
+        assertEquals(true, strip.detail.contains("Departed at 13:09"))
         assertEquals(false, strip.detail.contains("Completed at"))
     }
 
@@ -143,7 +143,7 @@ class KinCareRouteMapHelpersTest {
             nowMillis = now,
         )
         assertEquals("", strip.lead)
-        assertEquals("Arrived at 11:30am - 0.1 miles", strip.detail)
+        assertEquals("Arrived at 11:30 - 0.1 miles", strip.detail)
         assertEquals("30 minutes ago", strip.age)
     }
 
@@ -163,7 +163,7 @@ class KinCareRouteMapHelpersTest {
             nowMillis = now,
         )
         assertEquals("", strip.lead)
-        assertEquals("Arrived at 11:30am - 0.1 miles", strip.detail)
+        assertEquals("Arrived at 11:30 - 0.1 miles", strip.detail)
     }
 
     @Test

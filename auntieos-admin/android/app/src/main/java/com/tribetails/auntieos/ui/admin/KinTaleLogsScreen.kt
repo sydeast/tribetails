@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1155,26 +1156,23 @@ private fun visitTimestamp(r: KinCareReport): String {
 }
 
 /**
- * "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear]
- * (#1599: the list spans more than a year and month-and-day alone could not
- * say which). Echoes text that is not an ISO timestamp.
+ * "Sep 3, 2025 14:02" (#1828: the admin day and 24-hour clock, always with the
+ * year; [currentYear] no longer changes it). Echoes text that is not an ISO
+ * timestamp.
  */
+@Suppress("UNUSED_PARAMETER")
 internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
     runCatching {
         parseLegacyKinTaleStamp(iso)?.let { s ->
-            val time = "%02d:%02d".format(s.hour, s.minute)
-            val month = MONTHS[s.month - 1]
-            return@runCatching if (s.year == currentYear) "$month ${s.day} · $time" else "$month ${s.day}, ${s.year} · $time"
+            return@runCatching AdminTime.dateTime(s.year, s.month, s.day, s.hour, s.minute)
         }
         if (iso.length < 16) return@runCatching iso
-        val year  = iso.substring(0, 4).toInt()
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
+        AdminTime.dateTime(
+            iso.substring(0, 4).toInt(), iso.substring(5, 7).toInt(), iso.substring(8, 10).toInt(),
+            iso.substring(11, 13).toInt(), iso.substring(14, 16).toInt(),
+        )
     }.getOrDefault(iso)
 
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
 /**
  * #1594: the KinTale list's search and sort, kept across opening a KinTale.

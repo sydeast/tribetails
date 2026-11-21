@@ -17,6 +17,7 @@ import {
   type DecodedBusySlot,
 } from '../src/lib/bookingBusyConflict';
 import { busyIntervalToSlots } from '../src/lib/googleBusySlot';
+import { windowClockFor } from '../src/lib/visitWindowLabel';
 
 beforeEach(() => {
   mocks.writeAuditEntryFn.mockReset();
@@ -198,6 +199,18 @@ describe('formatBusyWindow (#1164)', () => {
     expect(formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), 'America/New_York')).toBe('Oct 5, 3:00-4:00 PM');
     expect(formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), 'Not/AZone')).toBe('Oct 5, 2:00-3:00 PM');
     expect(formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), '')).toBe('Oct 5, 2:00-3:00 PM');
+  });
+  it('#1828: words the window on a 24-hour clock for the admin', () => {
+    expect(formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), 'America/Chicago', '24h')).toBe('Oct 5, 14:00-15:00');
+    expect(formatBusyWindow(at('2026-10-05T14:05:00Z'), at('2026-10-05T18:30:00Z'), 'America/Chicago', '24h')).toBe('Oct 5, 09:05-13:30');
+    expect(formatBusyWindow(at('2026-10-06T03:00:00Z'), at('2026-10-06T07:00:00Z'), 'America/Chicago', '24h')).toBe('Oct 5, 22:00 to Oct 6, 02:00');
+    expect(formatBusyWindow(at('2026-10-06T05:30:00Z'), null, 'America/Chicago', '24h')).toBe('Oct 6, 00:30');
+  });
+  it('#1828: a household reads 12-hour, staff and the system read 24-hour', () => {
+    expect(windowClockFor('PRIMARY')).toBe('12h');
+    expect(windowClockFor('SECONDARY')).toBe('12h');
+    expect(windowClockFor('AUNTIE')).toBe('24h');
+    expect(windowClockFor('SYSTEM')).toBe('24h');
   });
   it('never emits UTC wording, an em dash or an en dash', () => {
     const out = formatBusyWindow(at('2026-10-05T19:00:00Z'), at('2026-10-05T20:00:00Z'), 'America/Chicago');
@@ -422,7 +435,8 @@ describe('guardBookingBusyConflict', () => {
       override: true,
     });
     const description = mocks.writeAuditEntryFn.mock.calls[0][0].description as string;
-    expect(description).toContain('Oct 5, 2:00-3:00 PM');
+    // #1828: an admin override is worded on the admin's 24-hour clock.
+    expect(description).toContain('Oct 5, 14:00-15:00');
     expect(description).not.toContain('UTC');
   });
   it('#1160: refuses a 14:30 Chicago visit over a 14:00 to 15:00 Chicago busy row written by the sync', async () => {

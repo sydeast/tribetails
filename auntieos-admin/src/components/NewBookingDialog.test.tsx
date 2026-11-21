@@ -656,7 +656,7 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     await toDates();
     await screen.findByRole('gridcell', { name: /Sat, Aug 21, business closed/ });
     expect(
-      screen.getByRole('gridcell', { name: /Mon, Aug 23, open 9:00 AM to 5:00 PM/ }),
+      screen.getByRole('gridcell', { name: /Mon, Aug 23, open 09:00 to 17:00/ }),
     ).toBeInTheDocument();
   });
 
@@ -698,7 +698,7 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     getBusinessSettings.mockResolvedValue({ serviceRates: {}, businessHours: HOURS, timeZone: '' });
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await toDates();
-    await screen.findByRole('gridcell', { name: /Mon, Aug 23, open 9:00 AM to 5:00 PM/ });
+    await screen.findByRole('gridcell', { name: /Mon, Aug 23, open 09:00 to 17:00/ });
     await pickDay(/Mon, Aug 23/);
     expect(screen.queryByText(/outside business hours/)).not.toBeInTheDocument();
 
@@ -706,7 +706,7 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     await userEvent.clear(screen.getByLabelText('Aug 23 visit 1 time'));
     await userEvent.type(screen.getByLabelText('Aug 23 visit 1 time'), '19:00');
     expect(
-      screen.getByText('Aug 23: 19:00 is outside business hours (9:00 AM to 5:00 PM).'),
+      screen.getByText('Aug 23: 19:00 is outside business hours (09:00 to 17:00).'),
     ).toBeInTheDocument();
   });
 
@@ -717,7 +717,7 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     getBusinessSettings.mockResolvedValue({ serviceRates: {}, businessHours: HOURS, timeZone: '' });
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await toDates();
-    await screen.findByRole('gridcell', { name: /Mon, Aug 23, open 9:00 AM to 5:00 PM/ });
+    await screen.findByRole('gridcell', { name: /Mon, Aug 23, open 09:00 to 17:00/ });
     await pickDay(/Tue, Aug 17/);
     await pickDay(/Mon, Aug 23/);
 
@@ -727,11 +727,11 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     await userEvent.type(screen.getByLabelText('Aug 23 visit 1 time'), '19:00');
 
     expect(
-      screen.getByText('Aug 23: 19:00 is outside business hours (9:00 AM to 5:00 PM).'),
+      screen.getByText('Aug 23: 19:00 is outside business hours (09:00 to 17:00).'),
     ).toBeInTheDocument();
     // There is no 19:00 visit on Aug 17, so there is nothing to warn about.
     expect(
-      screen.queryByText('Aug 17: 19:00 is outside business hours (9:00 AM to 5:00 PM).'),
+      screen.queryByText('Aug 17: 19:00 is outside business hours (09:00 to 17:00).'),
     ).toBeNull();
   });
 
@@ -790,8 +790,8 @@ describe('NewBookingDialog availability (carried over intact)', () => {
     });
     render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await toDates();
-    await pickDay(/Mon, Aug 23, .*blocked 8:00 AM to 12:00 PM/);
-    expect(screen.getByText('Aug 23: blocked time at 8:00 AM to 12:00 PM.')).toBeInTheDocument();
+    await pickDay(/Mon, Aug 23, .*blocked 08:00 to 12:00/);
+    expect(screen.getByText('Aug 23: blocked time at 08:00 to 12:00.')).toBeInTheDocument();
   });
 
   it('counts the visits already scheduled on a day', async () => {

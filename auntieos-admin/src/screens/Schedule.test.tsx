@@ -356,7 +356,7 @@ describe('Schedule screen', () => {
     withFixedToday(() => {
       mockCollections({ busy: { status: 'ready', data: [busySlot({ date: '2026-07-16' })] } });
       render(<Schedule />);
-      expect(within(agenda()).getByText('8:00 AM to 9:00 AM')).toBeInTheDocument();
+      expect(within(agenda()).getByText('08:00 to 09:00')).toBeInTheDocument();
       // The kit's StatusPill: "Blocked" in the DOM, uppercased by the stylesheet.
       expect(within(agenda()).getByText('Blocked')).toBeInTheDocument();
     });
@@ -1632,7 +1632,9 @@ describe('Schedule on the business clock, device in another zone (#1158)', () =>
     await act(async () => {});
     expect(gridBlock().dataset['startMinute']).toBe(String(14 * 60));
     expect(gridBlock().style.top).toBe(`${HOUR_HEIGHT_PX * 6}px`);
-    expect(within(agenda()).getByText('14:00 to 15:00')).toBeInTheDocument();
+    // #1828: the visit and the operator's block both read 14:00 to 15:00 now that
+    // the block's label is on the same 24-hour clock.
+    expect(within(agenda()).getAllByText('14:00 to 15:00')).toHaveLength(2);
     // The operator's own block at 14:00 sits on the same row as the visit.
     const busy = document.querySelector('.schedule-grid__busy') as HTMLElement;
     expect(busy.style.top).toBe(gridBlock().style.top);
@@ -1778,7 +1780,7 @@ describe('#2164 Schedule under an Auntie sign-in', () => {
   });
 });
 describe('#1868 a cancelled visit on the Schedule', () => {
-  // Thursday Jul 16 2026: 6:30 PM Chicago is 23:30 UTC.
+  // Thursday Jul 16 2026: 18:30 Chicago is 23:30 UTC.
   const live = (id: string, startTime: string) => sessionEntry({ _id: id, kinfolkName: `The ${id}s`, startTime, endTime: '' });
   function seedWeek(): void {
     mockCollections({

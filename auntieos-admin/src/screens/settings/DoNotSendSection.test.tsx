@@ -66,7 +66,7 @@ describe('Do-not-send section', () => {
     const row = (await screen.findByText('gone@example.com')).closest('li')!;
     expect(within(row).getByText('Hard bounce')).toBeInTheDocument();
     expect(within(row).getByText('smtp2go')).toBeInTheDocument();
-    expect(within(row).getByText(/2026-10-0[12] \d\d:\d\d/)).toBeInTheDocument();
+    expect(within(row).getByText(/Oct [12], 2026 \d\d:\d\d/)).toBeInTheDocument();
 
     const other = screen.getByText('+14155552671').closest('li')!;
     expect(within(other).getByText('Opted out')).toBeInTheDocument();

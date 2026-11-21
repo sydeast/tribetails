@@ -134,12 +134,12 @@ describe('AuntieDatePicker', () => {
         <Harness
           availabilityFor={(iso) => ({
             ...availability()(iso),
-            blocked: [{ label: '8:00 AM to 12:00 PM', startHHmm: '08:00', endHHmm: '12:00' }],
+            blocked: [{ label: '08:00 to 12:00', startHHmm: '08:00', endHHmm: '12:00' }],
           })}
         />,
       );
       const cell = screen.getByRole('gridcell', {
-        name: /Fri, Aug 20, open 9:00 AM to 5:00 PM, blocked 8:00 AM to 12:00 PM/,
+        name: /Fri, Aug 20, open 09:00 to 17:00, blocked 08:00 to 12:00/,
       });
       expect(cell.textContent).toContain('Blocked');
     });

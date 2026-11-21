@@ -13,11 +13,11 @@ import { clockTime, relativeAge, routeHeaderStrip } from './routeHeader';
 
 describe('clockTime', () => {
   it.each([
-    ['2026-08-11T12:05:00', '12:05pm'],
-    ['2026-08-11T00:07:00', '12:07am'],
-    ['2026-08-11T09:01:00', '9:01am'],
-    ['2026-08-11T13:09:00', '1:09pm'],
-    ['2026-08-11T23:59:00', '11:59pm'],
+    ['2026-08-11T12:05:00', '12:05'],
+    ['2026-08-11T00:07:00', '00:07'],
+    ['2026-08-11T09:01:00', '09:01'],
+    ['2026-08-11T13:09:00', '13:09'],
+    ['2026-08-11T23:59:00', '23:59'],
   ])('%s -> %s', (iso, expected) => {
     expect(clockTime(iso)).toBe(expected);
   });
@@ -25,8 +25,8 @@ describe('clockTime', () => {
   // Noon and midnight are the two the 12-hour clock gets wrong, because
   // `hours % 12` is 0 for both and the hour has to read 12, not 0.
   it('reads noon as 12pm and midnight as 12am, never 0', () => {
-    expect(clockTime('2026-08-11T12:00:00')).toBe('12:00pm');
-    expect(clockTime('2026-08-11T00:00:00')).toBe('12:00am');
+    expect(clockTime('2026-08-11T12:00:00')).toBe('12:00');
+    expect(clockTime('2026-08-11T00:00:00')).toBe('00:00');
   });
 
   it('returns nothing for a blank or unparseable stamp, never "Invalid Date"', () => {
@@ -88,7 +88,7 @@ describe('routeHeaderStrip', () => {
       now: NOW,
     });
     expect(strip.lead).toBe('Completed in 1:04');
-    expect(strip.detail).toBe('Arrived at 12:05pm - Departed at 1:09pm - 0.1 miles');
+    expect(strip.detail).toBe('Arrived at 12:05 - Departed at 13:09 - 0.1 miles');
     expect(strip.age).toBe('1 month ago');
   });
 
@@ -105,7 +105,7 @@ describe('routeHeaderStrip', () => {
       departedAt: '2026-08-11T13:09:00',
       now: NOW,
     });
-    expect(strip.detail).toContain('Departed at 1:09pm');
+    expect(strip.detail).toContain('Departed at 13:09');
     expect(strip.detail).not.toContain('Completed at');
   });
 
@@ -136,7 +136,7 @@ describe('routeHeaderStrip', () => {
   it('drops the clauses a live visit does not have yet', () => {
     const strip = routeHeaderStrip({ arrivedAt: '2026-09-11T11:30:00', distanceMeters: 200, now: NOW });
     expect(strip.lead).toBe('');
-    expect(strip.detail).toBe('Arrived at 11:30am - 0.1 miles');
+    expect(strip.detail).toBe('Arrived at 11:30 - 0.1 miles');
     expect(strip.age).toBe('30 minutes ago');
   });
 
@@ -157,7 +157,7 @@ describe('routeHeaderStrip', () => {
       now: NOW,
     });
     expect(strip.lead).toBe('');
-    expect(strip.detail).toBe('Arrived at 11:30am - 0.1 miles');
+    expect(strip.detail).toBe('Arrived at 11:30 - 0.1 miles');
   });
 
   it('leaves every clause out rather than printing a blank one', () => {
@@ -169,7 +169,7 @@ describe('routeHeaderStrip', () => {
   // still has a distance and it is none.
   it('reports a standing-still visit as no miles rather than omitting the clause', () => {
     const strip = routeHeaderStrip({ arrivedAt: '2026-08-11T12:05:00', distanceMeters: 0, now: NOW });
-    expect(strip.detail).toBe('Arrived at 12:05pm - 0 miles');
+    expect(strip.detail).toBe('Arrived at 12:05 - 0 miles');
   });
 
   it('ages a visit from its departure, not from its arrival', () => {

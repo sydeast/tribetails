@@ -16,7 +16,7 @@ class RowDateYearTest {
 
     @Test
     fun kinTaleRowsCarryAnotherYear() {
-        assertEquals("Nov 5 · 14:02", kinTaleShortDateTime("2026-11-05T14:02:00Z", 2026))
-        assertEquals("Sep 3, 2025 · 14:02", kinTaleShortDateTime("2025-09-03T14:02:00Z", 2026))
+        assertEquals("Nov 5, 2026 14:02", kinTaleShortDateTime("2026-11-05T14:02:00Z", 2026))
+        assertEquals("Sep 3, 2025 14:02", kinTaleShortDateTime("2025-09-03T14:02:00Z", 2026))
     }
 }

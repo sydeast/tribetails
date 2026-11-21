@@ -52,7 +52,8 @@ class ActivityDetailTest {
         // The row shows `HH:mm`. The point of opening an entry is to see what it
         // cut, and "which second" is routinely the question when reconciling
         // against a provider's logs.
-        assertEquals("When" to "2026-08-03T14:02:11.482Z", activityDetailRows(entry()).first())
+        // #1828: the business reading in the admin shape, never the stored UTC string.
+        assertEquals("When" to "Aug 3, 2026 09:02", activityDetailRows(entry()).first())
     }
 
     @Test

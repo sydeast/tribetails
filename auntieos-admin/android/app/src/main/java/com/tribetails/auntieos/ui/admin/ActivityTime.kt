@@ -1,9 +1,10 @@
 package com.tribetails.auntieos.ui.admin
+import com.tribetails.auntieos.domain.AdminTime
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
-/** A log timestamp read on the business's calendar: its day key (`yyyy-MM-dd`) and compact clock ("9:34p"). */
+/** A log timestamp read on the business's calendar: its day key (`yyyy-MM-dd`) and 24-hour clock ("21:34", #1828). */
 internal data class ActivityWhen(val dayKey: String, val clock: String)
 private val DATE_TIME_PREFIX = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}""")
 /**
@@ -23,8 +24,5 @@ internal fun activityWhen(timestamp: String, zone: ZoneId): ActivityWhen? {
             .recoverCatching { LocalDateTime.parse(timestamp) }
             .getOrThrow()
     }.getOrNull() ?: return null
-    val hour = local.hour
-    val hour12 = if (hour % 12 == 0) 12 else hour % 12
-    val clock = "$hour12:${local.minute.toString().padStart(2, '0')}${if (hour >= 12) "p" else "a"}"
-    return ActivityWhen(dayKey = local.toLocalDate().toString(), clock = clock)
+    return ActivityWhen(dayKey = local.toLocalDate().toString(), clock = AdminTime.clock(local.hour, local.minute))
 }

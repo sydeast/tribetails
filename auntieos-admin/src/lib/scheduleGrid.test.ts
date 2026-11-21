@@ -96,10 +96,10 @@ describe('clock helpers', () => {
   });
 
   it('labels the gutter the way the mock does', () => {
-    expect(hourLabel(8)).toBe('8a');
-    expect(hourLabel(12)).toBe('12p');
-    expect(hourLabel(13)).toBe('1p');
-    expect(hourLabel(18)).toBe('6p');
+    expect(hourLabel(8)).toBe('08:00');
+    expect(hourLabel(12)).toBe('12:00');
+    expect(hourLabel(13)).toBe('13:00');
+    expect(hourLabel(18)).toBe('18:00');
   });
 });
 

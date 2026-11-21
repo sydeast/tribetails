@@ -882,7 +882,7 @@ internal fun VisitLine(
             Box(Modifier.size(9.dp).clip(CircleShape).background(tone.color(c)))
             Text(
                 // #2095: the visit's business day and time, not its stored UTC characters.
-                "${com.tribetails.auntieos.domain.storedBusinessDay(s.startTime, com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current)} " +
+                "${com.tribetails.auntieos.domain.storedBusinessDayLabel(s.startTime, com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current)} " +
                     formatTime(s.startTime, com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current),
                 style = AuntieTheme.typography.mono.copy(fontSize = 12.sp),
                 color = c.textPrimary,

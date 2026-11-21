@@ -1,6 +1,7 @@
 import { dayKey, isRead, type NotificationEntry } from '../api/notifications';
 import { applicableNotificationActions, pendingRequestKey, type PendingRequestSet } from './notificationActions';
 import { notificationKinfolkId } from './notificationContext';
+import { dayKeyLabel } from './time';
 
 /**
  * Pure `notifications` feed selectors, shared by the Notifications SCREEN and
@@ -242,7 +243,8 @@ export function notificationsForFilter(
  * Day separators. Groups by LOCAL day (`dayKey`, see lib/time for why local and
  * not UTC), preserving the stream's own newest-first order both between groups
  * and within one. Rows whose `createdAt` has not round-tripped yet collect under
- * a single "Undated" separator rather than being dropped.
+ * a single "Undated" separator rather than being dropped. The first element
+ * is the header as read, "Nov 10, 2026" (#1828), never the `YYYY-MM-DD` key.
  */
 export function notificationsByDay(
   rows: readonly NotificationEntry[],
@@ -254,5 +256,5 @@ export function notificationsByDay(
     if (bucket) bucket.push(r);
     else groups.set(day, [r]);
   }
-  return [...groups.entries()];
+  return [...groups.entries()].map(([day, group]): [string, NotificationEntry[]] => [dayKeyLabel(day), group]);
 }

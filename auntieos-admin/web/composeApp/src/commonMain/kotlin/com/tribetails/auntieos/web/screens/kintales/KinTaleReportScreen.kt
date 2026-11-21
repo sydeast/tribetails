@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.kintales
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -226,7 +227,10 @@ internal fun pickVisitReport(ordered: List<KinCareReport>, pickedId: String?): K
     ordered.firstOrNull { pickedId != null && it._id == pickedId } ?: ordered.firstOrNull()
 /** Button label for one sent tale in the picker. */
 internal fun sentTaleLabel(report: KinCareReport, position: Int): String {
-    val `when` = report.sentAt.replace('T', ' ').take(16)
+    // #1828: "Nov 10, 2026 22:32" on the business clock, never the stored UTC string.
+    val `when` = com.tribetails.auntieos.web.screens.schedule.businessDateTimeOf(report.sentAt.trim(), com.tribetails.auntieos.web.util.businessTimeZone())
+        ?.let { AdminTime.dateTime(it) }
+        ?: report.sentAt.trim()
     return if (`when`.isBlank()) "KinTale $position" else "KinTale $position, sent $`when`"
 }
 /** #1804: several sent tales for one visit; the operator picks which to read. */

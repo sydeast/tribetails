@@ -576,12 +576,15 @@ private fun ActivityDetailModal(
         maxWidth = 460.dp,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            AuntieKeyValueRow(label = "When", value = entry.timestamp.ifBlank { "-" }, valueMono = true)
-            // The stored stamp is UTC; the row reads in the business zone (#1585). Both
-            // are shown so the two can be reconciled without doing the sum.
-            activityWhen(entry.timestamp, zone)?.let {
-                AuntieKeyValueRow(label = "Business time", value = "${it.dayKey} ${it.clock}", valueMono = true)
-            }
+            // #1828: read on the business clock in the admin shape, "Nov 4, 2026 15:34"
+            // (#1585 added the business reading). The stored UTC string used to sit here
+            // as written, a machine stamp beside the readable one.
+            AuntieKeyValueRow(
+                label = "When",
+                value = activityWhen(entry.timestamp, zone)
+                    ?.let { "${com.tribetails.auntieos.web.ui.AdminTime.dayKeyLabel(it.dayKey)} ${it.clock}" }
+                    ?: entry.timestamp.ifBlank { "-" },
+            )
             AuntieKeyValueRow(label = "Action", value = entry.actionType.ifBlank { "-" }, valueMono = true)
             AuntieKeyValueRow(label = "Status", value = activityStatusWords(entry).ifBlank { "-" })
             // #1592: the person by name; the uid stays beside it, because this is

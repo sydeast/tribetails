@@ -19,23 +19,23 @@ class ListDateYearTest {
     private val newYear = Instant.parse("2027-01-01T06:30:00Z").toEpochMilli()
     @Test
     fun reminderTimeOmitsThisYearAndNamesAnother() {
-        assertEquals("Sep 14, 3:05 PM", formatReminderTime(Instant.parse("2026-09-14T20:05:00Z").toEpochMilli(), chicago, now2026))
-        assertEquals("Sep 14, 2025, 3:05 PM", formatReminderTime(Instant.parse("2025-09-14T20:05:00Z").toEpochMilli(), chicago, now2026))
+        assertEquals("Sep 14, 2026 15:05", formatReminderTime(Instant.parse("2026-09-14T20:05:00Z").toEpochMilli(), chicago, now2026))
+        assertEquals("Sep 14, 2025 15:05", formatReminderTime(Instant.parse("2025-09-14T20:05:00Z").toEpochMilli(), chicago, now2026))
     }
     @Test
     fun reminderTimeReadsTheYearBoundaryInChicago() {
-        assertEquals("Dec 31, 11:30 PM", formatReminderTime(newYearsEve, chicago, now2026))
-        assertEquals("Jan 1, 2027, 12:30 AM", formatReminderTime(newYear, chicago, now2026))
+        assertEquals("Dec 31, 2026 23:30", formatReminderTime(newYearsEve, chicago, now2026))
+        assertEquals("Jan 1, 2027 00:30", formatReminderTime(newYear, chicago, now2026))
     }
     @Test
     fun callTimestampNamesTheYearOnlyOutsideThisOne() {
         val saved = TimeZone.getDefault()
         TimeZone.setDefault(chicago)
         try {
-            assertEquals("Jul 2, 3:00 PM", formatTimestamp(Instant.parse("2026-07-02T20:00:00Z").toEpochMilli(), now2026))
-            assertEquals("Jul 2, 2025, 3:00 PM", formatTimestamp(Instant.parse("2025-07-02T20:00:00Z").toEpochMilli(), now2026))
-            assertEquals("Dec 31, 11:30 PM", formatTimestamp(newYearsEve, now2026))
-            assertEquals("Jan 1, 2027, 12:30 AM", formatTimestamp(newYear, now2026))
+            assertEquals("Jul 2, 2026 15:00", formatTimestamp(Instant.parse("2026-07-02T20:00:00Z").toEpochMilli(), now2026))
+            assertEquals("Jul 2, 2025 15:00", formatTimestamp(Instant.parse("2025-07-02T20:00:00Z").toEpochMilli(), now2026))
+            assertEquals("Dec 31, 2026 23:30", formatTimestamp(newYearsEve, now2026))
+            assertEquals("Jan 1, 2027 00:30", formatTimestamp(newYear, now2026))
         } finally {
             TimeZone.setDefault(saved)
         }
@@ -52,9 +52,9 @@ class ListDateYearTest {
 
     @Test
     fun inboxAndVisitRowsNameTheYearOutsideThisOne() {
-        assertEquals("Jul 2 · 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2026-07-02T14:02:00Z", 2026))
-        assertEquals("Jul 2, 2025 · 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2025-07-02T14:02:00Z", 2026))
-        assertEquals("Jul 2, 2025 · 14:02", shortIso("2025-07-02T14:02:00Z", 2026, java.time.ZoneOffset.UTC))
+        assertEquals("Jul 2, 2026 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2026-07-02T14:02:00Z", 2026))
+        assertEquals("Jul 2, 2025 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2025-07-02T14:02:00Z", 2026))
+        assertEquals("Jul 2, 2025 14:02", shortIso("2025-07-02T14:02:00Z", 2026, java.time.ZoneOffset.UTC))
         assertEquals("soon", shortIso("soon", 2026))
     }
 
@@ -62,8 +62,8 @@ class ListDateYearTest {
     fun visitDetailTimesReadOnTheBusinessClock() {
         // #2095: 11:30 PM Chicago on Nov 11 is 05:30 UTC on Nov 12.
         val chicago = java.time.ZoneId.of("America/Chicago")
-        assertEquals("Nov 11 · 23:30", shortIso("2026-11-12T05:30:00.000Z", 2026, chicago))
-        assertEquals("Nov 11 · 23:30", shortIso("2026-11-11T23:30:00", 2026, chicago))
+        assertEquals("Nov 11, 2026 23:30", shortIso("2026-11-12T05:30:00.000Z", 2026, chicago))
+        assertEquals("Nov 11, 2026 23:30", shortIso("2026-11-11T23:30:00", 2026, chicago))
         // The night clocks go back: 23:30 CST Nov 1 is 05:30 UTC Nov 2.
         assertEquals("Nov 1 · 23:30", shortIso("2026-11-02T05:30:00Z", 2026, chicago))
     }

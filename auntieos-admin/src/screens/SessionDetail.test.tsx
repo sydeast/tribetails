@@ -913,7 +913,7 @@ describe('SessionDetail: the route header strip', () => {
       />,
     );
     expect(screen.getByText('Completed in 1:04')).toBeInTheDocument();
-    expect(screen.getByText('Arrived at 12:05pm - Departed at 1:09pm - 0.1 miles')).toBeInTheDocument();
+    expect(screen.getByText('Arrived at 12:05 - Departed at 13:09 - 0.1 miles')).toBeInTheDocument();
   });
   /**
    * DEPARTED IS NOT COMPLETED, and the strip must not say it is. The reference
@@ -945,8 +945,8 @@ describe('SessionDetail: the route header strip', () => {
         onBack={vi.fn()}
       />,
     );
-    expect(screen.getByText(/Departed at 1:09pm/)).toBeInTheDocument();
-    expect(screen.queryByText(/Completed at 1:09pm/)).toBeNull();
+    expect(screen.getByText(/Departed at 13:09/)).toBeInTheDocument();
+    expect(screen.queryByText(/Completed at 13:09/)).toBeNull();
   });
   /**
    * A visit still being walked has no departure stamp. The strip drops that
@@ -965,7 +965,7 @@ describe('SessionDetail: the route header strip', () => {
       ready: true,
     });
     render(<SessionDetail entry={entry({ status: 'ARRIVED', arrivedAt: ARRIVED })} onBack={vi.fn()} />);
-    expect(screen.getByText(/^Arrived at 12:05pm - /)).toBeInTheDocument();
+    expect(screen.getByText(/^Arrived at 12:05 - /)).toBeInTheDocument();
     expect(screen.queryByText(/Departed at/)).toBeNull();
     expect(screen.queryByText(/Completed in/)).toBeNull();
   });
@@ -986,7 +986,7 @@ describe('SessionDetail: the route header strip', () => {
       />,
     );
     const lifecycle = screen.getByText('Visit lifecycle');
-    const strip = screen.getByText(/Arrived at 12:05pm/);
+    const strip = screen.getByText(/Arrived at 12:05/);
     expect(lifecycle.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // And nothing else sits between the two panels.
     const panels = panelTitles(container);

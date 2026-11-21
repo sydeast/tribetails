@@ -1,3 +1,4 @@
+import { formatWhen } from '../../lib/time';
 import { useCallback, useEffect, useState } from 'react';
 import {
   getIntegrationsHealth,
@@ -81,7 +82,7 @@ interface Props {
 function checkedLabel(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return 'Checked just now, at an unreadable time.';
-  return `Checked ${d.toLocaleString()}.`;
+  return `Checked ${formatWhen(d)}.`;
 }
 
 export function IntegrationsSection({ settings, onSaveCalendar }: Props) {

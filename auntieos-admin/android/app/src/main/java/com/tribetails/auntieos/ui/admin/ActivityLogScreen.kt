@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.tribetails.auntieos.data.repository.StaffMember
 import com.tribetails.auntieos.data.repository.staffNamesByUid
 import com.tribetails.auntieos.data.repository.staffRolesByUid
@@ -580,10 +581,10 @@ internal fun activityDetailRows(
     fun add(label: String, value: String) {
         if (value.isNotBlank()) rows += label to value.trim()
     }
-    add("When", entry.timestamp)
-    // The stored stamp is UTC; the row reads in the business zone (#1585). Both
-    // are shown so the two can be reconciled without doing the sum.
-    activityWhen(entry.timestamp, zone)?.let { add("Business time", "${it.dayKey} ${it.clock}") }
+    // #1828: read on the business clock in the admin shape, "Nov 4, 2026 15:34"
+    // (#1585 added the business reading). The stored UTC string used to sit here
+    // as written, a machine stamp beside the readable one.
+    add("When", activityWhen(entry.timestamp, zone)?.let { "${AdminTime.dayKeyLabel(it.dayKey)} ${it.clock}" } ?: entry.timestamp)
     add("Action", entry.actionType)
     add("Status", activityStatusWords(entry))
     add("Severity", entry.severity)

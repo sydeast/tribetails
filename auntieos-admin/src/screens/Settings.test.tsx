@@ -369,7 +369,7 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
 
     it('prints no stamp while the roster is still being read', async () => {
       const detail = await detailFor(UID, null);
-      expect(detail).toMatch(/^Last saved \S+ \S+$/);
+      expect(detail).toMatch(/^Last saved \w{3} \d{1,2}, \d{4} \d\d:\d\d$/);
       expect(detail).not.toContain(UID);
       expect(detail).not.toContain(' by ');
     });

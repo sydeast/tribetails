@@ -163,7 +163,7 @@ describe('notificationsByDay', () => {
       entry({ _id: 'c', createdAt: ts('2026-07-15T12:00:00Z') }),
     ];
     const groups = notificationsByDay(rows);
-    expect(groups.map(([day]) => day)).toEqual(['2026-07-16', '2026-07-15']);
+    expect(groups.map(([day]) => day)).toEqual(['Jul 16, 2026', 'Jul 15, 2026']);
     expect(groups[0]![1].map((r) => r._id)).toEqual(['a', 'b']);
     expect(groups[1]![1].map((r) => r._id)).toEqual(['c']);
   });

@@ -16,6 +16,7 @@
  * so the sentence says where it went.
  */
 import type { SendInvoiceReminderResult } from '../contracts/invoiceContracts.generated';
+import { formatWhenInZone } from './time';
 
 export type ReminderReason = SendInvoiceReminderResult['reason'];
 
@@ -70,19 +71,14 @@ export function reminderOutcomeOf(
   };
 }
 
-/** "Sep 14, 3:05 PM", or "Sep 14, 2025, 3:05 PM" outside [now]'s year. `timeZone` and `now` are for tests; the panel uses the viewer's zone. */
+/**
+ * "Sep 14, 2026 15:05" (#1828: the admin day and 24-hour clock). `timeZone`
+ * is for tests; the panel uses the viewer's zone. `now` is kept for older
+ * callers and no longer changes the result.
+ */
 export function formatReminderTime(ms: number, timeZone?: string, now: Date = new Date()): string {
-  const yearIn = (d: Date) =>
-    d.toLocaleString('en-US', { year: 'numeric', ...(timeZone ? { timeZone } : {}) });
-  const sameYear = yearIn(new Date(ms)) === yearIn(now);
-  return new Date(ms).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    ...(sameYear ? {} : { year: 'numeric' }),
-    hour: 'numeric',
-    minute: '2-digit',
-    ...(timeZone ? { timeZone } : {}),
-  });
+  void now;
+  return formatWhenInZone(ms, timeZone);
 }
 
 /** The notice after a press. */

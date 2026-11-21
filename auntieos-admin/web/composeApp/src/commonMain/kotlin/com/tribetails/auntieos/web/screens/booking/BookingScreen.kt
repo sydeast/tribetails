@@ -1334,7 +1334,8 @@ private fun bookingDateLabel(b: KinCareSession): String {
         .ifBlank { b.completedAt }
         .ifBlank { b.departedAt }
         .ifBlank { b.createdAt }
-    return raw.take(10).ifBlank { "Date pending" }
+    // #1828: "Nov 10, 2026", never the stored "2026-11-10".
+    return com.tribetails.auntieos.web.ui.AdminTime.dayKeyLabel(raw.take(10)).ifBlank { "Date pending" }
 }
 
 

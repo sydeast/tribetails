@@ -54,9 +54,11 @@ describe('activityDetailRows', () => {
     expect(rows.some((r) => r.label === 'Actor id')).toBe(false);
   });
 
-  it('leads with the FULL timestamp, which is the part the collapsed row truncates', () => {
+  it('#1828: leads with the full moment in the admin shape, on the business clock, never the stored UTC string', () => {
     const rows = activityDetailRows(entry());
-    expect(rows[0]).toEqual({ label: 'When', value: '2026-08-03T14:02:11.482Z' });
+    // 14:02 UTC on Aug 3 is 09:02 in Chicago (CDT).
+    expect(rows[0]).toEqual({ label: 'When', value: 'Aug 3, 2026 09:02' });
+    expect(rows.some((r) => r.value === '2026-08-03T14:02:11.482Z')).toBe(false);
   });
 
   it('surfaces the provenance fields the row never showed', () => {
@@ -382,25 +384,25 @@ describe('the collapsed row, per the mock', () => {
 
 describe('activityWhen (#1585)', () => {
   it('reads a UTC stamp on the Chicago clock, standard time', () => {
-    expect(activityWhen('2026-11-04T21:34:00Z', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '3:34p' });
+    expect(activityWhen('2026-11-04T21:34:00Z', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '15:34' });
   });
   it('reads it in daylight time too', () => {
-    expect(activityWhen('2026-07-16T21:34:00Z', 'America/Chicago')).toEqual({ dayKey: '2026-07-16', clock: '4:34p' });
+    expect(activityWhen('2026-07-16T21:34:00Z', 'America/Chicago')).toEqual({ dayKey: '2026-07-16', clock: '16:34' });
   });
   it('moves the day back when UTC has already rolled over', () => {
-    expect(activityWhen('2026-11-05T02:34:00.123Z', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '8:34p' });
+    expect(activityWhen('2026-11-05T02:34:00.123Z', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '20:34' });
   });
   it('moves the day forward when the zone is ahead of UTC', () => {
-    expect(activityWhen('2026-11-04T23:30:00Z', 'Asia/Tokyo')).toEqual({ dayKey: '2026-11-05', clock: '8:30a' });
+    expect(activityWhen('2026-11-04T23:30:00Z', 'Asia/Tokyo')).toEqual({ dayKey: '2026-11-05', clock: '08:30' });
   });
   it('defaults to America/Chicago when no zone is given', () => {
-    expect(activityWhen('2026-11-04T21:34:00Z')?.clock).toBe('3:34p');
+    expect(activityWhen('2026-11-04T21:34:00Z')?.clock).toBe('15:34');
   });
   it('reads a stamp with an offset as the instant it names', () => {
-    expect(activityWhen('2026-11-04T16:34:00-05:00', 'America/Chicago')?.clock).toBe('3:34p');
+    expect(activityWhen('2026-11-04T16:34:00-05:00', 'America/Chicago')?.clock).toBe('15:34');
   });
   it('keeps a zone-less stamp as the business wall clock', () => {
-    expect(activityWhen('2026-11-04T09:00:00', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '9:00a' });
+    expect(activityWhen('2026-11-04T09:00:00', 'America/Chicago')).toEqual({ dayKey: '2026-11-04', clock: '09:00' });
   });
   it('returns null for a stamp with no readable time', () => {
     expect(activityWhen('')).toBeNull();
@@ -409,8 +411,8 @@ describe('activityWhen (#1585)', () => {
   });
   it('adds the business reading beside the raw stamp in the opened entry', () => {
     const rows = activityDetailRows(entry({ timestamp: '2026-11-04T21:34:00Z' }), 'America/Chicago');
-    expect(rows[0]).toEqual({ label: 'When', value: '2026-11-04T21:34:00Z' });
-    expect(rows[1]).toEqual({ label: 'Business time', value: '2026-11-04 3:34p' });
+    expect(rows[0]).toEqual({ label: 'When', value: 'Nov 4, 2026 15:34' });
+    expect(rows.find((r) => r.label === 'Business time')).toBeUndefined();
   });
 });
 // #1049: saveEmergencyContacts audits every refused save. The Activity Log has no

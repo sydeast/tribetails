@@ -1,5 +1,6 @@
 import { buildRescheduleTimes, visitDurationMinutes, type DurationSource, type RescheduleTimes } from './bookingDetailFormat';
 import { businessInstantMs, businessWallClock } from './businessZoneTime';
+import { formatHHmm } from './time';
 
 /**
  * The week time-grid arithmetic behind the Schedule screen's calendar, and the
@@ -161,12 +162,10 @@ export function hhmmFromMinutes(minuteOfDay: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-/** Gutter label: `8a`, `12p`, `1p`. Matches the desktop grid's `hourLabel`. */
+/** Gutter label: `08:00`, `12:00`, `13:00` (#1828: 24-hour). Matches the desktop grid's `hourLabel`. */
 export function hourLabel(hour: number): string {
   const h = ((hour % 24) + 24) % 24;
-  const suffix = h < 12 ? 'a' : 'p';
-  const twelve = h % 12 === 0 ? 12 : h % 12;
-  return `${twelve}${suffix}`;
+  return formatHHmm(h, 0);
 }
 
 /** Where one block sits in its day column. */

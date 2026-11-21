@@ -551,7 +551,7 @@ describe('Bookings screen', () => {
     // inside the Morning block above). Awaited because the mode comes from the
     // work-settings read: before it lands the row shows the clock only.
     expect(
-      await within(row).findByText('Dog Walking · Jul 16 · 9:00 AM · Morning block'),
+      await within(row).findByText('Dog Walking · Jul 16, 2026 09:00 · Morning block'),
     ).toBeInTheDocument();
     expect(within(row).getByText('SCHEDULED')).toBeInTheDocument();
   });
@@ -560,7 +560,7 @@ describe('Bookings screen', () => {
     render(<Bookings />);
     const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     // 15:30 is in no block; Midday (to 15:00) is the nearest.
-    expect(await within(row).findByText('Dog Walking · Jul 16 · 3:30 PM · Midday block')).toBeInTheDocument();
+    expect(await within(row).findByText('Dog Walking · Jul 16, 2026 15:30 · Midday block')).toBeInTheDocument();
   });
   it('#1863: in Exact times mode the row names the clock and no block, as the household sees it', async () => {
     getBusinessSettings.mockResolvedValue({
@@ -573,7 +573,7 @@ describe('Bookings screen', () => {
     render(<Bookings />);
     const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
-    expect(await within(row).findByText('Dog Walking · Jul 16 · 9:00 AM')).toBeInTheDocument();
+    expect(await within(row).findByText('Dog Walking · Jul 16, 2026 09:00')).toBeInTheDocument();
     expect(within(row).queryByText(/block/)).toBeNull();
   });
 

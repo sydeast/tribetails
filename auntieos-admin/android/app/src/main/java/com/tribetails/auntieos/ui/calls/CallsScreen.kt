@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.calls
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import android.Manifest
@@ -720,9 +721,7 @@ private fun openInBrowser(context: Context, url: String) {
     CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url))
 }
 
-/** "Nov 5, 3:00 PM", with the year when it is not this one (#1599: the call log spans more than a year). */
-internal fun formatTimestamp(millis: Long, nowMillis: Long = System.currentTimeMillis()): String {
-    val year = SimpleDateFormat("yyyy", Locale.US)
-    val pattern = if (year.format(Date(millis)) == year.format(Date(nowMillis))) "MMM d, h:mm a" else "MMM d, yyyy, h:mm a"
-    return SimpleDateFormat(pattern, Locale.US).format(Date(millis))
-}
+/** "Nov 5, 2026 15:00" (#1828: the admin day and 24-hour clock, always with the year). [nowMillis] no longer changes the result. */
+@Suppress("UNUSED_PARAMETER")
+internal fun formatTimestamp(millis: Long, nowMillis: Long = System.currentTimeMillis()): String =
+    SimpleDateFormat(AdminTime.DATE_TIME_PATTERN, Locale.US).format(Date(millis))

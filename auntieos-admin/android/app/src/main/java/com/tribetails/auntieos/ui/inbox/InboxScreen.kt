@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.inbox
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -645,18 +646,17 @@ private fun channelIcon(entry: InboxEntry): ImageVector = when (entry.channel) {
 private fun formatDuration(sec: Int): String =
     if (sec < 60) "${sec}s" else "${sec / 60}m ${sec % 60}s"
 
-/** "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599). */
+/** "Sep 3, 2026 14:02" (#1828: the admin shape, always with the year; [currentYear] no longer changes it). */
+@Suppress("UNUSED_PARAMETER")
 internal fun shortDateTime(iso: String, currentYear: Int = java.time.LocalDate.now().year): String =
     runCatching {
         if (iso.length < 16) return@runCatching iso
-        val year  = iso.substring(0, 4).toInt()
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
+        AdminTime.dateTime(
+            iso.substring(0, 4).toInt(), iso.substring(5, 7).toInt(), iso.substring(8, 10).toInt(),
+            iso.substring(11, 13).toInt(), iso.substring(14, 16).toInt(),
+        )
     }.getOrDefault(iso)
 
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Messages (Stage 2 step 7 / Message Auntie 16.4): two-way kinfolk<->auntie

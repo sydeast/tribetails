@@ -409,7 +409,7 @@ describe('lastSavedLabel', () => {
     const d = new Date(2026, 6, 16, 20, 5);
     const label = lastSavedLabel(d.toISOString(), 'auntie1');
     expect(label).toContain('by auntie1');
-    expect(label).toContain('07-16 20:05');
+    expect(label).toContain('Jul 16, 2026 20:05');
   });
 
   it('omits "by X" when updatedBy is blank', () => {

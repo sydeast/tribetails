@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -126,17 +127,10 @@ fun decodeReminderOutcome(body: String, nowMs: Long): ReminderOutcome {
 @OptIn(ExperimentalTime::class)
 fun reminderNowMs(): Long = Clock.System.now().toEpochMilliseconds()
 
-private val MONTH_ABBR = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
-/** "Sep 14, 3:05 PM", in [zone] (the console's own zone unless a test pins one). */
+/** "Sep 14, 2026 15:05" (#1828), in [zone] (the console's own zone unless a test pins one). */
 @OptIn(ExperimentalTime::class)
 fun formatReminderTime(ms: Long, zone: TimeZone = TimeZone.currentSystemDefault()): String {
-    val ldt = Instant.fromEpochMilliseconds(ms).toLocalDateTime(zone)
-    val month = MONTH_ABBR[ldt.date.month.ordinal]
-    val hour12 = (ldt.hour % 12).let { if (it == 0) 12 else it }
-    val ampm = if (ldt.hour < 12) "AM" else "PM"
-    val minute = ldt.minute.toString().padStart(2, '0')
-    return "$month ${ldt.date.day}, $hour12:$minute $ampm"
+    return AdminTime.dateTime(Instant.fromEpochMilliseconds(ms).toLocalDateTime(zone))
 }
 
 /** The notice after a press. */

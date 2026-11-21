@@ -56,13 +56,13 @@ describe('kinTaleWhen (visitDate > arrivedAt > sentAt > createdAt precedence)', 
       sentAt: '2026-07-16T16:00:00.000Z',
       createdAt: '2026-07-16T17:00:00.000Z',
     });
-    expect(kinTaleWhen(w)).toBe('07-16 09:00');
+    expect(kinTaleWhen(w)).toBe('Jul 16, 2026 09:00');
   });
 
   it('falls back to arrivedAt, then sentAt, then createdAt, in order', () => {
-    expect(kinTaleWhen(whenInput({ arrivedAt: '2026-07-16T15:00:00.000Z' }))).toBe('07-16 10:00');
-    expect(kinTaleWhen(whenInput({ sentAt: '2026-07-16T16:00:00.000Z' }))).toBe('07-16 11:00');
-    expect(kinTaleWhen(whenInput({ createdAt: '2026-07-16T17:00:00.000Z' }))).toBe('07-16 12:00');
+    expect(kinTaleWhen(whenInput({ arrivedAt: '2026-07-16T15:00:00.000Z' }))).toBe('Jul 16, 2026 10:00');
+    expect(kinTaleWhen(whenInput({ sentAt: '2026-07-16T16:00:00.000Z' }))).toBe('Jul 16, 2026 11:00');
+    expect(kinTaleWhen(whenInput({ createdAt: '2026-07-16T17:00:00.000Z' }))).toBe('Jul 16, 2026 12:00');
   });
 
   it("'Date TBD' when every field is blank or unparseable, never a fabricated time", () => {
@@ -73,8 +73,8 @@ describe('kinTaleWhen (visitDate > arrivedAt > sentAt > createdAt precedence)', 
   it('shows the LOCAL clock hour, not the UTC hour (AO-18)', () => {
     // 2026-07-16 20:00 America/Chicago -> "...T01:00:00.000Z" the next UTC day.
     // A raw `.substring(11, 16)` slice (the wasm's shortDateTime) would read
-    // "01:00" and the wrong calendar day; the LOCAL read is "07-16 20:00".
-    expect(kinTaleWhen(whenInput({ visitDate: '2026-07-17T01:00:00.000Z' }))).toBe('07-16 20:00');
+    // "01:00" and the wrong calendar day; the LOCAL read is "Jul 16, 2026 20:00".
+    expect(kinTaleWhen(whenInput({ visitDate: '2026-07-17T01:00:00.000Z' }))).toBe('Jul 16, 2026 20:00');
   });
 });
 

@@ -360,7 +360,7 @@ describe('ActivityLog entry detail', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [delivered] });
     render(<ActivityLog />);
     await userEvent.click(screen.getByRole('button', { name: /NOTIFICATION_RECEIVED/ }));
-    expect(screen.getByText('2026-08-03T14:02:11.482Z')).toBeInTheDocument();
+    expect(screen.getByText('Aug 3, 2026 09:02')).toBeInTheDocument();
     expect(screen.getByText('Severity')).toBeInTheDocument();
     expect(screen.getByText('Actor role')).toBeInTheDocument();
     expect(screen.getByText('notifications/n1')).toBeInTheDocument();
@@ -561,7 +561,7 @@ describe('ActivityLog against its mock', () => {
     });
     render(<ActivityLog />);
     const row = screen.getByRole('button', { name: /KINCARE_ARRIVED/ });
-    expect(within(row).getByText('9:14a')).toHaveClass('activity__time');
+    expect(within(row).getByText('09:14')).toHaveClass('activity__time');
     expect(within(row).getByText('Kincare arrived')).toHaveClass('activity__title');
     expect(within(row).getByText('KINCARE_ARRIVED')).toHaveClass('activity__code');
     const tile = row.querySelector('.icon-tile');
@@ -622,7 +622,7 @@ describe('ActivityLog against its mock', () => {
     expect(labels).toHaveLength(1);
     expect(labels[0]).toMatch(/Nov 4$/);
     const times = Array.from(document.querySelectorAll('time.activity__time')).map((t) => t.textContent);
-    expect(times).toEqual(['3:34p', '8:34p']);
+    expect(times).toEqual(['15:34', '20:34']);
   });
   it('reads the stored business zone once the settings land (#1585)', async () => {
     getBusinessSettings.mockResolvedValue({ timeZone: 'America/Denver' });
@@ -632,7 +632,7 @@ describe('ActivityLog against its mock', () => {
     });
     render(<ActivityLog />);
     await waitFor(() => {
-      expect(document.querySelector('time.activity__time')?.textContent).toBe('2:34p');
+      expect(document.querySelector('time.activity__time')?.textContent).toBe('14:34');
     });
   });
   it('draws the log as one untitled kit panel with the count as its meta', () => {
@@ -832,10 +832,10 @@ describe('ActivityLog business clock (#2192)', () => {
     render(<ActivityLog />);
     expect(await screen.findByText(BUSINESS_CLOCK_LOADING)).toBeInTheDocument();
     // The log still draws while it waits.
-    expect(shownTime()).toBe('3:34p');
+    expect(shownTime()).toBe('15:34');
 
     land({ timeZone: 'America/Denver' });
-    await waitFor(() => expect(shownTime()).toBe('2:34p'));
+    await waitFor(() => expect(shownTime()).toBe('14:34'));
     expect(screen.queryByText(BUSINESS_CLOCK_LOADING)).toBeNull();
     expect(call).not.toHaveBeenCalled();
   });
@@ -846,10 +846,10 @@ describe('ActivityLog business clock (#2192)', () => {
     render(<ActivityLog />);
     expect(await screen.findByText(BUSINESS_CLOCK_FAILED)).toBeInTheDocument();
     expect(screen.getByText('Until it loads, days are counted on Central time.')).toBeInTheDocument();
-    expect(shownTime()).toBe('3:34p');
+    expect(shownTime()).toBe('15:34');
 
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(shownTime()).toBe('2:34p'));
+    await waitFor(() => expect(shownTime()).toBe('14:34'));
     expect(screen.queryByText(BUSINESS_CLOCK_FAILED)).toBeNull();
   });
 
@@ -858,7 +858,7 @@ describe('ActivityLog business clock (#2192)', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [ROW] });
     render(<ActivityLog />);
     // STAFF_WORK_REPLY carries America/Denver.
-    await waitFor(() => expect(shownTime()).toBe('2:34p'));
+    await waitFor(() => expect(shownTime()).toBe('14:34'));
     expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
     expect(getBusinessSettings).not.toHaveBeenCalled();
     expect(screen.queryByText(BUSINESS_CLOCK_LOADING)).toBeNull();
@@ -871,10 +871,10 @@ describe('ActivityLog business clock (#2192)', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [ROW] });
     render(<ActivityLog />);
     expect(await screen.findByText(BUSINESS_CLOCK_FAILED)).toBeInTheDocument();
-    expect(shownTime()).toBe('3:34p');
+    expect(shownTime()).toBe('15:34');
 
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(shownTime()).toBe('2:34p'));
+    await waitFor(() => expect(shownTime()).toBe('14:34'));
     expect(getBusinessSettings).not.toHaveBeenCalled();
   });
 });
