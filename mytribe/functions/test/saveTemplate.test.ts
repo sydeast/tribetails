@@ -303,4 +303,29 @@ describe('saveTemplate: expectNew', () => {
     ).rejects.toThrow();
     expect(ctx.writes).toEqual([]);
   });
+
+  // #2084: a section saved with text and no title was dropped while the editor
+  // said Saved. The server refuses it in words and writes nothing.
+  it.each([[''], ['   ']])('SAD: refuses a section whose title is %j, in one plain sentence', async (title) => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const err = await saveTemplateHandler(
+      req({
+        templateId: 'k',
+        subject: 's',
+        body: 'b',
+        sectionDefinitions: [{ title: 'Intro', description: 'x' }, { title, description: 'What this covers' }],
+      }),
+    ).catch((e) => e);
+    expect(err.code).toBe('invalid-argument');
+    expect(err.message).toBe('Every section needs a title. Give the untitled section a title, or remove it.');
+    expect(ctx.writes).toEqual([]);
+  });
+  it('HAPPY: titled sections are stored as sent', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const sections = [{ title: 'Intro', description: '' }, { title: 'Close', description: 'Sign-off' }];
+    await saveTemplateHandler(req({ templateId: 'k', subject: 's', body: 'b', sectionDefinitions: sections }));
+    expect(ctx.writes.find((w) => w.path === 'emailTemplates/k')?.data.sectionDefinitions).toEqual(sections);
+  });
 });

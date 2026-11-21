@@ -302,11 +302,32 @@ export function blankFormFields(): TemplateFormFields {
  * Trims each section row and drops any whose title is blank (a titleless section
  * is meaningless and the backend rejects it). `description` may be empty. Mirrors
  * `parseTagsInput`'s drop-the-blanks behaviour for the structured-list case.
+ *
+ * #2084: only a row with nothing typed in it is dropped here. A row with a
+ * description and no title is held back by `sectionTitleErrors` first, so the
+ * editor never reaches this with text it would lose.
  */
 export function parseSections(sections: TemplateSection[]): TemplateSection[] {
   return sections
     .map((s) => ({ title: s.title.trim(), description: s.description.trim() }))
     .filter((s) => s.title !== '');
+}
+
+/** #2084: what a section row with text and no title says, beside its title box. */
+export const SECTION_TITLE_REQUIRED = 'Give this section a title, or remove it.';
+
+/**
+ * #2084: the rows that would lose typed text on save, by index. A row with a
+ * description and a blank title used to be dropped while the toast said Saved.
+ * Now Save stops and the row says why. A row with nothing typed in it is still
+ * dropped quietly: there is nothing to lose.
+ */
+export function sectionTitleErrors(sections: TemplateSection[]): Record<number, string> {
+  const out: Record<number, string> = {};
+  sections.forEach((s, i) => {
+    if (s.title.trim() === '' && s.description.trim() !== '') out[i] = SECTION_TITLE_REQUIRED;
+  });
+  return out;
 }
 
 /**

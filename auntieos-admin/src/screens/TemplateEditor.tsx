@@ -15,6 +15,7 @@ import {
   formatTagsInput,
   parseTagsInput,
   templateFieldErrors,
+  sectionTitleErrors,
   templateToFormFields,
   type TemplateFormFields,
   type TemplateErrorField,
@@ -189,6 +190,9 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   // #1614: every blocking problem at once, drawn at its own field and cleared
   // when that field is edited. `error` stays for what the server said.
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<TemplateErrorField, string>>>({});
+  // #2084: section rows that would lose typed text on save, by row index. Kept
+  // apart from `fieldErrors`: a row is not one of the form's named fields.
+  const [sectionErrors, setSectionErrors] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // The server's live-notification-key sentence, once it has said it. Non-null
@@ -344,12 +348,21 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     setFields((prev) => ({ ...prev, sections: [...prev.sections, blankSection()] }));
   }
   function updateSection(idx: number, patch: Partial<TemplateFormFields['sections'][number]>) {
+    if (idx in sectionErrors) {
+      setSectionErrors((prev) => {
+        const next = { ...prev };
+        delete next[idx];
+        return next;
+      });
+    }
     setFields((prev) => ({
       ...prev,
       sections: prev.sections.map((s, i) => (i === idx ? { ...s, ...patch } : s)),
     }));
   }
   function removeSection(idx: number) {
+    // Rows below the removed one move up, so their marks would point at the wrong row.
+    setSectionErrors({});
     setFields((prev) => ({ ...prev, sections: prev.sections.filter((_, i) => i !== idx) }));
   }
 
@@ -457,11 +470,14 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     const visual = mode === 'visual' ? visualContentForSave(seed.content, withTag.content, bodyLocked) : null;
     const effective: TemplateFormFields = visual ? { ...withTag, content: visual.content } : withTag;
     const found = visual ? visualFieldErrors(effective, { isCreate }) : templateFieldErrors(effective, { isCreate });
-    if (found.length > 0) {
+    const untitled = sectionTitleErrors(effective.sections);
+    if (found.length > 0 || Object.keys(untitled).length > 0) {
       setFieldErrors(Object.fromEntries(found.map((e) => [e.field, e.message])));
+      setSectionErrors(untitled);
       setError(null);
       return;
     }
+    setSectionErrors({});
     if (visual?.error) {
       setFieldErrors({});
       setError(visual.error);
@@ -543,7 +559,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   const confirming = view === 'confirm-delete' && !isCreate;
   // The page's own error banner. While the confirm dialog is up the error
   // belongs to the delete and shows inside the dialog instead.
-  const fieldErrorCount = Object.keys(fieldErrors).length;
+  const fieldErrorCount = Object.keys(fieldErrors).length + Object.keys(sectionErrors).length;
   const pageError = confirming ? null : error;
 
   return (
@@ -1040,8 +1056,8 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                   <span className="template-editor__opt">optional</span>
                 </span>
                 <p className="template-editor__hint">
-                  Describe the parts of this template for other admins. A section needs a title to be
-                  saved; blank ones are dropped.
+                  Describe the parts of this template for other admins. Each section needs a title.
+                  Empty ones are dropped.
                 </p>
                 {fields.sections.length > 0 ? (
                   <ul className="template-editor__sections">
@@ -1052,6 +1068,8 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                             type="text"
                             className="template-editor__input"
                             aria-label={`Section ${idx + 1} title`}
+                            aria-invalid={sectionErrors[idx] ? true : undefined}
+                            aria-describedby={sectionErrors[idx] ? `template-editor-section-${idx}-error` : undefined}
                             value={section.title}
                             onChange={(e) => updateSection(idx, { title: e.target.value })}
                             placeholder="Section title"
@@ -1066,6 +1084,15 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                             rows={2}
                             maxLength={1000}
                           />
+                          {sectionErrors[idx] ? (
+                            <p
+                              id={`template-editor-section-${idx}-error`}
+                              className="template-editor__field-error"
+                              role="alert"
+                            >
+                              {sectionErrors[idx]}
+                            </p>
+                          ) : null}
                         </div>
                         <GhostButton label="Remove" onClick={() => removeSection(idx)} />
                       </li>

@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import type { TemplateSummary } from '../api/templates';
 import {
   templateFieldErrors,
+  sectionTitleErrors,
   templateRowTitle,
   templateSavedNotice,
   templateSubjectPreview,
@@ -559,5 +560,21 @@ describe('#953 visual templates', () => {
       fields: ['subject'],
       source: 'template',
     });
+  });
+});
+describe('sectionTitleErrors (#2084)', () => {
+  it('marks a row with text and no title, by index, and leaves empty and titled rows alone', () => {
+    expect(
+      sectionTitleErrors([
+        { title: 'Intro', description: '' },
+        { title: '  ', description: 'typed text' },
+        { title: '', description: '' },
+        { title: '', description: '   ' },
+      ]),
+    ).toEqual({ 1: 'Give this section a title, or remove it.' });
+  });
+  it('is empty when nothing would be lost', () => {
+    expect(sectionTitleErrors([])).toEqual({});
+    expect(sectionTitleErrors([{ title: 'A', description: 'b' }])).toEqual({});
   });
 });
