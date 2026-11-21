@@ -28,6 +28,9 @@ describe('isPortalReturnUrl', () => {
     'https://kinfolk.tribetails.com/app/invoices/inv-1?checkout=done',
     'https://kinfolk.tribetails.com/app/invoices/inv-1',
     'https://kinfolk.tribetails.com/app/invoices/INV%202027%2F1?checkout=done',
+    // #2427: where the app's card setup comes back to.
+    'https://kinfolk.tribetails.com/app/account?billing=saved',
+    'https://kinfolk.tribetails.com/app/account',
     'https://kinfolk-portal.web.app/invoices/inv-1',
     'https://kinfolk-portal.firebaseapp.com/invoices/inv-1',
     'https://mytribe-kinfolk-beta.web.app/invoices/inv-1',
@@ -56,6 +59,8 @@ describe('isPortalReturnUrl', () => {
     // Stripe is only ever given an https address on the portal.
     ["the app's own invoice link", 'mytribe://invoices/inv-1?checkout=done'],
     ["the app's own invoice link with the portal as a user part", 'mytribe://kinfolk.tribetails.com@invoices/inv-1'],
+    ["the app's own account link", 'mytribe://account?billing=saved'],
+    ['the app account path on a foreign site', 'https://evil.example/app/account?billing=saved'],
     ['an Android intent link', 'intent://kinfolk.tribetails.com/app/invoices/inv-1#Intent;scheme=https;end'],
     ['the app return path on a foreign site', 'https://evil.example/app/invoices/inv-1?checkout=done'],
     ['the app return path on the admin site', 'https://auntie.tribetails.com/app/invoices/inv-1?checkout=done'],

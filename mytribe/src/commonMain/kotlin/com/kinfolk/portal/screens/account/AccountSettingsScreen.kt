@@ -81,6 +81,13 @@ fun AccountSettingsScreen(
     billingAccess: Boolean = true,
     /** Fires with the account the server returned after a save, so the header avatar can follow a renamed person (#1290). */
     onAccountSaved: (Account) -> Unit = {},
+    /**
+     * #2427: Stripe sent the household back to this app from its card page.
+     * The card on file is read again from Stripe, once per return, and
+     * [onCardSetupReturnSeen] is told so the host can forget it.
+     */
+    cardSetupReturn: CardSetupReturn? = null,
+    onCardSetupReturnSeen: () -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -109,6 +116,45 @@ fun AccountSettingsScreen(
     var confirmingCardRemoval by remember { mutableStateOf(false) }
     var billingStatus by remember { mutableStateOf<String?>(null) }
     var billingError by remember { mutableStateOf<String?>(null) }
+    // #2427: each read of the card from Stripe takes a number, and only the
+    // newest one's answer is kept. A return from Stripe can open this screen
+    // while its first read (the stored card) is still out, and that older
+    // answer must not land on top of Stripe's newer one.
+    val cardReads = remember { intArrayOf(0) }
+    // Asks Stripe what is on file now. "Refresh card" and a return from
+    // Stripe's card page (#2427) both come here. [force] is the return: it
+    // reads even while another read is out, and its answer wins.
+    fun refreshCard(force: Boolean = false) {
+        if (loadingBilling && !force) return
+        val read = ++cardReads[0]
+        loadingBilling = true
+        billingError = null
+        scope.launch {
+            try {
+                val state = portalApi.syncMyPaymentMethod(kinfolkId)
+                if (read != cardReads[0]) return@launch
+                paymentMethod = state
+                billingStatus = if (state.hasPaymentMethod) {
+                    "Card on file."
+                } else {
+                    "Stripe has no card for this tribe yet."
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                if (read == cardReads[0]) billingError = t.message ?: "Could not reach Stripe. Try again in a moment."
+            } finally {
+                if (read == cardReads[0]) loadingBilling = false
+            }
+        }
+    }
+    // #2427: back from Stripe's card page. The link says nothing about the
+    // card; the read does. Without billing access there is no card to read.
+    LaunchedEffect(cardSetupReturn) {
+        if (cardSetupReturn == null) return@LaunchedEffect
+        onCardSetupReturnSeen()
+        if (billingAccess) refreshCard(force = true)
+    }
 
     /** Optional admin-driven schema. When present, schema-rendered values replace
      *  the static editable fields; persistence stays typed via saveMyAccount. */
@@ -146,15 +192,20 @@ fun AccountSettingsScreen(
         // load, so it lands in `billingError` and nowhere else.
         if (billingAccess) {
             launch {
+                // The stored card, read without taking a number of its own:
+                // any read from Stripe started since, in either order, wins.
+                val read = cardReads[0]
+                if (read != 0) return@launch
                 loadingBilling = true
                 try {
-                    paymentMethod = portalApi.getMyPaymentMethod(kinfolkId)
+                    val state = portalApi.getMyPaymentMethod(kinfolkId)
+                    if (read == cardReads[0]) paymentMethod = state
                 } catch (c: CancellationException) {
                     throw c
                 } catch (t: Throwable) {
-                    billingError = t.message ?: "Could not read your billing details."
+                    if (read == cardReads[0]) billingError = t.message ?: "Could not read your billing details."
                 } finally {
-                    loadingBilling = false
+                    if (read == cardReads[0]) loadingBilling = false
                 }
             }
         }
@@ -387,12 +438,13 @@ fun AccountSettingsScreen(
                     if (loadingBilling) {
                         Text("Checking what is on file…", style = type.sansMeta)
                     }
-                    // The android client leaves the app for Stripe's hosted page and
-                    // gets no return trip back into it, so the card is confirmed by
-                    // asking the server on the way back in, not by a redirect URL.
-                    // "Refresh card" is that ask, and it is deliberately always
-                    // present rather than only after a setup attempt: a card added on
-                    // the web, or saved on a previous run of the app, lands here too.
+                    // The app leaves for Stripe's hosted page in the browser. Stripe
+                    // sends the household back to an address this app claims
+                    // (#2427, CardSetupReturn.kt), and the card is read again then.
+                    // The address never says a card was saved; the read does.
+                    // "Refresh card" is the same read, and it is deliberately always
+                    // present: the browser can keep the page, the household can come
+                    // back by hand, and a card added on the web lands here too.
                     KinButton(
                         label = when {
                             startingCardSetup -> "Opening Stripe…"
@@ -406,9 +458,12 @@ fun AccountSettingsScreen(
                                 billingStatus = null
                                 scope.launch {
                                     try {
+                                        // #2427: not the web portal's /account, which
+                                        // needs a web sign-in this browser rarely has.
+                                        val (successUrl, cancelUrl) = cardSetupReturnUrls()
                                         val session = portalApi.createBillingSetupSession(
-                                            successUrl = "https://kinfolk.tribetails.com/account?billing=saved",
-                                            cancelUrl = "https://kinfolk.tribetails.com/account",
+                                            successUrl = successUrl,
+                                            cancelUrl = cancelUrl,
                                             kinfolkId = kinfolkId,
                                         )
                                         if (session.checkoutUrl.isNotBlank()) {
@@ -432,29 +487,7 @@ fun AccountSettingsScreen(
                     )
                     KinGhostButton(
                         label = if (loadingBilling) "Refreshing…" else "Refresh card",
-                        onClick = {
-                            if (!loadingBilling) {
-                                loadingBilling = true
-                                billingError = null
-                                scope.launch {
-                                    try {
-                                        val state = portalApi.syncMyPaymentMethod(kinfolkId)
-                                        paymentMethod = state
-                                        billingStatus = if (state.hasPaymentMethod) {
-                                            "Card on file."
-                                        } else {
-                                            "Stripe has no card for this tribe yet."
-                                        }
-                                    } catch (c: CancellationException) {
-                                        throw c
-                                    } catch (t: Throwable) {
-                                        billingError = t.message ?: "Could not reach Stripe. Try again in a moment."
-                                    } finally {
-                                        loadingBilling = false
-                                    }
-                                }
-                            }
-                        },
+                        onClick = { refreshCard() },
                         enabled = !startingCardSetup && !removingCard,
                         modifier = Modifier.fillMaxWidth(),
                     )

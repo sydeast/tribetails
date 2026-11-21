@@ -125,6 +125,12 @@ fun KinfolkPortalAppGuarded() {
             AuthState.SignedOut -> com.kinfolk.portal.screens.invoices.PendingCheckoutReturn.onAccount(null)
             else -> Unit
         }
+        // #2427: and for a card setup's return link.
+        when (val settled = authState) {
+            is AuthState.SignedIn -> com.kinfolk.portal.screens.account.PendingCardSetupReturn.onAccount(settled.uid)
+            AuthState.SignedOut -> com.kinfolk.portal.screens.account.PendingCardSetupReturn.onAccount(null)
+            else -> Unit
+        }
     }
     LaunchedEffect(signedInUid, firestoreClient) {
         unreadBadge.reset()
@@ -372,6 +378,8 @@ fun KinfolkPortalAppGuarded() {
                                 com.kinfolk.portal.push.PendingPushOpen.clear()
                                 // #2401: nor is a card payment's return link.
                                 com.kinfolk.portal.screens.invoices.PendingCheckoutReturn.clear()
+                                // #2427: nor a card setup's.
+                                com.kinfolk.portal.screens.account.PendingCardSetupReturn.clear()
                             },
                             onBackToDirectory = {
                                 pickedKinfolkId = null
