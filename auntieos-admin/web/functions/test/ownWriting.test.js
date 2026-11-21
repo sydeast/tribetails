@@ -87,6 +87,7 @@ function tribeData(extra = {}) {
     ],
     'conversations/h1/messages': [
       { id: 'm1', senderRole: 'auntie', body: '<p>Hi Ottoline, Marzipan was a sweetheart today and Bramblewick\'s bowl is put away. Call me at (555) 010-2233 or write to e2e-admin@tribetails.com.</p>', createdAtMs: 290 },
+      { id: 'm4', senderRole: 'auntie', body: 'Hi Ottoline, Marzipan was a sweetheart today and we had a long cuddle on the couch. Talk soon!', createdAtMs: 285 },
       { id: 'm2', senderRole: 'kinfolk', body: 'Thank you so much, this is the household writing and it never trains the voice at all.', createdAtMs: 280 },
     ],
     'conversations/h2/messages': [
@@ -94,6 +95,7 @@ function tribeData(extra = {}) {
     ],
     sms_messages: [
       { id: 't1', direction: 'outbound', mirroredFrom: 'sendExternalMessage', body: 'On my way now, Will. The gate code 48213 worked fine and Sprocket is fed.', kinfolkName: 'Leopold Quince', timestamp: '2026-11-10T10:00:00.000Z' },
+      { id: 't4', direction: 'outbound', mirroredFrom: 'sendExternalMessage', body: 'On my way now, Will. Sprocket is fed and the water bowl is full again.', kinfolkName: 'Leopold Quince', timestamp: '2026-11-10T09:00:00.000Z' },
       { id: 't2', direction: 'inbound', body: 'This came in from the household and is long enough to count if it were ours.', timestamp: '2026-11-11T10:00:00.000Z' },
       { id: 't3', direction: 'outbound', body: 'A carrier record with no mirror marker, long enough to count if it were ours.', timestamp: '2026-11-12T10:00:00.000Z' },
     ],
@@ -102,6 +104,7 @@ function tribeData(extra = {}) {
     ],
     kin_care_reports: [
       { id: 'r1', status: 'SENT', bodyCopy: 'Marzipan met me at the door and we sat in the sun for a while before supper.', kinfolkName: 'Ottoline Vashti', authorDisplayName: 'Wrenna Ashdown', sentAt: '2026-11-08T10:00:00.000Z', createdAt: '2026-11-08T09:00:00.000Z' },
+      { id: 'r6', status: 'SENT', bodyCopy: 'Marzipan sat with me in the sun for a while before supper, purring the whole time.', kinfolkName: 'Ottoline Vashti', authorDisplayName: 'Wrenna Ashdown', sentAt: '2026-11-08T08:00:00.000Z', createdAt: '2026-11-08T07:00:00.000Z' },
       { id: 'r2', status: 'SENT', sourceDraftId: 'd9', bodyCopy: 'Published from a generated draft, so this one is never a style example at all.', sentAt: '2026-11-08T11:00:00.000Z', createdAt: '2026-11-08T10:30:00.000Z' },
       { id: 'legacy_r3', status: 'SENT', sentVia: 'legacy_visit_logs', bodyCopy: 'An old imported visit log that came over in the migration from the old system.', createdAt: '2026-01-01T00:00:00.000Z' },
       { id: 'r4', status: 'DRAFT', bodyCopy: 'A tale still in the composer is not sent, so it is not one of ours yet either.', createdAt: '2026-11-08T12:00:00.000Z' },
@@ -235,6 +238,125 @@ describe('the roster', () => {
   });
 });
 
+describe('household specifics: an example is a style sample only', () => {
+  const MUST_DROP = {
+    digit: [
+      'See you at 10:30 tomorrow, the walk went well.',
+      'That comes to $40 for the two visits this week.',
+      'Back on the 3rd, we will see everyone then.',
+    ],
+    time: [
+      'I will be by around noon to check on everyone.',
+      'See you at seven o\'clock, all is well here.',
+      'Dropping in by six pm, all is well here.',
+      'See you after 5 p.m. tomorrow.',
+    ],
+    money: ['That comes to forty dollars for the week.', 'It was twenty bucks at the shop.'],
+    entry: [
+      'The gate sticks a little, so give it a shove.',
+      'I left the spare key under the mat for you.',
+      'The back door was open when I arrived.',
+      'I set the alarm and locked up behind me.',
+      'The lockbox is on the side of the house.',
+      'The code changed, so I used the new one.',
+    ],
+    medicine: [
+      'She took half a pill of gabapentin with her supper.',
+      'Gave him the Apoquel with breakfast, no fuss at all.',
+      'Her medication is in the cupboard above the sink.',
+      'Ear drops went in twice a day as you asked.',
+      'He gets one tablet every eight hours.',
+      'The flea treatment is due again soon.',
+    ],
+    health: [
+      'She threw up a little after dinner but seemed fine.',
+      'The stitches look clean and dry today.',
+      'He was limping a little on the back leg.',
+      'The vet said to keep an eye on her appetite.',
+      'His allergies are better this week.',
+      'She wore the cone all afternoon like a champ.',
+    ],
+    behaviour: [
+      'He growled at the mail carrier again.',
+      'Keep her away from the other cat, she bites.',
+      'She tried to escape when the delivery came.',
+      'He gets anxious when the thunder starts.',
+      'Do not let him off the leash near the pond.',
+      'There was an accident on the rug, all cleaned up.',
+    ],
+    address: [
+      'We took the long way down Quarry Road and back.',
+      'We walked past Old Quarry Road and back again.',
+      'We walked all the way to the end of Larkspur Lane.',
+      'She loves the walk up Main Street in the morning.',
+      'The new apartment is so bright and sunny.',
+      'We met at the corner of the two big roads.',
+    ],
+  };
+  for (const [kind, texts] of Object.entries(MUST_DROP)) {
+    it(`drops ${kind} wording`, () => {
+      for (const t of texts) assert.notStrictEqual(own.householdSpecific(t), null, t);
+    });
+  }
+  it('drops an example whose placeholder stood for a phone, an address or a long number', () => {
+    for (const t of ['Call me on [phone] any time.', 'See you at [address] soon.', 'Use [number] at the side.']) {
+      assert.notStrictEqual(own.householdSpecific(t), null, t);
+    }
+  });
+  const MUST_SURVIVE = [
+    'Thank you so much! It was a joy to spend the afternoon with your Kin. Talk soon!',
+    'We had a lovely long walk, fresh water in the bowl and lots of cuddles on the couch before I left.',
+    'Hi [Kinfolk], all went well today. [Kin] and [Kin 2] played in the yard and then napped in the sun.',
+    'Hope you have a wonderful trip, we will take good care of everyone while you are away.',
+    'The clock in the hall chimed while we played with the monkey toy.',
+    'She curled up on her pillow and we refilled the water bowl before heading off.',
+    'The road was quiet and by the way, the leaves are turning.',
+    'Missing you already, see you next time. Lots of love from the Tribe!',
+    'Happy holidays from all of us, and thank you for a wonderful year.',
+    'We played indoors while it rained and then had a little nap together.',
+  ];
+  it('keeps plain sign-offs and generic visit wording, two Kin placeholders included', () => {
+    for (const t of MUST_SURVIVE) assert.strictEqual(own.householdSpecific(t), null, t);
+  });
+  it('of the six builder fixture examples that reach the scrub, the KinTale comment and the broadcast survive', () => {
+    const data = tribeData();
+    const sent = {
+      m1: data['conversations/h1/messages'][0].body,
+      m3: data['conversations/h2/messages'][0].body,
+      t1: data.sms_messages[0].body,
+      r1: data.kin_care_reports[0].bodyCopy,
+      c1: data['kin_care_reports/r1/comments'][0].body,
+      b1: data.broadcasts[0].body,
+    };
+    const kept = Object.entries(sent).filter(([, body]) => own.householdSpecific(own.plainText(body)) === null).map(([id]) => id);
+    assert.deepStrictEqual(kept, ['c1', 'b1']);
+  });
+  it('when the newest of a kind hold specifics, the next ones of that kind are sent', async () => {
+    const data = tribeData({
+      broadcasts: [
+        { id: 'b1', body: 'Holiday visits are booking up, the door is always open for your Kin.', sentAtMs: 905 },
+        { id: 'b2', body: 'Remember the flea season is here, so ask us about a reminder.', sentAtMs: 904 },
+        { id: 'b3', body: 'Our rates change in January to forty dollars a visit for everyone.', sentAtMs: 903 },
+        { id: 'b4', body: 'Thank you all for a wonderful year of walks, naps and cuddles.', sentAtMs: 902 },
+        { id: 'b5', body: 'We are so grateful for every one of you and your Kin this season.', sentAtMs: 901 },
+      ],
+    });
+    const { value, logs } = await silence(() => own.buildOwnWriting(makeDb(data), VOICE));
+    assert.strictEqual((value.text.match(/\[Broadcast\]/g) || []).length, 2);
+    assert.match(value.text, /wonderful year of walks/);
+    assert.match(value.text, /so grateful for every one/);
+    assert.doesNotMatch(value.text, /door is always open|flea season|forty dollars/);
+    assert.match(logs.join('\n'), /specifics/);
+  });
+  it('an example that only shows a specific after the replacing is dropped too', () => {
+    // "Tarn" is on the roster as a Kin, so the street word reads after a placeholder.
+    const roster = own.addNames(new Map(), 'kin', ['Tarn']);
+    const scrubbed = own.scrubExample('We walked along tarn way and back again for a long while.', roster, [], new Set(['we', 'way']), new Map());
+    assert.strictEqual(scrubbed, 'We walked along [Kin] way and back again for a long while.');
+    assert.notStrictEqual(own.householdSpecific(scrubbed), null);
+  });
+});
+
 describe('the emails collection', () => {
   it('is never read: nothing marks a row there as the office\'s own typing', async () => {
     const db = makeDb(tribeData());
@@ -262,6 +384,13 @@ describe('the office\'s own writing, collected', () => {
     assert.doesNotMatch(text, /@|555|https?:|hanasamku|tribetails\.com|48213|1234|\{\{/);
     assert.match(text, /\[Kinfolk\], \[Kin\] was a sweetheart today/);
     assert.match(text, /Hello \[Kinfolk\], the holiday calendar is open/);
+  });
+  it('leaves out an example that holds a code, a phone, an address or a door, and sends the next of its kind', async () => {
+    const { text } = await build();
+    assert.doesNotMatch(text, /bowl is put away|Call me|long loop|says hello|gate|worked fine|met me at|door/);
+    assert.match(text, /\[Inbox reply\]\nHi \[Kinfolk\], \[Kin\] was a sweetheart today and we had a long cuddle/);
+    assert.match(text, /\[Text reply\]\n\[Name\] my way now, \[Kinfolk\]\. \[Kin\] is fed/);
+    assert.match(text, /\[KinTale\]\n\[Kin\] sat with me in the sun/);
   });
   it('never takes what the household wrote, a carrier record, a draft or an import', async () => {
     const { text } = await build();

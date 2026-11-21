@@ -25,6 +25,13 @@
 //      becomes [Name].
 //   4. The example is read again. One that still carries a Tribe name or a
 //      contact detail is dropped, never sent.
+//   5. An example is a style sample only, so one that holds anything about a
+//      particular household is dropped whole, read before and after the
+//      replacing: any digit (codes, times, amounts), a money sign, a time of
+//      day, and any care detail (medicines and doses, health and behaviour
+//      notes, doors, locks, alarms, keys and codes, any part of an address).
+//      The lists lean wide: when a word could be either, the example goes. A
+//      dropped example is replaced by the next one of its kind.
 //
 // If the names, or the generated drafts, cannot all be read, no example is
 // sent at all: the voice files
@@ -289,6 +296,132 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
 }
 
 
+// ---- 5. household specifics -------------------------------------------------
+//
+// Every list is written from general knowledge. A stem matches at the start
+// of a word ("lock" finds "locked" and "lockbox", never "clock"); a word
+// matches whole ("key" finds "key" and "keys", never "monkey"). Phrases allow
+// any space between their words.
+
+const SPECIFIC_STEMS = {
+  entry: [
+    'door', 'lock', 'unlock', 'deadbolt', 'latch', 'alarm', 'keypad', 'keybox', 'keyless', 'keycard',
+    'passcode', 'password', 'garage', 'combination', 'security', 'camera', 'buzzer', 'intercom', 'concierge',
+  ],
+  medicine: [
+    'medic', 'capsule', 'dose', 'dosage', 'dosing', 'prescri', 'pharmac', 'antibiotic', 'steroid',
+    'insulin', 'inject', 'syringe', 'ointment', 'inhaler', 'supplement', 'vitamin', 'probiotic', 'deworm',
+    'heartworm', 'flea', 'sedat', 'anesthe', 'anaesthe', 'vaccin', 'booster', 'milligram', 'chewable',
+    // Common pet medicines and preventives, generic and brand.
+    'prednis', 'gabapentin', 'apoquel', 'carprofen', 'rimadyl', 'trazodone', 'metacam', 'meloxicam',
+    'fluoxetine', 'prozac', 'cerenia', 'galliprant', 'levothyrox', 'methimazole', 'phenobarb', 'vetmedin',
+    'pimobendan', 'enalapril', 'benazepril', 'furosemide', 'lasix', 'benadryl', 'diphenhydramine',
+    'tramadol', 'clavamox', 'amoxi', 'metronidazole', 'flagyl', 'cytopoint', 'librela', 'solensia',
+    'heartgard', 'nexgard', 'simparica', 'bravecto', 'seresto', 'frontline', 'trifexis', 'credelio',
+    'proin', 'denamarin', 'cosequin', 'dasuquin', 'codeine', 'zyrtec', 'claritin', 'pepcid', 'famotidine',
+    'omeprazole', 'sucralfate', 'clomipramine', 'clomicalm', 'alprazolam', 'xanax', 'acepromazine',
+    'buprenorphine', 'onsior', 'adequan', 'glucosamine', 'bromide', 'keppra', 'levetiracetam',
+    'zonisamide', 'fortiflora', 'panacur', 'drontal', 'cbd',
+  ],
+  health: [
+    'allerg', 'seizure', 'epilep', 'diabet', 'arthrit', 'surger', 'surgic', 'incision', 'sutur', 'stitch',
+    'vomit', 'diarrh', 'stool', 'urin', 'blood', 'bleed', 'limp', 'lump', 'tumor', 'tumour', 'cancer',
+    'kidney', 'renal', 'liver', 'thyroid', 'murmur', 'infect', 'hotspot', 'wound', 'injur', 'sick',
+    'symptom', 'diagnos', 'veterin', 'doctor', 'clinic', 'hospital', 'emergenc', 'blind', 'deaf', 'chronic',
+    'cough', 'sneez', 'wheez', 'letharg', 'fever', 'dehydrat', 'constipat', 'parvo', 'ultrasound',
+    'biopsy', 'geriatric', 'dementia', 'hospice', 'euthan', 'spay', 'neuter', 'mobility', 'incontinen',
+  ],
+  behaviour: [
+    'aggress', 'growl', 'snarl', 'reactiv', 'anxi', 'separation', 'fearful', 'phobi', 'escap', 'muzzle',
+    'guarding', 'accident', 'trigger', 'destruct', 'fight', 'attack', 'territor', 'hiss',
+  ],
+  address: ['address', 'apartment', 'subdivision', 'intersection', 'boulevard', 'parkway', 'highway'],
+};
+const SPECIFIC_WORDS = {
+  entry: [
+    'key', 'keys', 'keyed', 'code', 'codes', 'coded', 'pin', 'pins', 'gate', 'gates', 'gated', 'fob', 'fobs',
+    'spare', 'entry', 'entrance', 'mailbox', 'wifi', 'wi-fi', 'hide-a-key',
+  ],
+  medicine: [
+    'med', 'meds', 'pill', 'pills', 'pilled', 'pilling', 'tablet', 'tablets', 'mg', 'mcg', 'ml', 'cc',
+    'tick', 'ticks', 'eye drops?', 'ear drops?', 'twice a day', 'once a day', 'twice daily',
+    'three times a day', 'every (?:\\p{L}+ )?hours',
+  ],
+  health: [
+    'vet', 'vets', 'dr', 'ill', 'illness', 'pain', 'pains', 'painful', 'rash', 'rashes', 'hot spots?', 'cone',
+    'e-collar', 'x-rays?', 'xrays?', 'uti', 'swollen', 'swelling', 'condition', 'conditions',
+    'threw up', 'throw up', 'throws up', 'throwing up', 'passed away', 'put down',
+  ],
+  behaviour: [
+    'bite', 'bites', 'biting', 'bitten', 'nip', 'nips', 'nipped', 'nipping', 'snapped', 'snapping',
+    'lunge', 'lunges', 'lunged', 'lunging', 'scared', 'bolt', 'bolts', 'bolted', 'bolting', 'marking',
+    'darts? out', 'darted out', 'ran off', 'runs? off', 'resource guard', 'do not let', "don't let",
+    'never let', 'keep (?:\\p{L}+ )?away',
+  ],
+  address: [
+    'street', 'streets', 'st', 'avenue', 'ave', 'blvd', 'pkwy', 'hwy', 'apt', 'unit', 'suite', 'condo',
+    'cul-de-sac', 'zip', 'cross street', 'corner of',
+  ],
+  time: ['noon', 'midnight', "o'clock", 'a\\.m\\.?', 'p\\.m\\.?'],
+  money: ['dollar', 'dollars', 'bucks', 'cents'],
+};
+// Street words that are everyday words too: they count only after a
+// capitalised word ("Quarry Road"), or a placeholder ("[Name] Lane").
+const STREET_WORDS = new Set([
+  'road', 'rd', 'drive', 'dr', 'lane', 'ln', 'court', 'ct', 'way', 'place', 'pl', 'circle', 'cir', 'trail',
+  'trl', 'terrace', 'ter', 'loop', 'run', 'row', 'crescent', 'close', 'square', 'sq', 'pike', 'path',
+  'alley', 'bend', 'ridge', 'hollow', 'heights', 'park',
+]);
+// A capitalised word before a street word that is not a street's name ("The
+// road was quiet", "By the way").
+const NOT_STREET_NAMES = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'our', 'your', 'my', 'his', 'her', 'their', 'its',
+  'one', 'any', 'every', 'each', 'no', 'some', 'which', 'what', 'all', 'same', 'other', 'either', 'neither',
+  'long', 'short', 'quick', 'little', 'big', 'nice', 'lovely', 'great', 'good', 'happy', 'fun', 'half',
+  'down', 'up', 'along', 'across', 'on', 'at', 'by', 'near', 'past', 'around', 'round', 'over', 'from',
+  'to', 'in', 'into', 'off', 'back', 'front', 'home', 'i', 'we', 'you', 'they', 'kin', 'auntie',
+]);
+
+const phraseSource = (p) => p.replace(/ /g, '\\s+');
+const SPECIFIC_PATTERNS = Object.fromEntries(
+  [...new Set([...Object.keys(SPECIFIC_STEMS), ...Object.keys(SPECIFIC_WORDS)])].map((kind) => {
+    const parts = [];
+    if (SPECIFIC_STEMS[kind]) parts.push(`(?:${SPECIFIC_STEMS[kind].map(phraseSource).join('|')})[\\p{L}\\p{M}]*`);
+    if (SPECIFIC_WORDS[kind]) parts.push(`(?:${SPECIFIC_WORDS[kind].map(phraseSource).join('|')})`);
+    return [kind, new RegExp(`(?<![\\p{L}\\p{N}])(?:${parts.join('|')})(?![\\p{L}\\p{N}])`, 'u')];
+  }),
+);
+const DIGIT = /\p{N}/u;
+const MONEY_SIGN = /[$€£¢¥]/u;
+const NUMBER_TIME = /(?<![\p{L}\p{N}])(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:am|pm)(?![\p{L}\p{N}])/u;
+const DETAIL_PLACEHOLDER = /\[(?:phone|address|number)\]/u;
+// A capitalised word and the word after it, overlapping, so "Old Quarry Road"
+// is read as "Old Quarry" and "Quarry Road".
+const STREET_PAIR = /(?<![\p{L}\p{N}])([\p{Lu}][\p{L}\p{M}'’-]*)\s+(?=([\p{L}]+))/gu;
+const OWN_PLACEHOLDERS = new RegExp(PLACEHOLDER_TOKEN.source, 'gu');
+
+/**
+ * The kind of household specific `text` holds ('digit', 'entry', 'medicine',
+ * 'health', 'behaviour', 'address', 'time', 'money'), or null when it holds
+ * none. A name placeholder stands for a capitalised word ("[Kin 2]" holds no
+ * digit); one that stands for a phone, an address or a number is a specific,
+ * since something particular was there.
+ */
+function householdSpecific(text) {
+  const source = tidy(text);
+  if (DETAIL_PLACEHOLDER.test(source)) return 'address';
+  const bare = source.replace(OWN_PLACEHOLDERS, (m) => (/^\[(?:Kin|Kinfolk|Auntie|Name)\b/u.test(m) ? 'Xname' : 'xdetail'));
+  if (DIGIT.test(bare)) return 'digit';
+  if (MONEY_SIGN.test(bare)) return 'money';
+  const folded = fold(bare).replace(/\s+/gu, ' ');
+  if (NUMBER_TIME.test(folded)) return 'time';
+  for (const [kind, pattern] of Object.entries(SPECIFIC_PATTERNS)) if (pattern.test(folded)) return kind;
+  for (const [, first, second] of bare.matchAll(STREET_PAIR)) {
+    if (STREET_WORDS.has(fold(second)) && !NOT_STREET_NAMES.has(fold(first))) return 'address';
+  }
+  return null;
+}
+
 /** Text without markup, entities decoded, spaces tidied. */
 function plainText(body) {
   return tidy(body)
@@ -375,17 +508,35 @@ async function generatedShingles(db) {
   return out;
 }
 
-/** Most recent first, at most MAX_PER_KIND of a kind, kinds taken in turn. */
-function pickExamples(candidates) {
+/**
+ * Most recent first, at most MAX_PER_KIND of a kind, kinds taken in turn.
+ * `prepare` makes one ready to send, or gives null for one that cannot be;
+ * that one is passed over and the next of its kind is tried. At most
+ * MAX_PREPARED are tried in all.
+ */
+const MAX_PREPARED = MAX_EXAMPLES * 4;
+function pickExamples(candidates, prepare = (c) => c) {
   const byKind = new Map();
   for (const c of [...candidates].sort((a, b) => b.at - a.at)) {
     if (!byKind.has(c.kind)) byKind.set(c.kind, []);
     byKind.get(c.kind).push(c);
   }
+  const lists = [...byKind.values()].map((list) => ({ list, next: 0, taken: 0 }));
   const picked = [];
+  let tried = 0;
   for (let round = 0; round < MAX_PER_KIND && picked.length < MAX_EXAMPLES; round += 1) {
-    for (const list of byKind.values()) {
-      if (list[round] && picked.length < MAX_EXAMPLES) picked.push(list[round]);
+    for (const kind of lists) {
+      if (picked.length >= MAX_EXAMPLES || kind.taken > round) continue;
+      while (kind.next < kind.list.length && tried < MAX_PREPARED) {
+        tried += 1;
+        const ready = prepare(kind.list[kind.next]);
+        kind.next += 1;
+        if (ready !== null) {
+          picked.push(ready);
+          kind.taken += 1;
+          break;
+        }
+      }
     }
   }
   return picked;
@@ -422,20 +573,30 @@ async function buildOwnWriting(db, voiceText) {
   // never teach one: a name typed in lowercase twice is still a name.
   const vocabulary = lowercaseWords([voiceText || '']);
 
+  // An example is a style sample only: one that holds anything particular to
+  // a household is left out whole, read before and after the replacing.
+  let specifics = 0;
+  const general = usable.filter((c) => {
+    if (householdSpecific(c.text) === null) return true;
+    specifics += 1;
+    return false;
+  });
+
   const found = new Map();
-  const examples = [];
   let dropped = 0;
-  for (const c of pickExamples(usable)) {
+  const examples = pickExamples(general, (c) => {
     const mine = new Map();
     const text = scrubExample(c.text, roster, c.names.map(textOf).filter(Boolean), vocabulary, mine);
-    if (text === null) {
+    if (text === null || householdSpecific(text) !== null) {
       dropped += 1;
-      continue;
+      return null;
     }
     for (const [k, v] of mine) found.set(k, v);
-    examples.push(`[${KIND_LABEL[c.kind]}]\n${text}`);
-  }
-  console.log('generate: own writing examples', { candidates: candidates.length, usable: usable.length, sent: examples.length, dropped });
+    return `[${KIND_LABEL[c.kind]}]\n${text}`;
+  });
+  console.log('generate: own writing examples', {
+    candidates: candidates.length, usable: usable.length, specifics, sent: examples.length, dropped,
+  });
   const names = [...found.values()]
     .filter((e) => e.role !== 'auntie')
     .map((e) => ({ role: e.role, forms: [e.form] }));
@@ -523,6 +684,8 @@ module.exports = {
   addNames,
   readTribeRoster,
   scrubExample,
+  householdSpecific,
+  pickExamples,
   plainText,
   atSentenceStart,
   readCandidates,
