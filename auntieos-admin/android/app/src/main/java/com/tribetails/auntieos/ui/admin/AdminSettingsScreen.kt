@@ -1656,7 +1656,7 @@ private fun NotifRowDetail(
             lines = if (fields.isEmpty()) emptyList() else listOf(
                 notifBodyCarryLine(fields),
             ) + entry.emitters.mapNotNull { it.dataNote },
-            empty = "No merge fields are recorded for this row.",
+            empty = "Nothing is listed for this notice yet.",
         )
         NotifDeliveryEvidenceBlock(notificationKey = entry.key)
     }

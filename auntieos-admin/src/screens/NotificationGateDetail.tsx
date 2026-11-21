@@ -145,7 +145,7 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
       <section className="notifgate__detail-block">
         <h4 className="notifgate__detail-heading">What the body can carry</h4>
         {fields.length === 0 ? (
-          <p className="notifgate__detail-empty">No merge fields are recorded for this row.</p>
+          <p className="notifgate__detail-empty">Nothing is listed for this notice yet.</p>
         ) : (
           <>
             <p className="notifgate__detail-note">
