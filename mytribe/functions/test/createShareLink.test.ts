@@ -120,6 +120,89 @@ describe('createShareLinkHandler', () => {
     expect(requirePrimaryMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * With photos on, a share link carries the tale's own photos: a visit's, a
+   * Kin's and a household's, and a file older than the stored kind. A file
+   * stored as any other kind is left off the link, whatever ids the tale
+   * carries (`taleShowsMedia`, lib/kinTaleThumbs.ts).
+   */
+  describe('the photos a share link carries', () => {
+    const url = (name: string) => `https://res.cloudinary.com/tribetails/image/upload/v1/${name}.jpg`;
+
+    /** Serves the tale and its media files by path, the way the handler reads them. */
+    function seed(mediaFileIds: string[], files: Record<string, Record<string, unknown>>) {
+      taleGet.mockImplementation(async (path: string) => {
+        if (path === 'kin_care_reports/t1') {
+          return {
+            exists: true,
+            data: () => ({ bodyCopy: 'hi', mediaFileIds, authorDisplayName: 'Auntie', kinfolkId: 'f1' }),
+          };
+        }
+        const file = files[path.replace('media_files/', '')];
+        return file ? { exists: true, data: () => file } : { exists: false, data: () => undefined };
+      });
+      sharedAdd.mockResolvedValue({ id: 'share-photos' });
+      taleUpdate.mockResolvedValue(undefined);
+    }
+
+    async function sharedPhotos(auth: unknown, includePhotos = true): Promise<string[]> {
+      const { createShareLinkHandler } = await import('../src/share/createShareLink');
+      await createShareLinkHandler({
+        auth,
+        data: { familyId: 'f1', kinTaleId: 't1', includePhotos },
+      } as never);
+      const stored = sharedAdd.mock.calls[0]![0] as { scrubbedPayload: { photos: string[] } };
+      return stored.scrubbedPayload.photos;
+    }
+
+    const OWNER = { uid: 'owner-1', token: { admin: true } };
+    const AUNTIE = { uid: 'auntie-1', token: { staffRole: 'auntie' } };
+    const PRIMARY = { uid: 'u-prim' };
+
+    beforeEach(() => {
+      loadMemberMock.mockResolvedValue({ role: 'PRIMARY', status: 'ACTIVE', permissions: {} });
+      requirePrimaryMock.mockReturnValue(undefined);
+    });
+
+    it('HAPPY: each of the five stored kinds is on the link, in the order the tale holds them', async () => {
+      const kinds = ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk'];
+      const files = Object.fromEntries(kinds.map((k, i) => [`m${i}`, { storageUrl: url(`m${i}`), entityType: k }]));
+      seed(Object.keys(files), files);
+      expect(await sharedPhotos(PRIMARY)).toEqual(['m0', 'm1', 'm2', 'm3', 'm4'].map(url));
+    });
+
+    it('HAPPY: a file with no stored kind, or a blank one, is still on the link', async () => {
+      seed(['older', 'blank'], {
+        older: { storageUrl: url('older') },
+        blank: { storageUrl: url('blank'), entityType: '' },
+      });
+      expect(await sharedPhotos(PRIMARY)).toEqual([url('older'), url('blank')]);
+    });
+
+    it.each([
+      ['the household', PRIMARY],
+      ['the owner', OWNER],
+      ['an Auntie', AUNTIE],
+    ])('NEGATIVE: shared by %s, a file of another kind on the tale is left off the link', async (_who, auth) => {
+      seed(['intel', 'visit', 'company', 'account', 'later', 'gone'], {
+        visit: { storageUrl: url('visit'), entityType: 'VISIT_LOG' },
+        intel: { storageUrl: url('intel'), entityType: 'TRIBAL_INTEL' },
+        company: { storageUrl: url('company'), entityType: 'BUSINESS' },
+        account: { storageUrl: url('account'), entityType: 'USER' },
+        later: { storageUrl: url('later'), entityType: 'SOMETHING_NEW' },
+      });
+      expect(await sharedPhotos(auth)).toEqual([url('visit')]);
+      const stored = JSON.stringify(sharedAdd.mock.calls[0]![0]);
+      for (const name of ['intel', 'company', 'account', 'later']) expect(stored).not.toContain(url(name));
+    });
+
+    it('SAD: with photos off, no media file is read and the link carries none', async () => {
+      seed(['visit'], { visit: { storageUrl: url('visit'), entityType: 'VISIT_LOG' } });
+      expect(await sharedPhotos(PRIMARY, false)).toEqual([]);
+      expect(taleGet.mock.calls.map((c) => c[0])).toEqual(['kin_care_reports/t1']);
+    });
+  });
+
   describe('SHARE_LINK_BASE_URL guard', () => {
     const call = () => {
       loadMemberMock.mockResolvedValue({ role: 'PRIMARY', status: 'ACTIVE', permissions: {} });
