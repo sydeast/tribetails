@@ -36,6 +36,7 @@ data class InvoiceLineItemDto(
     val amountCents: Long?,
     val qty: Double?,
     val unitCents: Long?,
+    val discountCents: Long?,
 )
 
 /**
@@ -53,6 +54,7 @@ internal fun decodeInvoiceLineItemDto(raw: Map<String, Any?>?): InvoiceLineItemD
         amountCents = (raw?.get("amountCents") as? Number)?.toLong(),
         qty = (raw?.get("qty") as? Number)?.toDouble(),
         unitCents = (raw?.get("unitCents") as? Number)?.toLong(),
+        discountCents = (raw?.get("discountCents") as? Number)?.toLong(),
     )
 
 /** `InvoiceDtoPayMethod`, shared across callables. */
@@ -136,6 +138,8 @@ data class InvoiceDto(
     val writtenOffCents: Long?,
     /** Null when the payload omits the key. */
     val lineItems: List<InvoiceLineItemDto>? = null,
+    val subtotalCents: Long?,
+    val invoiceDiscountCents: Long?,
     val payMethods: List<InvoiceDtoPayMethod>,
     val payBlockedReason: String?,
     val payments: List<InvoiceDtoPayment>,
@@ -176,6 +180,8 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         creditRedeemedAtMs = (raw?.get("creditRedeemedAtMs") as? Number)?.toDouble(),
         writtenOffCents = (raw?.get("writtenOffCents") as? Number)?.toLong(),
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
+        subtotalCents = (raw?.get("subtotalCents") as? Number)?.toLong(),
+        invoiceDiscountCents = (raw?.get("invoiceDiscountCents") as? Number)?.toLong(),
         payMethods = (raw?.get("payMethods") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayMethod(nested) } },
         payBlockedReason = raw?.get("payBlockedReason") as? String,
         payments = (raw?.get("payments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayment(nested) } },

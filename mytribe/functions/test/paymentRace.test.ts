@@ -352,6 +352,19 @@ describe('#2299: a blank Amount pays what the invoice owes as the server reads i
     expect(docs[INVOICE]).toMatchObject({ status: 'paid', paidCents: 4000, amountDueCents: 0 });
     expectBalanceMatchesPayments();
   });
+  it('#1975 a blank Amount with a fee is checked against the resolved amount: under it records, over it refuses', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    // $40 owed. A $3 fee fits inside the $40 the transaction resolves.
+    const ok = await settle({ fee: 3 });
+    expect(ok).toMatchObject({ amountCents: 4000, feeCents: 300 });
+  });
+  it('#1975 a blank Amount with a fee larger than what is owed is refused, and nothing is recorded', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const refused = await refusalOf(settle({ fee: 41 }));
+    expect(refused).toMatchObject({ status: 'invalid-argument', code: 'fee_exceeds_amount' });
+    expect(String(refused?.message)).toContain('A fee of $41.00 is more than the $40.00 payment');
+    nothingRecorded(0);
+  });
   it('a typed tip and fee ride on top of the balance: gross tip stored, fee out of the proceeds', async () => {
     installOptimisticTransactions(ctx.db, docs);
     const res = await settle({ tip: 5, fee: 1.5 });

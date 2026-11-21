@@ -586,6 +586,12 @@ export async function recordPaymentHandler(
       { code: 'tip_exceeds_amount' },
     );
   }
+  // #1975: A FEE LARGER THAN THE PAYMENT is refused for the same reason. The fee is
+  // what the processor kept out of what was paid, so it cannot be more than
+  // that. A fee larger than the tip is ordinary (a card payment of exactly the
+  // balance, no tip) and is not refused. For "pay what is owed" the amount is
+  // not known yet; it is checked in the transaction.
+  if (!settleBalance) refuseFeeOverAmount(feeCents, amountCents);
   const paidAtIso = new Date().toISOString();
   // THE APPLY IS PLANNED INSIDE THE TRANSACTION BELOW (#2269). Refusing there
   // still means no payment row either: an operator who mis-keyed the Apply box
@@ -744,6 +750,8 @@ export async function recordPaymentHandler(
         tipCents = resolved.tipCents;
         appliedCents = resolved.appliedCents;
         money = moneyOf();
+        // #1975: the fee against the amount this transaction resolved.
+        refuseFeeOverAmount(feeCents, amountCents);
       }
       const plan = planApply({
         invoice,
@@ -1482,6 +1490,21 @@ async function twoStepAppliedCents(args: {
 
 /** The `details.code` of a payment linked to an invoice of another household. */
 export const LINK_WRONG_HOUSEHOLD_CODE = 'link_wrong_household';
+/** #1975: the refusal code for a processor fee larger than the payment. */
+export const FEE_EXCEEDS_AMOUNT_CODE = 'fee_exceeds_amount';
+/**
+ * #1975: refuses a processor fee larger than the payment it came out of. A
+ * keying slip (the payment typed into the fee box), refused before anything
+ * is written, like a tip larger than the payment.
+ */
+function refuseFeeOverAmount(feeCents: number, amountCents: number): void {
+  if (feeCents <= amountCents) return;
+  throw new HttpsError(
+    'invalid-argument',
+    `A fee of ${dollars(feeCents)} is more than the ${dollars(amountCents)} payment it came out of. Check the fee.`,
+    { code: FEE_EXCEEDS_AMOUNT_CODE },
+  );
+}
 /**
  * Refuses a payment whose linked invoice belongs to a different household.
  *

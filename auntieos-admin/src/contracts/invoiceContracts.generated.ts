@@ -25,6 +25,7 @@ export interface InvoiceLineItemDto {
   amountCents: number | null;
   qty: number | null;
   unitCents: number | null;
+  discountCents: number | null;
 }
 
 /**
@@ -80,6 +81,8 @@ export interface InvoiceDto {
   creditRedeemedAtMs: number | null;
   writtenOffCents: number | null;
   lineItems?: InvoiceLineItemDto[];
+  subtotalCents: number | null;
+  invoiceDiscountCents: number | null;
   payMethods: InvoiceDtoPayMethod[];
   payBlockedReason: string | null;
   payments: InvoiceDtoPayment[];

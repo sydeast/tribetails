@@ -335,3 +335,47 @@ export function paymentOverApplied(money: PaymentMoney): boolean {
 export function paymentReconciles(input: { tipCents: number; tipBasis: TipBasis }): boolean {
   return Math.round(finite(input.tipCents)) === 0 || input.tipBasis === 'gross';
 }
+
+/**
+ * #1971: WHICH INVOICE A ROOT `payments` ROW WAS APPLIED TO, as the admin
+ * Payment history shows it ("Applied to #n").
+ *
+ * The stored `appliedInvoiceId` is the answer when it is there. It is blank on
+ * two kinds of row that DID pay their invoice:
+ *
+ *   - the second call of the old two-step Record payment (`markInvoicePaid`,
+ *     then `recordPayment` with `settledByInvoicePaymentId`). That call moved
+ *     no balance itself, so it stored `appliedInvoiceId: ''`, but it copied the
+ *     applied amount off the invoice's own payment row into `appliedCents`;
+ *   - the row `settlementLedgerSweep` writes for a settlement whose ledger row
+ *     never landed, which has the same shape.
+ *
+ * Both name their invoice in `invoiceId`, and the applied amount on them came
+ * off that invoice's balance (the two-step call reads it from
+ * `invoices/{invoiceId}/payments`). So a row with a blank stored
+ * `appliedInvoiceId` and money applied is read as applied to the invoice it
+ * names. Before this the Payment history said "not applied" on those rows,
+ * and amount = applied + tip + balance did not hold on screen.
+ *
+ * A row that applied nothing stays blank, which is "not applied": a card
+ * payment held for a decision, a payment that touched no balance. Nothing here
+ * writes; the stored row is left as it is.
+ */
+export function ledgerAppliedInvoiceOf(
+  raw: Record<string, unknown>,
+  appliedCents: number,
+): { appliedInvoiceId: string; appliedInvoiceNumber: string } {
+  const stored = ledgerText(raw['appliedInvoiceId']);
+  if (stored !== '') {
+    return { appliedInvoiceId: stored, appliedInvoiceNumber: ledgerText(raw['appliedInvoiceNumber']) };
+  }
+  const linked = ledgerText(raw['invoiceId']);
+  if (appliedCents > 0 && linked !== '') {
+    return { appliedInvoiceId: linked, appliedInvoiceNumber: ledgerText(raw['invoiceNumber']) };
+  }
+  return { appliedInvoiceId: '', appliedInvoiceNumber: '' };
+}
+
+function ledgerText(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}

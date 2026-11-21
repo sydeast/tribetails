@@ -129,6 +129,13 @@ export const InvoiceLineItemDtoSchema = z
     /** Stored lines only, so a household sees 3 x $20 rather than an unexplained $60. */
     qty: z.number().positive().nullable(),
     unitCents: CentsSchema.nullable(),
+    /**
+     * #1974: what was taken off this line, already subtracted in `amountCents`,
+     * so the household sees "includes $50.00 off" beside 2 x $600.00 at
+     * $1,150.00. 0 on a stored line with none; null on a row rebuilt from a
+     * visit, which carries no discount.
+     */
+    discountCents: CentsSchema.nullable(),
   })
   .strict();
 
@@ -306,6 +313,20 @@ export const InvoiceDtoSchema = z
      * has lines. The portal's mirror types it `lineItems?:` to match.
      */
     lineItems: z.array(InvoiceLineItemDtoSchema).optional(),
+    /**
+     * #1974: the sum of this invoice's own lines, in cents, before the invoice
+     * discount. Null on an invoice with no stored lines, which has no subtotal
+     * to state. Summed from the lines the household is shown, the rule the PDF
+     * prints by (`lib/invoicePdf.ts`), so the table adds up to it.
+     */
+    subtotalCents: SignedCentsSchema.nullable(),
+    /**
+     * #1974: the invoice-level discount, in cents, taken off the subtotal. 0
+     * when there is none; null on an invoice with no stored lines, whose only
+     * discount is the free-text `discount` above. Subtotal less this is the
+     * total on an invoice the office built from lines.
+     */
+    invoiceDiscountCents: CentsSchema.nullable(),
     /**
      * How this invoice can be paid, resolved for THIS bill (issue #409).
      * See `PayMethodDtoSchema`.
@@ -678,6 +699,8 @@ export async function getMyInvoicesHandler(
       ...(storedLines.length > 0
         ? { lineItems: storedLines.map((li, index) => mapStoredLineItem(li, index, null, serviceCatalog)) }
         : {}),
+      // #1974: the figures that make the lines add up to the total.
+      ...invoiceDiscountFigures(storedLines, data['invoiceDiscountCents']),
     };
   });
 
@@ -963,6 +986,7 @@ export function mapSessionToLineItem(
     amountCents,
     qty: null,
     unitCents: null,
+    discountCents: null,
   };
 }
 
@@ -1057,7 +1081,32 @@ export function mapStoredLineItem(
     amountCents: Math.round(li.qty * li.unitCents) - li.discountCents,
     qty: li.qty,
     unitCents: li.unitCents,
+    discountCents: li.discountCents,
   };
+}
+
+/**
+ * #1974: the subtotal and invoice discount the household is shown under the
+ * invoice's own lines, so lines, subtotal, discount and total add up on screen
+ * as they do on the PDF. Both null for an invoice with no stored lines.
+ *
+ * The subtotal is summed from the lines exactly as `mapStoredLineItem` prices
+ * them, never read from the stored `subtotalCents`, which can disagree with the
+ * lines (see `lib/invoicePdf.ts`). The discount is the stored integer cents,
+ * and anything else on the doc reads as none rather than a guess.
+ */
+export function invoiceDiscountFigures(
+  storedLines: readonly StoredLineItem[],
+  rawInvoiceDiscountCents: unknown,
+): { subtotalCents: number | null; invoiceDiscountCents: number | null } {
+  if (storedLines.length === 0) return { subtotalCents: null, invoiceDiscountCents: null };
+  const subtotalCents = storedLines.reduce(
+    (sum, li) => sum + Math.round(li.qty * li.unitCents) - li.discountCents,
+    0,
+  );
+  const raw = numericOrNull(rawInvoiceDiscountCents);
+  const invoiceDiscountCents = raw !== null && Number.isInteger(raw) && raw > 0 ? raw : 0;
+  return { subtotalCents, invoiceDiscountCents };
 }
 
 function numericOrNull(v: unknown): number | null {
