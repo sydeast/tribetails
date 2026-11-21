@@ -147,6 +147,8 @@ fun TemplateBankBody(
     var categories by remember { mutableStateOf<List<String>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    // A refused save of the open editor, shown on the editor itself (#2251).
+    var editorError by remember { mutableStateOf<String?>(null) }
     // 1025: a landed save used to close the editor and reload with nothing
     // confirming which template was saved, the same gap admin web (React) and
     // Android's #1013/#1024 closed for kin/kinfolk. The bank itself, not the
@@ -426,8 +428,10 @@ fun TemplateBankBody(
             categories = categories,
             // Operator-supplied keys already taken (create mode collision guard).
             existingKeys = templates.map { it.templateId },
-            onDismiss = { editing = null; creating = false },
+            saveError = editorError,
+            onDismiss = { editing = null; creating = false; editorError = null },
             onSave = { updated ->
+                editorError = null
                 scope.launch {
                     when (val r = templateService.saveTemplate(updated)) {
                         is WriteResult.Ok -> {
@@ -436,7 +440,7 @@ fun TemplateBankBody(
                             notice = templateSavedNotice(updated.title)
                             reload()
                         }
-                        is WriteResult.Err -> error = r.message
+                        is WriteResult.Err -> editorError = r.message
                     }
                 }
             },
@@ -737,6 +741,7 @@ private fun TemplateEditorOverlay(
     templateService: TemplateService,
     categories: List<String>,
     existingKeys: List<String>,
+    saveError: String?,
     onDismiss: () -> Unit,
     onSave: (TemplateService.EmailTemplate) -> Unit,
 ) {
@@ -758,7 +763,11 @@ private fun TemplateEditorOverlay(
     val keyTaken = creating && templateId.trim() in existingKeys
     val keyValid = !creating || (templateId.isNotBlank() && !keyTaken)
     val mode = remember(template.templateId, creating) { templateEditMode(template, creating) }
-    val canSave = when (mode) {
+    // #2251: a subject or body the sender could not fill in says so beside
+    // its field, and Save stays off until it is fixed.
+    val subjectMarkup = templateMarkupError("The subject", subject)
+    val bodyMarkup = if (mode == TemplateEditMode.FULL) templateMarkupError("The body", bodyValue.text) else null
+    val canSave = subjectMarkup == null && bodyMarkup == null && when (mode) {
         TemplateEditMode.READ_ONLY -> false
         TemplateEditMode.SUBJECT_ONLY -> subject.isNotBlank() && keyValid
         TemplateEditMode.FULL -> subject.isNotBlank() && bodyValue.text.isNotBlank() && keyValid
@@ -793,6 +802,17 @@ private fun TemplateEditorOverlay(
             }
         },
     ) {
+        // #2251: the server's refusal of this save, shown on the dialog the
+        // operator is looking at rather than on the page under it.
+        saveError?.let { msg ->
+            AuntieBanner(
+                tone = AuntieBannerTone.Error,
+                title = "Couldn't save",
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            ) {
+                Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        }
         if (keyTaken) {
             AuntieBanner(
                 tone = AuntieBannerTone.Warning,
@@ -868,7 +888,7 @@ private fun TemplateEditorOverlay(
                     enabled = mode != TemplateEditMode.READ_ONLY,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                requiredFieldHint("Subject", subject, subjectTouched)?.let {
+                (requiredFieldHint("Subject", subject, subjectTouched) ?: subjectMarkup)?.let {
                     Text(it, style = AuntieTheme.typography.bodySmall, color = c.error)
                 }
                 // FULL keeps the markdown toolbar + body field, unchanged.
@@ -901,6 +921,9 @@ private fun TemplateEditorOverlay(
                             minLines = 6,
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        bodyMarkup?.let {
+                            Text(it, style = AuntieTheme.typography.bodySmall, color = c.error)
+                        }
                     }
                     TemplateEditMode.SUBJECT_ONLY -> {
                         Text(template.body, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)

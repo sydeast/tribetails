@@ -30,7 +30,7 @@
  * Every complaint is a sentence for the operator, keyed by the field it
  * belongs to, because the three clients draw it beside that field.
  */
-import Handlebars from 'handlebars';
+import { scanTemplate } from './templateValidation';
 import { NOTIFICATION_CATALOG } from '../notifications/catalog';
 import { TEMPLATE_FIELDS } from '../notifications/enrichTemplateData';
 import type { NotificationDef } from '../notifications/types';
@@ -100,76 +100,13 @@ function supportForDef(def: NotificationDef | null): ChannelSupport {
   return { def, smsId: idFor('sms'), pushId: idFor('push'), fields };
 }
 
-/** The block helpers the seed corpus uses and Handlebars ships. Anything else throws at send. */
-const BLOCK_HELPERS = new Set(['if', 'unless', 'each', 'with']);
-
-interface FieldScan {
-  /** Context fields the wording asks for, in order of first appearance. */
-  fields: string[];
-  /** A sentence when the wording cannot be sent as written, otherwise null. */
-  problem: string | null;
-}
-
-const NOT_CLOSED =
-  'A field is not written correctly. Each field needs two curly brackets on both sides, like {{kinName}}.';
-const THREE_BRACKETS = 'Use two curly brackets around a field, like {{kinName}}, not three.';
-
 /**
  * Reads the fields out of one piece of wording by parsing it the way the
- * sender will, so "it saved" and "it sends" cannot disagree.
- *
- * Names inside an `each` or `with` block belong to the item being walked, not
- * to the notification, so they are not checked: only the block's own subject
- * is. That is the same line `enrichTemplateData.test.ts` draws for the corpus.
+ * sender will, so "it saved" and "it sends" cannot disagree. The scan itself
+ * lives in `templateValidation.ts` (#2251), where the email door and the
+ * importer run it too.
  */
-export function scanFields(text: string): FieldScan {
-  let ast: hbs.AST.Program;
-  try {
-    ast = Handlebars.parse(text);
-  } catch {
-    return { fields: [], problem: NOT_CLOSED };
-  }
-  const fields: string[] = [];
-  let problem: string | null = null;
-  const note = (name: string) => {
-    if (!fields.includes(name)) fields.push(name);
-  };
-  const pathName = (node: hbs.AST.Expression | undefined): string | null =>
-    node && node.type === 'PathExpression' ? (node as hbs.AST.PathExpression).original : null;
-
-  const walk = (program: hbs.AST.Program | undefined, local: boolean): void => {
-    if (!program) return;
-    for (const raw of program.body) {
-      if (raw.type === 'MustacheStatement') {
-        const node = raw as hbs.AST.MustacheStatement;
-        if (!node.escaped) problem ??= THREE_BRACKETS;
-        const name = pathName(node.path);
-        if (name === null || node.params.length > 0 || node.hash) {
-          problem ??= NOT_CLOSED;
-          continue;
-        }
-        if (!local && name !== 'this' && !name.startsWith('this.') && !name.startsWith('@')) note(name);
-      } else if (raw.type === 'BlockStatement') {
-        const node = raw as hbs.AST.BlockStatement;
-        const helper = pathName(node.path);
-        const subject = pathName(node.params[0]);
-        if (helper === null || !BLOCK_HELPERS.has(helper) || subject === null || node.params.length !== 1) {
-          problem ??= `{{#${helper ?? ''}}} is not something a notification can use here.`;
-          continue;
-        }
-        if (!local && subject !== 'this' && !subject.startsWith('this.') && !subject.startsWith('@')) note(subject);
-        const inner = local || helper === 'each' || helper === 'with';
-        walk(node.program, inner);
-        walk(node.inverse, inner);
-      } else if (raw.type !== 'ContentStatement' && raw.type !== 'CommentStatement') {
-        // Partials and decorators: nothing registers one, so the send would throw.
-        problem ??= NOT_CLOSED;
-      }
-    }
-  };
-  walk(ast, false);
-  return { fields, problem };
-}
+export const scanFields = scanTemplate;
 
 /** `{{a}}, {{b}} and {{c}}`, for the sentence that lists what can be used. */
 function fieldList(fields: readonly string[]): string {

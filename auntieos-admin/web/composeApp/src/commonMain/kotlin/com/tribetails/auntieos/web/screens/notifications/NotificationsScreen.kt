@@ -112,12 +112,15 @@ fun NotificationsScreen(
     onOpenUnappliedPayment: (kinfolkId: String, paymentId: String?) -> Unit = { _, _ -> },
     // #2028: a "Kinfolk requested a KinCare visit" row opens its request on Bookings.
     onOpenVisitRequest: (kinfolkId: String, batchId: String) -> Unit = { _, _ -> },
+    // #2121: a "Kinfolk asked to remove a Kin" row opens that request on Bookings.
+    onOpenKinRemoval: (requestId: String) -> Unit = {},
     client: FirestoreClient = remember { FirestoreClient() },
 ) {
     val openEntry: (NotificationEntry) -> Unit = { entry ->
         when (val r = notificationOpenRoute(entry)) {
             is NotificationOpenRoute.UnappliedPayment -> onOpenUnappliedPayment(r.kinfolkId, r.paymentId)
             is NotificationOpenRoute.VisitRequest -> onOpenVisitRequest(r.kinfolkId, r.batchId)
+            is NotificationOpenRoute.KinRemoval -> onOpenKinRemoval(r.requestId)
             is NotificationOpenRoute.Target -> onOpenTarget(r.targetType, r.targetId)
             // #2367: a malformed booking id; the row offers no Open for it.
             NotificationOpenRoute.None -> Unit
