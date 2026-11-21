@@ -91,21 +91,24 @@ class HouseholdMembersScreenUiTest {
         // name is the tappable one), and the mock's mono line under it.
         assertEquals(2, composeRule.onAllNodesWithText("the Walls").fetchSemanticsNodes().size)
         assertEquals(1, composeRule.onAllNodes(hasText("the Walls") and hasClickAction()).fetchSemanticsNodes().size)
-        composeRule.onNodeWithText("familyId: fam1 · 2 members · 1 PRIMARY, 1 SECONDARY").assertIsDisplayed()
+        // #1844: no field name, no id, no stored key, and the panel's own count.
+        composeRule.onNodeWithText("2 people · 1 primary, 1 secondary").assertIsDisplayed()
+        assertEquals(0, composeRule.onAllNodesWithText("familyId", substring = true).fetchSemanticsNodes().size)
         composeRule.onNodeWithText("THE DEN · DIRECTORY").assertDoesNotExist()
 
         // The panels and their notes, in the mock's order.
-        composeRule.onNodeWithText("Primary contact").assertIsDisplayed()
-        composeRule.onNodeWithText("role: PRIMARY").assertIsDisplayed()
+        // The panel title, and the nameless primary's heading (#1853: never the email).
+        assertEquals(2, composeRule.onAllNodesWithText("Primary contact").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("role:", substring = true).fetchSemanticsNodes().size)
         composeRule.onNodeWithText("Secondary kinfolk").assertIsDisplayed()
-        composeRule.onNodeWithText("1 of role: SECONDARY").assertIsDisplayed()
+        composeRule.onNodeWithText("1 person").assertIsDisplayed()
         composeRule.onNodeWithText("Invites").assertIsDisplayed()
         // The old single Members panel and its "on file" pill are gone.
         assertEquals(0, composeRule.onAllNodesWithText("2 on file").fetchSemanticsNodes().size)
 
         // Each member: the name, the compact role and status capsules, the email
         // (#1589: never the database id). A member with no name is headed by
-        // their email, printed once.
+        // their role in words, with the email on the line under it (#1853).
         composeRule.onNodeWithText("lost@example.com").assertIsDisplayed()
         composeRule.onNodeWithText("Marcus Webb").assertIsDisplayed()
         composeRule.onNodeWithText("marcus@example.com").assertIsDisplayed()
@@ -114,7 +117,7 @@ class HouseholdMembersScreenUiTest {
         assertEquals(2, composeRule.onAllNodesWithText("ACTIVE").fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("u1").fetchSemanticsNodes().size)
         // The secondary's label, read-only, in the mock's shape.
-        composeRule.onNodeWithText("SECONDARYLABEL").assertIsDisplayed()
+        composeRule.onNodeWithText("LABEL").assertIsDisplayed()
         composeRule.onNodeWithText("Spouse").assertIsDisplayed()
     }
 
@@ -186,8 +189,8 @@ class HouseholdMembersScreenUiTest {
             composeRule.onAllNodesWithText("has been invited to the portal as a secondary", substring = true)
                 .fetchSemanticsNodes().size,
         )
-        // The where line stays the id alone: an unread roster has no count.
-        composeRule.onNodeWithText("familyId: fam1").assertIsDisplayed()
+        // An unread roster has no count, and the line never falls back to the id.
+        assertEquals(0, composeRule.onAllNodesWithText("fam1", substring = true).fetchSemanticsNodes().size)
     }
 
     /**
@@ -218,7 +221,7 @@ class HouseholdMembersScreenUiTest {
     @Test
     fun `Q3 Q4 the panel is Secondary kinfolk, offers Add, and lists people with their access state and no invite control`() {
         setContent(
-            members = listOf(member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com")),
+            members = listOf(member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com", name = "Marcus Webb")),
             people = listOf(
                 MembersRepository.SecondaryPerson("p1", "Sam Lee", "+18055550177", null, MembersRepository.PersonAccess.NONE, null),
                 MembersRepository.SecondaryPerson("p2", "Jo Park", null, "jo@example.com", MembersRepository.PersonAccess.INVITED, null),
