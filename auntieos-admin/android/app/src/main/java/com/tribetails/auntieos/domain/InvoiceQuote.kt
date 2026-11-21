@@ -92,6 +92,20 @@ const val WITHDRAW_QUOTE_CONFIRM_COPY: String =
     "This withdraws the quote. The household no longer sees it, and the visits it holds go back on the " +
         "not yet invoiced list. It is kept as cancelled, not deleted."
 
+/**
+ * #2358 (operator ruling 2026-11-20): an invoice with any applied payment is
+ * never cancelled, and withdrawing a quote is how one is cancelled. The same
+ * sentence the server refuses with, on admin web and the desktop console too.
+ */
+const val WITHDRAW_PAID_REASON: String = "A payment is recorded on this quote, so it cannot be withdrawn."
+/**
+ * #2358: why Withdraw quote is held, or null when it is not. Reads the stored
+ * `paidCents` (every applied payment, credit included, moves it). The server
+ * reads the payment rows again and refuses on its own; this only keeps the
+ * button from offering what it would refuse.
+ */
+fun quoteWithdrawHeldReason(invoice: Invoice): String? =
+    if (invoice.paidCents > 0L) WITHDRAW_PAID_REASON else null
 /** The toast once a quote is a draft invoice. */
 const val QUOTE_CONVERTED_MESSAGE: String =
     "Quote turned into a draft invoice. Send it with Review and send when it is ready."

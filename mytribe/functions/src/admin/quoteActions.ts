@@ -13,6 +13,7 @@ import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
 import { INVOICE_STATES } from '../lib/invoiceEditPolicy';
 import { refuseIfArchived } from '../lib/invoiceArchive';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { QUOTE_DRAFT_FIELD, isQuoteDraft, isSentQuote, quoteDecisionOf } from '../lib/quoteDecision';
 import {
   quoteWithdrawn,
@@ -101,7 +102,40 @@ export const WithdrawQuoteResult = z
   .strict();
 
 /** Refusal codes clients branch on. The message is what a person reads. */
-export type QuoteActionCode = 'quote_not_a_quote' | 'quote_accepted_locked';
+export type QuoteActionCode = 'quote_not_a_quote' | 'quote_accepted_locked' | 'quote_has_payment';
+
+/**
+ * #2358 (operator ruling 2026-11-20): AN INVOICE WITH ANY APPLIED PAYMENT
+ * CANNOT BE CANCELLED. Withdrawing a quote is the one path in the codebase that
+ * moves an invoice to `cancelled`, so this is where the rule is held. The same
+ * sentence is shown on admin web, admin Android and the desktop console.
+ */
+export const CANCEL_PAID_REFUSAL_CODE = 'quote_has_payment' as const;
+export const CANCEL_PAID_REFUSAL = 'A payment is recorded on this quote, so it cannot be withdrawn.';
+
+/**
+ * #2358: the cents applied to this invoice, as the server counts them.
+ *
+ * APPLIED means a row in `invoices/{id}/payments`: a recorded payment, a card
+ * payment that landed on the bill, or account credit the admin applied (each
+ * writes a row). A card payment HELD for the owner (`unappliedPaymentIds`, the
+ * #2365 path) is not applied and writes no row, so it does not count. A doc
+ * brought over from the old system with a stored paid figure and no rows
+ * counts by that figure (`paidCents`, else the dollar `amountPaid`), so a
+ * migrated part-paid bill is held the same way. PURE.
+ */
+export function appliedPaymentCentsOf(
+  doc: Record<string, unknown>,
+  rows: readonly PaymentAmount[],
+): number {
+  const fromRows = paidCentsFromPayments(rows);
+  if (fromRows > 0) return fromRows;
+  const stored = doc['paidCents'];
+  if (typeof stored === 'number' && Number.isFinite(stored) && stored > 0) return Math.round(stored);
+  const dollars = doc['amountPaid'];
+  if (typeof dollars === 'number' && Number.isFinite(dollars) && dollars > 0) return Math.round(dollars * 100);
+  return 0;
+}
 
 /**
  * Why this doc is not a quote the office can change, or null when it is one.
@@ -365,6 +399,13 @@ export async function withdrawQuoteHandler(
     refuseIfArchived(data);
     const refusal = quoteActionRefusal(data, 'withdraw');
     if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
+    // #2358: a bill with money applied to it is never cancelled. Read in this
+    // transaction, so a payment committing first is seen and one committing
+    // second re-runs against the cancel and is refused (`refusedLifecycle`).
+    const paymentRows = (await tx.get(ref.collection('payments'))).docs.map((d) => d.data() as PaymentAmount);
+    if (appliedPaymentCentsOf(data, paymentRows) > 0) {
+      throw new HttpsError('failed-precondition', CANCEL_PAID_REFUSAL, { code: CANCEL_PAID_REFUSAL_CODE });
+    }
 
     // Like a decline: every visit the quote holds goes back on the list.
     const visits = await readDeclineRelease(tx, firestore, args.invoiceId, data);
