@@ -283,11 +283,11 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
   },
   {
     key: "kincare.note.auntie",
-    emailSubject: "An Auntie left a note on a visit",
-    emailHeadline: "An Auntie left a note on a visit",
-    emailContent: "<p>Quick one: an Auntie just added a note on {{kinName}}'s visit.</p><p>Have a read so the office stays in the loop.</p><p><a class=\"button\" href=\"{{link}}\">Read the note</a></p>",
-    smsTxt: "{{Business}}: an Auntie added a note on {{kinName}}'s visit.\n",
-    pushTxt: "New visit note. An Auntie left a note on {{kinName}}'s visit. Tap to read.\n",
+    emailSubject: "{{actorName}} left a note on a visit",
+    emailHeadline: "{{actorName}} left a note on a visit",
+    emailContent: "<p>{{actorName}} added a note on {{kinName}}'s visit.</p><p><a class=\"button\" href=\"{{link}}\">Read the note</a></p>",
+    smsTxt: "{{Business}}: {{actorName}} added a note on {{kinName}}'s visit.\n",
+    pushTxt: "New visit note. {{actorName}} left a note on {{kinName}}'s visit. Tap to read.\n",
   },
   {
     key: "kincare.note.kinfolk",

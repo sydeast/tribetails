@@ -254,7 +254,8 @@ export function contentDedupeKey(scope: string, content: unknown): string {
  * prefs suppression can sit for as long as the preference does, and a gate
  * suppression clears the day the operator flips one boolean.
  */
-export type SuppressionReason = 'duplicate' | 'prefs' | 'gate';
+/** #2277: `actor` is the person the notice is about acting, left out by `skipActorCopy`. */
+export type SuppressionReason = 'duplicate' | 'prefs' | 'gate' | 'actor';
 
 export interface Suppression {
   recipientUid: string;
@@ -533,9 +534,27 @@ export async function enqueueNotificationDetailed(
     }
   }
   const seen = new Set<string>();
+  const outcome: EnqueueOutcome = { written: [], suppressed: [], unresolved, appOnly: [], channelsByRecipient: {} };
+  // #2277: the person who did the thing is not told about it (`skipActorCopy`).
+  // Dropped HERE, before the loop, so the one business email (#1564) rides on
+  // the next roster copy instead of on hers. When she was the only recipient
+  // (the owner's own note, with no other admin on the roster) nothing is sent
+  // and nothing is thrown: there was nobody else to tell.
+  const skipUid = args.skipActorCopy === true && typeof args.actorUid === 'string' ? args.actorUid : '';
   const recipients = [...primary, ...secondary].filter((r) => {
     if (seen.has(r.uid)) return false;
     seen.add(r.uid);
+    if (skipUid !== '' && r.uid === skipUid) {
+      logEvent({
+        severity: 'info',
+        function: 'enqueueNotification',
+        event: 'notification.actor.skipped',
+        uid: r.uid,
+        extra: { key: def.key },
+      });
+      outcome.suppressed.push({ recipientUid: r.uid, reason: 'actor' });
+      return false;
+    }
     return true;
   });
 
@@ -543,7 +562,6 @@ export async function enqueueNotificationDetailed(
   // written NotificationEntry can render who caused it with an avatar.
   const actor = await resolveActor(args.actorUid);
 
-  const outcome: EnqueueOutcome = { written: [], suppressed: [], unresolved, appOnly: [], channelsByRecipient: {} };
   /**
    * THE PRE-LAUNCH HOUSEHOLD GATE, read at most once per enqueue and only when
    * a household copy is actually about to be written.
