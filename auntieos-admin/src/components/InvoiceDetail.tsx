@@ -662,7 +662,7 @@ interface InvoiceDetailProps {
  */
 const INVOICE_HEADER_TEXT_LIMITS = {
   kinfolkName: { label: 'Household', max: 200 },
-  client: { label: 'Client', max: 200 },
+  client: { label: 'Kinfolk', max: 200 },
   address: { label: 'Address', max: 500 },
   discount: { label: 'Discount note', max: 200 },
 } as const;
@@ -2359,13 +2359,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 />
               </label>
               <label className="invoice-detail__field">
-                <span className="invoice-detail__field-label">Client</span>
+                <span className="invoice-detail__field-label">Kinfolk</span>
                 <input
                   className="invoice-detail__field-input"
                   value={editing.client}
                   onChange={(e) => setEditing({ ...editing, client: e.target.value })}
                   disabled={busy}
-                  aria-label="Invoice client"
+                  aria-label="Invoice Kinfolk"
                 />
               </label>
               <label className="invoice-detail__field">

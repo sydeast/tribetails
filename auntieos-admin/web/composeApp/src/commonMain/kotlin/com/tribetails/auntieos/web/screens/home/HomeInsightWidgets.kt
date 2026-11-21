@@ -440,7 +440,7 @@ internal fun HolidayRunwayWidget(sessionsState: FirestoreResult<List<KinCareSess
 @Composable
 internal fun UnreadMessagesWidget(state: WriteResult<List<ConversationSummary>>?) {
     DenPanel(
-        title = "Unread client messages",
+        title = "Unread Kinfolk messages",
         subtitle = "Threads waiting on a reply, newest first.",
         modifier = Modifier.fillMaxWidth(),
         hoverLift = true,
