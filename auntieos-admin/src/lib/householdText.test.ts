@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { householdTextPreview, householdTextPreviewLine, MYTRIBE_URL } from './householdText';
+import {
+  householdTextAccountOf,
+  householdTextAsSent,
+  householdTextChannelLine,
+  householdTextPreview,
+  householdTextPreviewLine,
+  householdWholeTextParts,
+  MYTRIBE_URL,
+  SMS_BODY_MAX,
+} from './householdText';
 /**
  * #2408: what a household is texted for an approved Text draft. The expected
  * lines are the server's `householdSms` answers for the same words, so the
@@ -55,5 +64,78 @@ describe('householdTextPreview', () => {
   });
   it('the confirm line names the link without inventing an address', () => {
     expect(householdTextPreviewLine('See you Friday at 9.')).toBe('See you Friday at 9. More in MyTribe: (link)');
+  });
+});
+
+/**
+ * #2316 (operator ruling 2026-11-20): a household with no MyTribe account is
+ * texted the whole message. The vectors are the server's
+ * `householdWholeSms.test.ts`, so the confirm splits where the send splits.
+ */
+describe('householdWholeTextParts', () => {
+  it('one text carries what the server sends in one', () => {
+    expect(SMS_BODY_MAX).toBe(1600);
+  });
+  it('a message that fits is one text, as written, trimmed, with no cut and no link', () => {
+    expect(householdWholeTextParts('  Closed Monday.\nBack Tuesday.  ')).toEqual(['Closed Monday.\nBack Tuesday.']);
+  });
+  it('a long message is split at the end of a word, and nothing is lost', () => {
+    const text = `${'word '.repeat(30)}end`;
+    const parts = householdWholeTextParts(text, 40);
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(40);
+    expect(parts.join(' ')).toBe(text);
+    expect(parts.every((p) => !p.startsWith(' ') && !p.endsWith(' '))).toBe(true);
+  });
+  it('a run with no space near the limit is cut where it fits, never inside a character', () => {
+    const text = `${'a'.repeat(30)}\u{1F415}${'b'.repeat(30)}`;
+    const parts = householdWholeTextParts(text, 31);
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(31);
+    expect(parts.join('')).toBe(text);
+    expect(parts.some((p) => p.includes('\u{1F415}'))).toBe(true);
+  });
+  it('splits at the 1600 limit by default', () => {
+    const text = `${'Nova ran and ran. '.repeat(120)}The end.`;
+    const parts = householdWholeTextParts(text);
+    expect(parts).toHaveLength(2);
+    expect(parts[0]!.length).toBeLessThanOrEqual(1600);
+    expect(parts[0]!.length).toBeGreaterThan(1600 * 0.8);
+    expect(parts.join(' ')).toBe(text);
+  });
+  it('NEGATIVE: a blank message is no text at all', () => {
+    expect(householdWholeTextParts('   ')).toEqual([]);
+  });
+});
+describe('householdTextAccountOf', () => {
+  it('no portal account is the one answer that means the whole message', () => {
+    expect(householdTextAccountOf({ status: 'ready', willNotify: false, reason: 'household_has_no_portal_account' })).toBe(
+      'no_account',
+    );
+  });
+  it('any other answer means they have an account, the notices switch included', () => {
+    expect(householdTextAccountOf({ status: 'ready', willNotify: true, reason: null })).toBe('account');
+    expect(householdTextAccountOf({ status: 'ready', willNotify: false, reason: 'household_notices_off' })).toBe('account');
+  });
+  it('a pending or failed answer is neither', () => {
+    expect(householdTextAccountOf({ status: 'checking' })).toBe('checking');
+    expect(householdTextAccountOf({ status: 'unknown' })).toBe('unknown');
+  });
+});
+describe('householdTextAsSent', () => {
+  const body = 'See you Friday at 9.\nGate code is the usual.';
+  it('with an account: the short line and the link', () => {
+    expect(householdTextAsSent(body, 'account')).toEqual({ kind: 'short', line: householdTextPreviewLine(body) });
+  });
+  it('without one: the whole message, line breaks kept', () => {
+    expect(householdTextAsSent(body, 'no_account')).toEqual({ kind: 'whole', parts: [body] });
+  });
+  it('not known yet, or not known at all: neither', () => {
+    expect(householdTextAsSent(body, 'checking')).toEqual({ kind: 'checking' });
+    expect(householdTextAsSent(body, 'unknown')).toEqual({ kind: 'unknown' });
+  });
+  it('the channel line only says short or whole once it is known', () => {
+    expect(householdTextChannelLine('account')).toBe('Text, kept short, with a link to MyTribe');
+    expect(householdTextChannelLine('no_account')).toBe('Text, the whole message, because they have no MyTribe account');
+    expect(householdTextChannelLine('checking')).toBe('Text');
+    expect(householdTextChannelLine('unknown')).toBe('Text');
   });
 });

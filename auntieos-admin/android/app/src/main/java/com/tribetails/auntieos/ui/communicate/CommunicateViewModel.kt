@@ -6,7 +6,11 @@ import com.tribetails.auntieos.data.admin.ActivityLogEntry
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.mintBroadcastIdempotencyKey
+import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.domain.HouseholdTextAccount
 import com.tribetails.auntieos.domain.RecentSend
+import com.tribetails.auntieos.domain.householdTextAccountOf
+import com.tribetails.auntieos.domain.visitNoticeReachOf
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.isValidEmail
 import com.tribetails.auntieos.util.isValidE164Phone
@@ -107,6 +111,12 @@ internal fun approveSendBlocker(
     return null
 }
 
+/**
+ * #2316: the household a Text draft goes to, the one `sendGeneratedDraft` is
+ * named: the draft's own, else the one chosen. Pure.
+ */
+internal fun textHouseholdId(state: CommunicateUiState): String? =
+    state.kinfolkId?.takeIf { it.isNotBlank() } ?: state.selectedKinfolk?.id?.takeIf { it.isNotBlank() }
 data class CommunicateUiState(
     // Form
     val commType: String = "visit_report",
@@ -148,6 +158,13 @@ data class CommunicateUiState(
     val savedDraftId: String? = null,
     /** #1625: the "send this to the household?" confirm for a Text, Email or Push approve. */
     val approveConfirmOpen: Boolean = false,
+    /**
+     * #2316: whether the household a Text goes to has a MyTribe account, as the
+     * server answers it. With one the text is short with a link; without one it
+     * is the whole message. [textAccountFor] is the household it was asked for.
+     */
+    val textAccount: HouseholdTextAccount = HouseholdTextAccount.Checking,
+    val textAccountFor: String? = null,
     /** #2061: what the push send answered for an approved Push draft, shown under the approve bar. */
     val pushNotice: HouseholdPushNotice? = null,
     /** #2061: a held push being tried again. */
@@ -232,7 +249,17 @@ data class CommunicateUiState(
     val successMessage: String? = null
 )
 
-class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
+class CommunicateViewModel(
+    private val repo: AuntieRepository,
+    /**
+     * #2316: asks the server whether a household has a MyTribe account
+     * (`previewVisitNotification` without a key, the same `resolveKinfolkUid`
+     * the Text send uses). Throws or fails when it cannot say.
+     */
+    private val textAccountOf: suspend (String) -> HouseholdTextAccount = { id ->
+        householdTextAccountOf(visitNoticeReachOf(AuntieOSApp.instance.visitNotifier.preview(id)))
+    },
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CommunicateUiState())
     val uiState: StateFlow<CommunicateUiState> = _uiState.asStateFlow()
@@ -539,6 +566,8 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         // #2061: a Push reaches a household now, so it is confirmed like a Text or Email.
         if (channel != null || isPushType(state.commType)) {
             _uiState.value = state.copy(error = null, approveConfirmOpen = true)
+            // #2316: the confirm shows the text this household gets.
+            if (channel == ExternalChannel.Sms) checkTextAccount(textHouseholdId(state))
             return
         }
         approveDraft()
@@ -591,6 +620,28 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     }
 
     fun cancelApproveConfirm() { _uiState.value = _uiState.value.copy(approveConfirmOpen = false) }
+    /**
+     * #2316: asks again whether [kinfolkId] has a MyTribe account, for the Text
+     * confirm and the live preview. Asked fresh, never kept: a household can
+     * accept its invite between two sends. Shows Checking until the answer
+     * lands and Unknown when the call fails; a late answer for a household no
+     * longer chosen is dropped.
+     */
+    fun checkTextAccount(kinfolkId: String?) {
+        val id = kinfolkId?.takeIf { it.isNotBlank() }
+        _uiState.value = _uiState.value.copy(textAccount = HouseholdTextAccount.Checking, textAccountFor = id)
+        if (id == null) return
+        viewModelScope.launch {
+            val account = try {
+                textAccountOf(id)
+            } catch (t: Throwable) {
+                t.rethrowIfCancellation()
+                AuntieLog.e("Communicate: could not check the household's MyTribe account", t)
+                HouseholdTextAccount.Unknown
+            }
+            if (_uiState.value.textAccountFor == id) _uiState.value = _uiState.value.copy(textAccount = account)
+        }
+    }
 
     /**
      * #1563: open a stored `generated_drafts` doc for review: its type, its
