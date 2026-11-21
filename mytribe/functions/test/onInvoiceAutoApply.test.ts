@@ -65,6 +65,16 @@ describe('collectableForAutoApply: what counts as a bill worth looking at', () =
     }
   });
 
+  it('#2510: does not count a draft or a quote marked only in the older invoiceStatus field', () => {
+    for (const invoiceStatus of ['draft', 'quote', 'cancelled', 'paid', 'written_off']) {
+      expect(collectableForAutoApply({ kinfolkId: 'fam1', invoiceStatus, amountDue: 100 }), invoiceStatus).toBe(false);
+    }
+  });
+  it('#2510: a stored status wins over the older field when the two disagree', () => {
+    expect(collectableForAutoApply({ ...OPEN, invoiceStatus: 'draft' })).toBe(true);
+    expect(collectableForAutoApply({ ...DRAFT, invoiceStatus: 'open' })).toBe(false);
+    expect(collectableForAutoApply({ kinfolkId: 'fam1', invoiceStatus: 'open', amountDue: 100 })).toBe(true);
+  });
   it('does not count an invoice with nothing owed', () => {
     expect(collectableForAutoApply({ ...OPEN, amountDue: 0 })).toBe(false);
   });
