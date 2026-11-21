@@ -304,6 +304,45 @@ describe('saveTemplate: expectNew', () => {
     expect(ctx.writes).toEqual([]);
   });
 
+  // #2084: a section saved with text and no title was dropped while the editor
+  // said Saved. The server refuses it in words and writes nothing.
+  it.each([[''], ['   ']])('SAD: refuses a section whose title is %j, in one plain sentence', async (title) => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const err = await saveTemplateHandler(
+      req({
+        templateId: 'k',
+        subject: 's',
+        body: 'b',
+        sectionDefinitions: [{ title: 'Intro', description: 'x' }, { title, description: 'What this covers' }],
+      }),
+    ).catch((e) => e);
+    expect(err.code).toBe('invalid-argument');
+    expect(err.message).toBe('Every section needs a title. Give the untitled section a title, or remove it.');
+    expect(ctx.writes).toEqual([]);
+  });
+  // Review of #2084: a client that does not edit sections (Android, the desktop
+  // console) leaves them out, so an old stored untitled section never blocks
+  // its save, and the stored sections are left as they were.
+  it('HAPPY: an old template with an untitled section still saves when the sections are not sent', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'emailTemplates/k': { subject: 'old', body: 'old', sectionDefinitions: [{ title: '', description: 'Old notes' }] },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveTemplateHandler(req({ templateId: 'k', subject: 'New subject', body: 'b' }));
+    const write = ctx.writes.find((w) => w.path === 'emailTemplates/k');
+    expect(write?.data.subject).toBe('New subject');
+    expect(write?.data).not.toHaveProperty('sectionDefinitions');
+  });
+  it('HAPPY: titled sections are stored as sent', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const sections = [{ title: 'Intro', description: '' }, { title: 'Close', description: 'Sign-off' }];
+    await saveTemplateHandler(req({ templateId: 'k', subject: 's', body: 'b', sectionDefinitions: sections }));
+    expect(ctx.writes.find((w) => w.path === 'emailTemplates/k')?.data.sectionDefinitions).toEqual(sections);
+  });
   // #2251: a template the sender cannot fill in used to save, and then every
   // send of that notice threw and the household heard nothing.
   describe('markup the sender cannot fill in (#2251)', () => {
