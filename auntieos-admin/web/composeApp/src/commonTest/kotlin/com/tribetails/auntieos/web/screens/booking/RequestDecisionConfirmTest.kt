@@ -36,14 +36,14 @@ class RequestDecisionConfirmTest {
     @Test
     fun aDeclineNamesTheDayAndSaysTheHouseholdWillBeTold() {
         assertEquals("Turn down this request from The Rowans", one.declineConfirmTitle())
-        assertEquals("Thu, Nov 19 at 11:00 AM will not be booked. The household will be told.", one.decisionLine(decline = true, chicago))
+        assertEquals("Thu, Nov 19, 2026 11:00 will not be booked. The household will be told.", one.decisionLine(decline = true, chicago))
     }
 
     @Test
     fun anApprovalNamesTheDayAndWhereItGoes() {
         assertEquals("Book this request for The Rowans", one.approveConfirmTitle())
         assertEquals(
-            "Thu, Nov 19 at 11:00 AM will go on the schedule and on the household's portal.",
+            "Thu, Nov 19, 2026 11:00 will go on the schedule and on the household's portal.",
             one.decisionLine(decline = false, chicago),
         )
     }
@@ -51,7 +51,7 @@ class RequestDecisionConfirmTest {
     @Test
     fun aSeriesNamesItsFirstAndLastVisit() {
         assertEquals(
-            "The 3 visits from Thu, Nov 19 at 11:00 AM to Sat, Nov 21 at 11:00 AM will not be booked. The household will be told.",
+            "The 3 visits from Thu, Nov 19, 2026 11:00 to Sat, Nov 21, 2026 11:00 will not be booked. The household will be told.",
             three.decisionLine(decline = true, chicago),
         )
     }

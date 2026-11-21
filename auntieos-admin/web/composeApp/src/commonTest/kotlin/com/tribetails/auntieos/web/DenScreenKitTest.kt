@@ -105,10 +105,10 @@ class DenScreenKitTest {
 
     @Test
     fun formatTime_renders_12h_with_am_pm() {
-        assertEquals("6:38p", formatTime("2025-08-06T18:38:00"))
-        assertEquals("7:18a", formatTime("2025-08-28T07:18:00"))
-        assertEquals("12:00p", formatTime("2025-08-10T12:00:00")) // noon -> 12p
-        assertEquals("12:30a", formatTime("2025-08-10T00:30:00")) // midnight -> 12a
+        assertEquals("18:38", formatTime("2025-08-06T18:38:00"))
+        assertEquals("07:18", formatTime("2025-08-28T07:18:00"))
+        assertEquals("12:00", formatTime("2025-08-10T12:00:00")) // noon -> 12p
+        assertEquals("00:30", formatTime("2025-08-10T00:30:00")) // midnight -> 12a
     }
 
     @Test

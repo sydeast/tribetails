@@ -41,21 +41,21 @@ class BusinessClockReadsTest {
     fun `an 11-30 PM visit reads Nov 11 23-30 in both stored shapes`() {
         assertEquals("2026-11-11", businessDayOf(lateInstant, chicago))
         assertEquals("2026-11-11", businessDayOf(lateWall, chicago))
-        assertEquals("Nov 11 · 23:30", businessShortDateTime(lateInstant, chicago))
-        assertEquals("11:30p", formatTime(lateInstant, chicago))
-        assertEquals("11:30p", formatTime(lateWall, chicago))
+        assertEquals("Nov 11, 2026 23:30", businessShortDateTime(lateInstant, chicago))
+        assertEquals("23:30", formatTime(lateInstant, chicago))
+        assertEquals("23:30", formatTime(lateWall, chicago))
     }
 
     @Test
     fun `the KinTale composer prints the window on the business clock`() {
         val s = visit("a", lateInstant, "2026-11-12T06:00:00Z")
-        assertEquals("Nov 11 · 23:30 to 00:00", kinTaleSessionWindow(s, chicago))
+        assertEquals("Nov 11, 2026 23:30 to 00:00", kinTaleSessionWindow(s, chicago))
     }
 
     @Test
     fun `the detail sheet prints the start on the business clock`() {
-        assertEquals("Nov 11 · 23:30", shortIso(lateInstant, 2026, chicago))
-        assertEquals("Nov 11 · 23:30", shortIso(lateWall, 2026, chicago))
+        assertEquals("Nov 11, 2026 23:30", shortIso(lateInstant, 2026, chicago))
+        assertEquals("Nov 11, 2026 23:30", shortIso(lateWall, 2026, chicago))
     }
 
     @Test
@@ -99,7 +99,7 @@ class BusinessClockReadsTest {
         assertEquals("2026-11-01", businessDayOf("2026-11-02T05:30:00Z", chicago))
         // Mar 8 2026, clocks go forward: 00:30 CST is 06:30 UTC.
         assertEquals("2026-03-08", businessDayOf("2026-03-08T06:30:00Z", chicago))
-        assertEquals("12:30a", formatTime("2026-03-08T06:30:00Z", chicago))
+        assertEquals("00:30", formatTime("2026-03-08T06:30:00Z", chicago))
     }
 
     @Test

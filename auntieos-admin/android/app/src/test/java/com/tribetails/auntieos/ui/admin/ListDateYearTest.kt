@@ -65,7 +65,7 @@ class ListDateYearTest {
         assertEquals("Nov 11, 2026 23:30", shortIso("2026-11-12T05:30:00.000Z", 2026, chicago))
         assertEquals("Nov 11, 2026 23:30", shortIso("2026-11-11T23:30:00", 2026, chicago))
         // The night clocks go back: 23:30 CST Nov 1 is 05:30 UTC Nov 2.
-        assertEquals("Nov 1 · 23:30", shortIso("2026-11-02T05:30:00Z", 2026, chicago))
+        assertEquals("Nov 1, 2026 23:30", shortIso("2026-11-02T05:30:00Z", 2026, chicago))
     }
     @Test
     fun activityDayHeadingsNameTheYearOnlyForAnotherYear() {

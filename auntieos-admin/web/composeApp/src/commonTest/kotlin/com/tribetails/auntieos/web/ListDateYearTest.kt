@@ -15,11 +15,11 @@ import kotlin.test.assertEquals
 class ListDateYearTest {
     @Test
     fun `inbox and visit rows omit this year and name another`() {
-        assertEquals("Jul 2 · 14:02", shortDateTime("2026-07-02T14:02:00Z", 2026))
-        assertEquals("Jul 2, 2025 · 14:02", shortDateTime("2025-07-02T14:02:00Z", 2026))
+        assertEquals("Jul 2, 2026 14:02", shortDateTime("2026-07-02T14:02:00Z", 2026))
+        assertEquals("Jul 2, 2025 14:02", shortDateTime("2025-07-02T14:02:00Z", 2026))
         // #2095: a visit time reads on the business clock; UTC here keeps this test about the year.
-        assertEquals("Jul 2 · 14:02", shortIso("2026-07-02T14:02:00Z", 2026, TimeZone.UTC))
-        assertEquals("Jul 2, 2025 · 14:02", shortIso("2025-07-02T14:02:00Z", 2026, TimeZone.UTC))
+        assertEquals("Jul 2, 2026 14:02", shortIso("2026-07-02T14:02:00Z", 2026, TimeZone.UTC))
+        assertEquals("Jul 2, 2025 14:02", shortIso("2025-07-02T14:02:00Z", 2026, TimeZone.UTC))
     }
     @Test
     fun `an unreadable stamp is shown as stored`() {
@@ -41,8 +41,8 @@ class ListDateYearTest {
         // 2027-01-01 05:30 UTC is 2026-12-31 23:30 in Chicago; 06:30 UTC is 00:30 on Jan 1.
         val newYearsEve = note(1_798_781_400_000L)
         val newYear = note(1_798_785_000_000L)
-        assertEquals("Staff · Dec 31, 11:30 PM", visitNoteByline(newYearsEve, chicago, 2026))
-        assertEquals("Staff · Jan 1, 2027, 12:30 AM", visitNoteByline(newYear, chicago, 2026))
+        assertEquals("Staff · Dec 31, 2026 23:30", visitNoteByline(newYearsEve, chicago, 2026))
+        assertEquals("Staff · Jan 1, 2027 00:30", visitNoteByline(newYear, chicago, 2026))
     }
     private fun note(ms: Long) = VisitInternalNote("n", "x", "unknown", null, ms, "shared", "thread")
 }

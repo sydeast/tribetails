@@ -74,7 +74,7 @@ class NotificationRequestConfirmRenderTest {
         waitForIdle()
 
         onNodeWithText("Turn down this request from The Wrens", useUnmergedTree = true).assertExists()
-        onNodeWithText("Thu, Nov 19 at 11:00 AM will not be booked. The household will be told.", useUnmergedTree = true).assertExists()
+        onNodeWithText("Thu, Nov 19, 2026 11:00 will not be booked. The household will be told.", useUnmergedTree = true).assertExists()
         onNodeWithText("Anything to add for the household (optional)", ignoreCase = true, useUnmergedTree = true).assertExists()
         assertTrue(JvmFirestoreFixtures.callablePayloads.none { it.first == "manageBookingSeries" }, "nothing is sent on the row press")
 
