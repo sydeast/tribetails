@@ -1369,7 +1369,15 @@ class InvoiceDetailViewModel(
         viewModelScope.launch {
             invoiceRepository.updateInvoice(invoice.id, patch)
                 .onSuccess {
+                    // #1871: the saved invoice is read back BEFORE "Invoice
+                    // updated." shows, so the toast never sits over the old
+                    // quantity and total. A failed re-read keeps the old copy,
+                    // still confirms the save, and is logged.
+                    val refreshed = invoiceRepository.getInvoiceById(invoice.id)
+                        .onFailure { AuntieLog.e("Re-read after edit failed for invoice ${invoice.id}", it) }
+                        .getOrNull()
                     _uiState.value = _uiState.value.copy(
+                        invoice = refreshed ?: _uiState.value.invoice,
                         savingInvoiceEdit = false,
                         invoiceEdit = null,
                         invoiceEditError = null,
@@ -1377,7 +1385,6 @@ class InvoiceDetailViewModel(
                         toastVisible = true,
                         toastIsError = false,
                     )
-                    reloadInvoiceQuietly(invoice.id)
                     loadPaymentsForInvoice(invoice.id)
                 }
                 .onFailure { err ->

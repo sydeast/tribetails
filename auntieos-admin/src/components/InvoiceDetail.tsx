@@ -652,6 +652,11 @@ interface InvoiceDetailProps {
    * plain action list.
    */
   initialAction?: InvoiceAction;
+  /**
+   * #1871: awaited after a saved edit and before "Invoice updated." shows, so
+   * the parent can put the saved figures in `invoice` first. Never throws.
+   */
+  onEdited?: () => Promise<void>;
   onClose: () => void;
 }
 
@@ -940,7 +945,7 @@ export function writeOffNoticeText(writtenOffCents: number): string {
  * unlike FormSchemas' one-shot load(): the invoices collection is already a
  * live subscription, not a one-shot fetch.
  */
-export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetailProps) {
+export function InvoiceDetail({ invoice, initialAction, onEdited, onClose }: InvoiceDetailProps) {
   // Seeded ONCE, from the mount. A row's quick action opens this panel, so the
   // arming happens at open; re-deriving it from the prop on every render would
   // re-open the confirm step the moment the operator cancelled out of it.
@@ -1417,6 +1422,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     setEditError(null);
     try {
       await updateInvoice(invoice._id, patch);
+      // #1871: the new figures first, then the word that the save is done.
+      await onEdited?.().catch(() => undefined);
       setBusy(false);
       setEditing(null);
       setNoticeIncomplete(false);

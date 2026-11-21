@@ -1,5 +1,5 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   invoiceDispute,
   invoiceMatchesSearch,
@@ -30,6 +30,7 @@ import {
   unstampedStateInfo,
 } from '../lib/invoiceFormat';
 import { useDocById } from '../lib/firestore';
+import { readInvoiceFromServer } from '../api/invoiceServerRead';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
@@ -222,6 +223,41 @@ function newestFirst(views: RowView[]): RowView[] {
     }
     return made(b) - made(a);
   });
+}
+
+/** A Firestore stamp in ms: a Timestamp, its `{ seconds, nanoseconds }` shape, or an ISO string. Null when unreadable. */
+function stampMs(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? null : ms;
+  }
+  if (typeof value === 'object') {
+    const v = value as { toMillis?: unknown; seconds?: unknown; nanoseconds?: unknown };
+    if (typeof v.toMillis === 'function') return (v.toMillis as () => number)();
+    if (typeof v.seconds === 'number') {
+      return v.seconds * 1000 + (typeof v.nanoseconds === 'number' ? Math.floor(v.nanoseconds / 1e6) : 0);
+    }
+  }
+  return null;
+}
+/**
+ * #1871: which of the listener's copy and the copy read from the server after
+ * an edit is the newer. The listener wins once its `updatedAt` reaches the saved
+ * copy's, so a later write (a payment, a send) still shows; until then the saved
+ * copy stands in, because the listener can trail the save by many seconds.
+ */
+export function fresherInvoice(
+  live: InvoiceEntry | undefined,
+  saved: InvoiceEntry | undefined,
+): InvoiceEntry | undefined {
+  if (saved === undefined) return live;
+  if (live === undefined) return saved;
+  const liveAt = stampMs((live as unknown as { updatedAt?: unknown }).updatedAt);
+  const savedAt = stampMs((saved as unknown as { updatedAt?: unknown }).updatedAt);
+  if (savedAt === null) return live;
+  if (liveAt !== null && liveAt >= savedAt) return live;
+  return saved;
 }
 
 /**
@@ -441,7 +477,19 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
     liveSelected.data._id === selectedId
       ? liveSelected.data
       : undefined;
-  const selectedRaw = liveRow ?? selectedRow ?? deepLinkedRow;
+  // #1871: THE SAVED COPY. After an edit the sheet reads the invoice from the
+  // server and holds that copy until the listener has caught up with it, so the
+  // sheet and its row show the new figures as soon as the save is confirmed.
+  const [savedCopy, setSavedCopy] = useState<InvoiceEntry | null>(null);
+  const savedRow =
+    savedCopy !== null && savedCopy._id === selectedId ? savedCopy : undefined;
+  const currentRow = fresherInvoice(liveRow, savedRow);
+  const refreshAfterEdit = useCallback(async () => {
+    if (selectedId === null) return;
+    const fetched = await readInvoiceFromServer(selectedId);
+    if (fetched !== null) setSavedCopy(fetched);
+  }, [selectedId]);
+  const selectedRaw = currentRow ?? selectedRow ?? deepLinkedRow;
   const selected = selectedRaw === undefined ? undefined : normalizeInvoice(selectedRaw);
   // #1569: THE LIST FOLLOWS WHAT THE SHEET CHANGES. The page is a one-shot read,
   // so an edit made in the open sheet ($43.00 to $78.50 on the walk) left the
@@ -455,16 +503,17 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // An untouched sheet closes without a re-read, so the list keeps its loaded
   // pages and its place.
   const [listStale, setListStale] = useState(false);
-  const liveDiffers = liveRow !== undefined && selectedRow !== undefined && !sameDoc(liveRow, selectedRow);
+  const liveDiffers =
+    currentRow !== undefined && selectedRow !== undefined && !sameDoc(currentRow, selectedRow);
   useEffect(() => {
     if (liveDiffers) setListStale(true);
   }, [liveDiffers]);
   const rows = useMemo<typeof pagedRows>(
     () =>
-      liveRow !== undefined && pagedRows.status === 'ready'
-        ? { status: 'ready', data: pagedRows.data.map((r) => (r._id === liveRow._id ? liveRow : r)) }
+      currentRow !== undefined && pagedRows.status === 'ready'
+        ? { status: 'ready', data: pagedRows.data.map((r) => (r._id === currentRow._id ? currentRow : r)) }
         : pagedRows,
-    [pagedRows, liveRow],
+    [pagedRows, currentRow],
   );
 
   // What the link RESOLVED TO, as one of three states the banner below renders.
@@ -842,7 +891,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         <InvoiceDetail
           invoice={selected}
           {...(armedAction ? { initialAction: armedAction } : {})}
+          onEdited={refreshAfterEdit}
           onClose={() => {
+            setSavedCopy(null);
             setSelectedId(null);
             setArmedAction(null);
             setCreatedId(null);
