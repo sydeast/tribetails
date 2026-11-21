@@ -518,6 +518,63 @@ describe('recordPayment: account credit is the amount the admin entered, into th
     expect(ledger[0].data.reason).toBe('From a payment on invoice 1020');
     expect(ledger[0].data.invoiceNumber).toBe('1020');
   });
+  /**
+   * The two-step admin flow: `markInvoicePaid` settled $35.00 on the invoice,
+   * then this call records the $50.00 payment as a display link and keeps
+   * $15.00 of it as credit.
+   */
+  const linkedSeed = (linked: Record<string, unknown>) =>
+    buildDbMock({
+      docs: { 'invoices/inv1': linked, 'invoices/inv1/payments/ipay1': { amountCents: 3500 } },
+      queryDocs: { 'invoices/inv1/payments': [] },
+    });
+  const linkedArgs = {
+    kinfolkId: 'fam1',
+    amount: 50,
+    invoiceId: 'inv1',
+    settledByInvoicePaymentId: 'ipay1',
+    autoApply: true,
+    creditToAccountCents: 1500,
+  };
+  it('#1939: a payment linked (not applied) to a sent invoice still names it in the history line', async () => {
+    const ctx = linkedSeed({ kinfolkId: 'fam1', status: 'paid', total: 35, invoiceNumber: '1030' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(req(linkedArgs));
+    const ledger = ctx.writes.filter((w) => w.path.startsWith('families/fam1/creditLedger/'));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].data.reason).toBe('From a payment on invoice 1030');
+  });
+  it('#1939: an unsent draft, or an invoice with no household, is never named in the household history line', async () => {
+    for (const linked of [
+      { kinfolkId: 'fam1', status: 'draft', total: 35, invoiceNumber: '1030' },
+      { status: 'paid', total: 35, invoiceNumber: '1030' },
+    ]) {
+      const ctx = linkedSeed(linked);
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await recordPaymentHandler(req(linkedArgs));
+      const ledger = ctx.writes.filter((w) => w.path.startsWith('families/fam1/creditLedger/'));
+      expect(ledger, JSON.stringify(linked)).toHaveLength(1);
+      expect(ledger[0].data.reason).toBe('From a payment');
+      expect(ledger[0].data.invoiceNumber).toBe('');
+      // The credit itself is unchanged: the admin typed it.
+      expect(ctx.writes.find((w) => w.path === 'families/fam1')?.data.accountBalanceCents).toEqual({ __increment: 1500 });
+    }
+  });
+  it('#1939: a retry with the same key lists the credit once and raises the balance once', async () => {
+    const ctx = buildDbMock({
+      docs: { 'invoices/inv1': { ...invoice, invoiceNumber: '1020' } },
+      queryDocs: { 'invoices/inv1/payments': [] },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const args = { ...leftoverArgs, autoApply: true, creditToAccountCents: 1500, idempotencyKey: 'pay_1757860000000_abcdef' };
+    const first = await recordPaymentHandler(req(args));
+    const second = await recordPaymentHandler(req(args));
+    expect(second.paymentId).toBe(first.paymentId);
+    const ledger = ctx.writes.filter((w) => w.path.startsWith('families/fam1/creditLedger/'));
+    expect(ledger.map((w) => w.path)).toEqual(['families/fam1/creditLedger/payment_pay_1757860000000_abcdef']);
+    expect(ctx.writes.filter((w) => w.path === 'families/fam1')).toHaveLength(1);
+  });
   it('an explicit zero credits nothing, even with auto-apply ticked', async () => {
     const ctx = seed({ invoice });
     mocks.dbFn.mockReturnValue(ctx.db);
