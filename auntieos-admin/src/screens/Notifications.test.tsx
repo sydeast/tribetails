@@ -182,7 +182,7 @@ describe('Notifications screen', () => {
     render(<Notifications />);
     expect(screen.getByText('2026-07-16')).toBeInTheDocument();
     // #1592: a row with no title reads its key as words, never the key itself.
-    expect(screen.getByText('Kincare booking confirm')).toBeInTheDocument();
+    expect(screen.getByText('KinCare booking confirm')).toBeInTheDocument();
     expect(screen.queryByText('kincare.booking.confirm')).toBeNull();
     // Scoped to the ROW: "Bookings" is also the text of the category filter
     // chip, and an unscoped getByText now matches both. It used to be unique

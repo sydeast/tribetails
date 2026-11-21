@@ -66,7 +66,7 @@ describe('TemplateImport: the plan is shown before anything is written', () => {
     planSeedTemplateImport.mockResolvedValue(report());
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
 
-    expect(await screen.findByText('Kincare reschedule requested')).toBeInTheDocument();
+    expect(await screen.findByText('KinCare reschedule requested')).toBeInTheDocument();
     expect(screen.getByTestId('summary-kincare.reschedule.requested')).toHaveTextContent('New');
     expect(screen.getAllByText('create')).toHaveLength(3);
   });
@@ -104,7 +104,7 @@ describe('TemplateImport: overwriting is a per-template choice', () => {
 
     expect(await screen.findByText(/Some stored templates differ from the built-in copies/)).toBeInTheDocument();
     expect(
-      screen.getByLabelText('Replace the stored copy of Kincare reschedule requested'),
+      screen.getByLabelText('Replace the stored copy of KinCare reschedule requested'),
     ).toBeInTheDocument();
   });
 
@@ -124,7 +124,7 @@ describe('TemplateImport: overwriting is a per-template choice', () => {
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
 
     await userEvent.click(
-      await screen.findByLabelText('Replace the stored copy of Kincare reschedule requested'),
+      await screen.findByLabelText('Replace the stored copy of KinCare reschedule requested'),
     );
     await userEvent.click(screen.getByRole('button', { name: /Import 3 documents/ }));
 
@@ -328,7 +328,7 @@ describe('TemplateImport: tick all (#1060)', () => {
     expect(screen.getByTestId('tick-count')).toHaveTextContent('2 of 2 ticked');
     expect(screen.getByLabelText('Replace the stored copy of Invoice new')).toBeChecked();
     expect(screen.getByLabelText('Replace the stored copy of Visit reminder')).toBeChecked();
-    expect(screen.queryByLabelText('Replace the stored copy of Kincare booking confirm')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Replace the stored copy of KinCare booking confirm')).not.toBeInTheDocument();
     expect(importSeedTemplates).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Untick all' })).toBeInTheDocument();
   });
@@ -426,14 +426,14 @@ describe('TemplateImport: both wordings, before the tick (#1936)', () => {
     expect(compare).toHaveTextContent('Text message');
     expect(compare).toHaveTextContent('Your stored copySorry, we cannot make that visit.');
     expect(compare).toHaveTextContent('Repo copy{{business}}: we cannot make that visit.');
-    const tick = screen.getByLabelText('Replace the stored copy of Kincare request declined');
+    const tick = screen.getByLabelText('Replace the stored copy of KinCare request declined');
     // Document order: the comparison comes before the box it informs.
     expect(compare.compareDocumentPosition(tick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
   it('keeps the comparison on screen once the row is ticked', async () => {
     planSeedTemplateImport.mockResolvedValue(smsDiffers);
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
-    await userEvent.click(await screen.findByLabelText('Replace the stored copy of Kincare request declined'));
+    await userEvent.click(await screen.findByLabelText('Replace the stored copy of KinCare request declined'));
     expect(screen.getByTestId('compare-kincare.request.declined-sms')).toHaveTextContent('Sorry, we cannot make that visit.');
   });
   it('says the wordings could not be shown when the server sent none, never a blank comparison', async () => {
@@ -458,7 +458,7 @@ describe('TemplateImport: both wordings, before the tick (#1936)', () => {
   it('draws nothing to compare on a created or unchanged channel', async () => {
     planSeedTemplateImport.mockResolvedValue(report());
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
-    await screen.findByText('Kincare reschedule requested');
+    await screen.findByText('KinCare reschedule requested');
     expect(screen.queryByTestId(/^compare-/)).toBeNull();
     expect(screen.queryByText(/could not be shown/)).toBeNull();
   });
