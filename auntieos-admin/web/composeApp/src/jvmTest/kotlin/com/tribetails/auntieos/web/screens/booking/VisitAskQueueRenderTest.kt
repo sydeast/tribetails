@@ -41,7 +41,10 @@ class VisitAskQueueRenderTest {
         "title":null,"serviceType":"Drop-in","kinNames":[],"status":"scheduled","startTimeMs":1795636800000,
         "endTimeMs":null,"reason":null,"requestedAtMs":1795100000000}"""
 
+    // The Kin removal queue on Bookings answers empty, so its banners and buttons never stand in for these.
+    private val otherQueuesEmpty = mapOf("listKinRemovalRequests" to """{"requests":[]}""")
     private fun seed() {
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty
         JvmFirestoreFixtures.businessSettings = BusinessSettings(timeZone = "America/Chicago")
         JvmFirestoreFixtures.kinfolk = listOf(Kinfolk(_id = "kf1", firstName = "Ada", lastName = "Wren"))
         // No new booking request is waiting: the move and the cancellation must still show.
@@ -65,7 +68,7 @@ class VisitAskQueueRenderTest {
     @Test
     fun aMoveAndACancellationShowWithNoNewRequestWaiting() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf(
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf(
             "listRescheduleRequests" to """{"requests":[$moveRow]}""",
             "listCancelRequests" to """{"requests":[$cancelRow]}""",
         )
@@ -82,7 +85,7 @@ class VisitAskQueueRenderTest {
     @Test
     fun acceptingAMoveConfirmsFirstAndARefusalShowsTheServersSentence() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf(
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf(
             "listRescheduleRequests" to """{"requests":[$moveRow]}""",
             "listCancelRequests" to """{"requests":[]}""",
         )
@@ -116,7 +119,7 @@ class VisitAskQueueRenderTest {
     @Test
     fun aDeclinedCancellationLeavesTheListAndNamesTheHousehold() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf(
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf(
             "listRescheduleRequests" to """{"requests":[]}""",
             "listCancelRequests" to """{"requests":[$cancelRow]}""",
             "resolveBookingCancellationRequest" to
@@ -140,7 +143,7 @@ class VisitAskQueueRenderTest {
     @Test
     fun aFailedQueueSaysSoBesideTheOneThatLoaded() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf("listCancelRequests" to """{"requests":[$cancelRow]}""")
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf("listCancelRequests" to """{"requests":[$cancelRow]}""")
         JvmFirestoreFixtures.callableErrors = mapOf("listRescheduleRequests" to "The server could not be reached. Try again in a moment.")
         show()
         waitUntil(timeoutMillis = 10_000) { shows("One of these queues didn't load") }
@@ -151,7 +154,7 @@ class VisitAskQueueRenderTest {
     @Test
     fun theDetailSheetOpensFromTheCard() = runDesktopComposeUiTest {
         seed()
-        JvmFirestoreFixtures.callableResponses = mapOf(
+        JvmFirestoreFixtures.callableResponses = otherQueuesEmpty + mapOf(
             "listRescheduleRequests" to """{"requests":[$moveRow]}""",
             "listCancelRequests" to """{"requests":[]}""",
         )
