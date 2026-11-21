@@ -1,5 +1,6 @@
 package com.kinfolk.portal.util
 
+import android.content.Intent
 import android.net.Uri
 import com.kinfolk.portal.screens.account.CardSetupReturn
 import com.kinfolk.portal.screens.account.cardSetupReturnUrls
@@ -78,6 +79,65 @@ class LaunchLinkOnceTest {
         openedEarlier()
         assertFalse(launchLinkShouldBeRead(restored = true, replayedFromHistory = true))
         assertNothingWaiting()
+    }
+
+    // What MainActivity.onCreate does, driven with real intents.
+
+    private fun launcherIntent(flags: Int = 0) = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).addFlags(flags)
+    private fun linkIntent(link: String, flags: Int = 0) = Intent(Intent.ACTION_VIEW, Uri.parse(link)).addFlags(flags)
+    private val claimLink = "https://kinfolk.tribetails.com/claim/invite-9"
+    private val resetLink = "https://kinfolk.tribetails.com/account/secure-reset?mode=resetPassword&oobCode=code-9"
+
+    /** The issue's steps: a link opened earlier, Back, then the icon. Home, not the link. */
+    @Test
+    fun create_fromTheIcon_opensNoEarlierLink() {
+        openedEarlier()
+        readLaunchLinkOnCreate(launcherIntent(), restored = false)
+        assertNothingWaiting()
+    }
+
+    @Test
+    fun create_fromAClaimLink_opensThatClaim() {
+        openedEarlier()
+        readLaunchLinkOnCreate(linkIntent(claimLink), restored = false)
+        assertEquals("invite-9", readInitialClaimInviteId())
+        assertNull(readInitialShareToken())
+        assertNull(readInitialSecureResetParams())
+        assertFalse(readInitialUnknownLink())
+    }
+
+    @Test
+    fun create_fromAResetLink_opensThatReset() {
+        readLaunchLinkOnCreate(linkIntent(resetLink), restored = false)
+        assertEquals("code-9", readInitialSecureResetParams()?.oobCode)
+    }
+
+    @Test
+    fun create_replayedFromRecents_doesNotOpenTheTasksFirstLinkAgain() {
+        readLaunchLinkOnCreate(linkIntent(claimLink, Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY), restored = false)
+        assertNothingWaiting()
+    }
+
+    /** Dark mode or process death on the reset screen: the screen's own link is read again, so it stays. */
+    @Test
+    fun restoredCreate_onAScreenOpenedByALink_readsItsOwnLinkAgain() {
+        readLaunchLinkOnCreate(linkIntent(resetLink), restored = true)
+        assertEquals("code-9", readInitialSecureResetParams()?.oobCode)
+    }
+
+    /** Home rebuilt after a second copy of the app was opened by a link: that copy's link is not picked up. */
+    @Test
+    fun restoredCreate_ofAScreenOpenedFromTheIcon_opensNoOtherCopysLink() {
+        openedEarlier()
+        readLaunchLinkOnCreate(launcherIntent(), restored = true)
+        assertNothingWaiting()
+    }
+
+    /** A link handed to the running screen (onNewIntent) is still read. */
+    @Test
+    fun newIntent_withAClaimLink_isRead() {
+        captureLaunchLink(Uri.parse(claimLink))
+        assertEquals("invite-9", readInitialClaimInviteId())
     }
 
     @Test

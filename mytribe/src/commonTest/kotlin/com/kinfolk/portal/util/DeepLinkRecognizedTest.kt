@@ -2,7 +2,7 @@ package com.kinfolk.portal.util
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-/** #1293: which launch links name something the app can open. Mirrors MainActivity.captureDeepLink. */
+/** #1293: which launch links name something the app can open. Mirrors captureLaunchLink (DeepLink.android.kt). */
 class DeepLinkRecognizedTest {
     @Test
     fun aClaimOrShareLinkWithAnIdIsRecognized() {

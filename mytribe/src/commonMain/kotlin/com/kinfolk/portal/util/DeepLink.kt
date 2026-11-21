@@ -61,8 +61,8 @@ expect fun readInitialUnknownLink(): Boolean
  * `invite` query value, [isEmailAction] whether [com.kinfolk.portal.auth.parseEmailActionUrl]
  * accepted it, [isCheckoutReturn] whether
  * [com.kinfolk.portal.screens.invoices.checkoutReturnFromLink] did (#2401: the
- * address Stripe sends a card payment back to). Mirrors `captureDeepLink` in
- * MainActivity.
+ * address Stripe sends a card payment back to). Mirrors `captureLaunchLink` in
+ * DeepLink.android.kt.
  */
 fun deepLinkIsRecognized(
     pathSegments: List<String>,
