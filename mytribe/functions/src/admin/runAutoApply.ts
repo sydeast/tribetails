@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { z, ZodError } from 'zod';
 
 import { db } from '../lib/firestoreAdmin';
@@ -123,7 +124,7 @@ export async function runAutoApplyHandler(
   // ownership is this callable's job.
   const invSnap = await db().collection('invoices').doc(args.invoiceId).get();
   if (!invSnap.exists) {
-    throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+    throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
   }
   const kinfolkId = (invSnap.data() ?? {})['kinfolkId'];
   if (!testOwnsDoc(actor.testMode, typeof kinfolkId === 'string' ? kinfolkId : '')) {

@@ -1181,7 +1181,10 @@ export async function recordPaymentHandler(
       duplicateWords !== null
         ? duplicateWords
         : args.invoiceId
-          ? `Payment row recorded against invoice ${args.invoiceNumber || args.invoiceId}`
+          ? // #2453: the number on the invoice when this payment was applied to it, else the one the caller sent. Never the id.
+            (await import('../lib/activityWords.js')).paymentRowRecordedWords(
+              application?.invoiceNumber || args.invoiceNumber,
+            )
           : 'Standalone payment row recorded',
     payload: {
       paymentId: ref.id,

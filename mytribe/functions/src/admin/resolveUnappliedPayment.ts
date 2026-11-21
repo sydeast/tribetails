@@ -18,6 +18,7 @@ import { sendIdempotencyKeyRe } from '../lib/sendIdempotency';
 import { ACCOUNT_BALANCE_FIELD, readAccountBalanceCents } from '../lib/accountCredit';
 import { MAX_CREDIT_REASON_LENGTH, stageGivenCredit } from '../lib/creditLedger';
 import { planApply, stageApply, type ApplyOutcome } from '../lib/paymentApply';
+import { invoiceLeadName } from '../lib/invoiceNaming';
 import { invoiceCancelled, invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
 import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { OVER_BALANCE_REFUSAL_CODE, type InvoiceDoc } from './markInvoicePaid';
@@ -316,7 +317,7 @@ export async function resolveUnappliedPaymentHandler(
       if (!plannedApply.ok && plannedApply.refusal.code === OVER_BALANCE_REFUSAL_CODE) {
         refuse(
           'apply_exceeds_due',
-          `Invoice ${str((doc as Record<string, unknown> | null)?.['invoiceNumber']) || applyInvoiceId} owes ` +
+          `${invoiceLeadName((doc as Record<string, unknown> | null)?.['invoiceNumber'])} owes ` +
             `${usd(plannedApply.refusal.amountDueCents ?? 0)}, so no more than that can be applied to it.`,
         );
       }
@@ -327,7 +328,7 @@ export async function resolveUnappliedPaymentHandler(
       if (args.applyCents > plannedApply.step.before.amountDueCents) {
         refuse(
           'apply_exceeds_due',
-          `Invoice ${plannedApply.step.invoiceNumber || applyInvoiceId} owes ${usd(plannedApply.step.before.amountDueCents)}, ` +
+          `${invoiceLeadName(plannedApply.step.invoiceNumber)} owes ${usd(plannedApply.step.before.amountDueCents)}, ` +
             `so no more than that can be applied to it.`,
         );
       }
@@ -443,10 +444,8 @@ export async function resolveUnappliedPaymentHandler(
     targetUid: args.paymentId,
     targetCollection: 'payments',
     familyId: kinfolkId || undefined,
-    description:
-      `Unapplied payment ${args.paymentId} decided: ${d.creditedCents} cents to account credit, ` +
-      `${d.appliedCents} cents to invoice ${d.appliedInvoiceNumber || d.appliedInvoiceId || '(none)'}, ` +
-      `${d.keptCents} cents kept as recorded`,
+    // #2453: dollars and the invoice's number. Both ids are in the payload below.
+    description: (await import('../lib/activityWords.js')).unappliedPaymentDecidedWords(d),
     payload: {
       paymentId: args.paymentId,
       kinfolkId,

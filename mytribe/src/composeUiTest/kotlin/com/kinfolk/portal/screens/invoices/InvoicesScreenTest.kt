@@ -45,7 +45,8 @@ class InvoicesScreenTest {
             put("accountBalanceCents", 0L)
             put("open", buildJsonArray {
                 add(buildJsonObject {
-                    put("id", "1001")
+                    put("id", "inv_1731000000000_ab12cd")
+                    put("invoiceNumber", "1001")
                     put("kinfolkId", "3")
                     put("amountDue", 120.0)
                     put("total", 120.0)
@@ -74,6 +75,10 @@ class InvoicesScreenTest {
         }
         waitForIdle()
         onNodeWithText("Invoice #1001").assertIsDisplayed()
+        // #1848: the stored id is on no row. The paid row has no number.
+        onNodeWithText("Invoice with no number").assertIsDisplayed()
+        onNodeWithText("inv_1731000000000_ab12cd", substring = true).assertDoesNotExist()
+        onNodeWithText("Invoice #1000").assertDoesNotExist()
         onNodeWithText("PENDING").assertIsDisplayed()
         onNodeWithText("PAID").assertIsDisplayed()
         onNodeWithText("Pay \$120.00").assertIsDisplayed()
@@ -245,7 +250,8 @@ class InvoicesScreenTest {
             put("accountBalanceCents", 0L)
             put("open", buildJsonArray {
                 add(buildJsonObject {
-                    put("id", "1001")
+                    put("id", "inv_1731000000000_ab12cd")
+                    put("invoiceNumber", "1001")
                     put("kinfolkId", "3")
                     put("amountDue", 120.0)
                     put("total", 120.0)
@@ -265,7 +271,8 @@ class InvoicesScreenTest {
         waitForIdle()
         onNodeWithText("Invoice #1001").performClick()
         waitForIdle()
-        kotlin.test.assertEquals("1001", opened)
+        // #1848: the row prints the number; the tap still carries the id.
+        kotlin.test.assertEquals("inv_1731000000000_ab12cd", opened)
     }
 
     @Test
@@ -334,5 +341,46 @@ class InvoicesScreenTest {
         }
         waitForIdle()
         onNodeWithText("Declined").assertIsDisplayed()
+    }
+
+    // #1848: the CREDITS panel names the invoice by its number, or in words.
+    @Test
+    fun creditRows_printTheNumberOrSayThereIsNone() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 0L)
+            put("open", buildJsonArray {})
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "inv_1731000000000_ab12cd")
+                    put("invoiceNumber", "1042")
+                    put("kinfolkId", "3")
+                    put("amountDue", -20.0)
+                    put("total", 0.0)
+                    put("isPaid", false)
+                    put("status", "credit")
+                    put("client", "Buddy (Nora)")
+                    put("creditAmountCents", 2000L)
+                })
+                add(buildJsonObject {
+                    put("id", "inv_1731000000001_ef34gh")
+                    put("kinfolkId", "3")
+                    put("amountDue", -10.0)
+                    put("total", 0.0)
+                    put("isPaid", false)
+                    put("status", "credit")
+                    put("client", "Buddy (Nora)")
+                    put("creditAmountCents", 1000L)
+                })
+            })
+        })
+        setThemedContent {
+            InvoicesScreen("The Foster", "3", PortalApi(fake))
+        }
+        waitForIdle()
+        onNodeWithText("Credit \u2022 Invoice #1042").assertExists()
+        onNodeWithText("Credit \u2022 Invoice with no number").assertExists()
+        onNodeWithText("inv_1731", substring = true).assertDoesNotExist()
     }
 }

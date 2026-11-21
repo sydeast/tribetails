@@ -2258,6 +2258,8 @@ class PortalApi(
                 else -> null
             },
             creditRedeemedAtMs = o["creditRedeemedAtMs"]?.jsonPrimitive?.longOrNull,
+            // #1848: absent on a server older than the field, and null with no number.
+            invoiceNumber = (o["invoiceNumber"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
             writtenOffCents = o["writtenOffCents"]?.jsonPrimitive?.longOrNull,
             paidCents = o["paidCents"]?.jsonPrimitive?.longOrNull ?: 0L,
             quoteDecision = when (o["quoteDecision"]?.jsonPrimitive?.contentOrNull) {

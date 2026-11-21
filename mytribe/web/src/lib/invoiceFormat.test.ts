@@ -16,6 +16,8 @@ import {
   quoteActorLabel,
   shortDateLabel,
   documentNoun,
+  invoiceName,
+  invoiceNumberOrWords,
   paidDollarsOf,
 } from './invoiceFormat';
 
@@ -252,5 +254,29 @@ describe('#2090 written off', () => {
     expect(paidDollarsOf({ status: 'written_off', paidCents: 2000, total: 50, amountDue: 0 })).toBe(20);
     // Every other state keeps the legacy fallback.
     expect(paidDollarsOf({ status: 'paid', paidCents: 0, total: 50, amountDue: 0 })).toBe(50);
+  });
+});
+
+describe('#1848: how the portal names an invoice', () => {
+  it('prints the number after the noun', () => {
+    expect(invoiceName({ status: 'open', invoiceNumber: '1042' })).toBe('Invoice #1042');
+    expect(invoiceName({ status: 'paid', invoiceNumber: ' INV-2027-0001 ' })).toBe('Invoice #INV-2027-0001');
+    expect(invoiceName({ status: 'quote', invoiceNumber: 'Q-7' })).toBe('Quote #Q-7');
+  });
+
+  it('says so in words when there is no number, whatever shape "none" arrives in', () => {
+    expect(invoiceName({ status: 'open', invoiceNumber: null })).toBe('Invoice with no number');
+    expect(invoiceName({ status: 'open', invoiceNumber: '' })).toBe('Invoice with no number');
+    expect(invoiceName({ status: 'open', invoiceNumber: '   ' })).toBe('Invoice with no number');
+    // A server older than the field sends no key at all.
+    expect(invoiceName({ status: 'open' })).toBe('Invoice with no number');
+    expect(invoiceName({ status: 'quote', invoiceNumber: null })).toBe('Quote with no number');
+  });
+
+  it('names the invoice a credit was spent on by its number, or in words', () => {
+    expect(invoiceNumberOrWords('INV-1009')).toBe('INV-1009');
+    expect(invoiceNumberOrWords(null)).toBe('an invoice with no number');
+    expect(invoiceNumberOrWords('')).toBe('an invoice with no number');
+    expect(invoiceNumberOrWords(undefined)).toBe('an invoice with no number');
   });
 });

@@ -71,6 +71,7 @@ enum class QuoteDecision { Accepted, Denied }
 enum class CreditTarget { AccountBalance, OriginalPaymentMethod }
 
 data class Invoice(
+    /** The stored key. It opens the invoice and is never shown; [invoiceName] is what a screen prints. */
     val id: String,
     val kinfolkId: String,
     val kinfolkName: String?,
@@ -147,6 +148,8 @@ data class Invoice(
      * than the field, which reads as not blocked.
      */
     val payBlockedReason: String? = null,
+    /** #1848: the number a Kinfolk can quote, or null when the invoice has none (or the server is older than the field). */
+    val invoiceNumber: String? = null,
 )
 
 /** One covered visit on an invoice. All fields optional server-side. */

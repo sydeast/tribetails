@@ -165,13 +165,13 @@ describe('activity words', () => {
   it('names an invoice by its number, and never by its id', () => {
     expect(invoicePdfMadeWords('INV-2027-0001')).toBe('Made the PDF for invoice INV-2027-0001');
     expect(invoicePdfDownloadedWords(undefined)).toBe(
-      'Household downloaded the PDF for an invoice',
+      'Household downloaded the PDF for an invoice with no number',
     );
     expect(invoiceSentence('INV-2027-0001', 'edited')).toBe('Invoice INV-2027-0001 edited');
-    expect(invoiceSentence(null, 'edited')).toBe('An invoice edited');
+    expect(invoiceSentence(null, 'edited')).toBe('Invoice with no number edited');
     expect(kinArchivedWords(true, 'Biscuit')).toBe('Archived kin Biscuit');
     expect(kinArchivedWords(false, undefined)).toBe('Restored a kin');
-    expect(quoteRevisedWords('')).toBe('A declined quote revised and sent again');
+    expect(quoteRevisedWords('')).toBe('Declined quote with no number revised and sent again');
   });
 });
 

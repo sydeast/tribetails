@@ -235,9 +235,10 @@ describe('#906 the real callers: { status: "sent" } still works', () => {
 });
 
 describe('#906 preconditions this path never had', () => {
-  it('no longer CREATES an invoice from a missing doc; it names createInvoice', async () => {
+  it('no longer CREATES an invoice from a missing doc, and the refusal carries no id (#2453)', async () => {
     const ctx = seed(null);
-    await expect(postInvoiceEventHandler(call({ status: 'sent' }))).rejects.toThrow(/createInvoice/);
+    const refusal = await postInvoiceEventHandler(call({ status: 'sent' })).catch((e: Error) => e);
+    expect(refusal).toMatchObject({ code: 'not-found', message: 'Invoice not found.' });
     expect(ctx.writes).toHaveLength(0);
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
@@ -246,9 +247,12 @@ describe('#906 preconditions this path never had', () => {
     // `kinfolkId: args.familyId` used to ride every merge, so a mismatched id
     // moved the bill to another household silently.
     const ctx = seed({ ...DRAFT, kinfolkId: 'other-household' });
-    await expect(postInvoiceEventHandler(call({ status: 'sent' }))).rejects.toThrow(
-      /belongs to household 'other-household'/,
-    );
+    // #2453: neither the invoice's id nor either household's goes in the sentence.
+    const refusal = await postInvoiceEventHandler(call({ status: 'sent' })).catch((e: Error) => e);
+    expect(refusal).toMatchObject({
+      code: 'permission-denied',
+      message: 'That invoice belongs to a different household.',
+    });
     expect(ctx.writes).toHaveLength(0);
   });
 

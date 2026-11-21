@@ -691,3 +691,21 @@ describe('recordPayment: staff notes stay staff-only', () => {
     expect(JSON.stringify(call)).not.toContain('chases payment every month');
   });
 });
+
+/** #2453: the Activity Log line names the invoice by the number stored on it, or in words, never by its id. */
+describe('#2453 recordPayment: no stored id in the Activity Log line', () => {
+  it('a row against a numbered invoice names the number that came with the payment', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+    await recordPaymentHandler(req(fullArgs));
+    expect((writeAuditEntry as any).mock.calls[0][0].description).toBe('Payment row recorded against invoice INV-9');
+  });
+
+  it('a row against an invoice with no number', async () => {
+    mocks.dbFn.mockReturnValue(seed({ invoice: { kinfolkId: 'fam1', status: 'open', total: 127.5 } }).db);
+    await recordPaymentHandler(req({ ...fullArgs, invoiceNumber: '' }));
+    const entry = (writeAuditEntry as any).mock.calls[0][0];
+    expect(entry.description).toBe('Payment row recorded against an invoice with no number');
+    expect(entry.description).not.toContain('inv1');
+    expect(entry.payload.invoiceId).toBe('inv1');
+  });
+});

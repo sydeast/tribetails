@@ -83,6 +83,7 @@ internal fun decodeInvoiceDtoPayMethod(raw: Map<String, Any?>?): InvoiceDtoPayMe
 /** `InvoiceDto`, shared across callables. */
 data class InvoiceDto(
     val id: String,
+    val invoiceNumber: String?,
     val kinfolkId: String,
     val kinfolkName: String?,
     val client: String?,
@@ -126,6 +127,7 @@ data class InvoiceDto(
 internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
     InvoiceDto(
         id = (raw?.get("id") as? String).orEmpty(),
+        invoiceNumber = raw?.get("invoiceNumber") as? String,
         kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
         kinfolkName = raw?.get("kinfolkName") as? String,
         client = raw?.get("client") as? String,

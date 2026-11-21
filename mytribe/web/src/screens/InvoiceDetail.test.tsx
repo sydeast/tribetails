@@ -96,7 +96,7 @@ beforeEach(() => {
 });
 
 const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
-  id: 'inv-open-1',
+  id: 'inv-open-1', invoiceNumber: '1042',
   kinfolkId: 'kin-fam-1',
   kinfolkName: 'The Test Family',
   client: 'The Test Family',
@@ -488,8 +488,10 @@ describe('InvoiceDetail: answering a quote', () => {
     await renderWith(QUOTE);
     expect(await screen.findByRole('heading', { level: 1, name: /^Quote for/ })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { level: 1, name: /^Invoice for/ })).toBeNull();
-    expect(screen.getAllByText(`Quote ${QUOTE.id}`).length).toBe(2);
-    expect(screen.queryByText(`Invoice ${QUOTE.id}`)).toBeNull();
+    // #1848: by its number, in both places. The stored id is not printed.
+    expect(screen.getAllByText(`Quote #${QUOTE.invoiceNumber}`).length).toBe(2);
+    expect(screen.queryByText(`Invoice #${QUOTE.invoiceNumber}`)).toBeNull();
+    expect(document.body.textContent ?? '').not.toContain(QUOTE.id);
   });
   it('#2092: an accepted quote is an open invoice, and is named as one', async () => {
     await renderWith({ ...QUOTE, status: 'open', quoteDecision: 'accepted' });
@@ -659,7 +661,7 @@ describe('InvoiceDetail payment option sources (issue #409)', () => {
   };
 
   const OPEN: GetMyInvoicesResult['open'][number] = {
-    id: 'inv-open-1',
+    id: 'inv-open-1', invoiceNumber: '1042',
     kinfolkId: 'kin-fam-1',
     kinfolkName: 'The Test Family',
     client: 'The Test Family',
@@ -1207,5 +1209,40 @@ describe('checkoutReturnUrls (#2366)', () => {
       successUrl: 'https://kinfolk.tribetails.com/invoices/inv%201?checkout=done',
       cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv%201',
     });
+  });
+});
+
+/**
+ * #1848: the invoice page names the invoice by the number a Kinfolk can quote.
+ * The stored id used to stand in both places the name is printed. The route's
+ * id here is 'inv-open-1' (the useParams mock), so that string must not be on
+ * the page.
+ */
+describe('InvoiceDetail: the page prints the invoice number, never the stored id (#1848)', () => {
+  async function renderWith(invoice: GetMyInvoicesResult['open'][number]) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [invoice], paid: [], credits: [], accountBalanceCents: 0 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Amount Due');
+  }
+  it('an invoice with a number', async () => {
+    await renderWith({ ...OPEN_INVOICE, invoiceNumber: '1042' });
+    expect(screen.getAllByText('Invoice #1042')).toHaveLength(2);
+    expect(document.body.textContent ?? '').not.toContain('inv-open-1');
+  });
+  it('an invoice with no number', async () => {
+    await renderWith({ ...OPEN_INVOICE, invoiceNumber: null });
+    expect(screen.getAllByText('Invoice with no number')).toHaveLength(2);
+    expect(document.body.textContent ?? '').not.toContain('inv-open-1');
+  });
+  it('a quote', async () => {
+    await renderWith({ ...OPEN_INVOICE, invoiceNumber: 'Q-7', status: 'quote' });
+    expect(screen.getAllByText('Quote #Q-7').length).toBeGreaterThan(0);
+    expect(document.body.textContent ?? '').not.toContain('inv-open-1');
   });
 });

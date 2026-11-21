@@ -305,13 +305,13 @@ private fun OpenInvoiceRow(
             KinCalendarBadge(calendarBadgeFromLabel(invoice.dueDate), accent = KinfolkBrand.KinfolkOrange)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    invoice.client ?: "${invoiceDocNoun(invoice)} #${invoice.id}",
+                    invoice.client ?: invoiceName(invoice),
                     style = type.sansBody.copy(fontWeight = FontWeight.SemiBold),
                 )
-                // With no client name the title is already "Invoice #id" — don't
+                // With no client name the title is already the invoice's name: don't
                 // repeat it; the due date below carries the meta line.
                 if (invoice.client != null) {
-                    Text("${invoiceDocNoun(invoice)} #${invoice.id}", style = type.sansMeta)
+                    Text(invoiceName(invoice), style = type.sansMeta)
                 }
                 Text(openRowMetaLabel(invoice, viewerUid), style = type.sansMeta)
             }
@@ -369,12 +369,12 @@ private fun PaidInvoiceRow(invoice: Invoice, onClick: () -> Unit) {
         KinCalendarBadge(calendarBadgeFromLabel(invoice.date), accent = KinfolkBrand.KinTeal)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                invoice.client ?: "Invoice #${invoice.id}",
+                invoice.client ?: invoiceName(invoice),
                 style = type.sansBody.copy(fontWeight = FontWeight.SemiBold),
             )
             // Same de-duplication as OpenInvoiceRow: the paid date is the meta.
             if (invoice.client != null) {
-                Text("Invoice #${invoice.id}", style = type.sansMeta)
+                Text(invoiceName(invoice), style = type.sansMeta)
             }
             // #1330: the day with its year, the same label the web portal shows.
             Text(paidRowMetaLabel(invoice), style = type.sansMeta)
@@ -411,10 +411,10 @@ private fun CreditEntry(
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    invoice.client ?: "Invoice #${invoice.id}",
+                    invoice.client ?: invoiceName(invoice),
                     style = type.sansBody.copy(fontWeight = FontWeight.SemiBold),
                 )
-                Text("Credit • Invoice #${invoice.id}", style = type.sansMeta)
+                Text("Credit • ${invoiceName(invoice)}", style = type.sansMeta)
             }
             KinTintPill(
                 if (redeemed) "REDEEMED" else "CREDIT",
@@ -480,6 +480,18 @@ internal fun quoteActorLabel(invoice: Invoice, viewerUid: String?): String? = wh
  * "Quote"; an accepted one is an open invoice now and is an "Invoice". The same
  * rule as the web portal's `documentNoun`.
  */
+/**
+ * #1848: how the portal names one invoice, "Invoice #1042" or "Quote #1042".
+ * The stored id used to stand after the "#", a string nobody can quote. An
+ * invoice with no number reads "Invoice with no number" (or "Quote with no
+ * number"), the words the office's apps, the web portal and the server use.
+ */
+internal fun invoiceName(invoice: Invoice): String {
+    val number = invoice.invoiceNumber?.trim().orEmpty()
+    val noun = invoiceDocNoun(invoice)
+    return if (number.isEmpty()) "$noun with no number" else "$noun #$number"
+}
+
 internal fun invoiceDocNoun(invoice: Invoice): String =
     if (invoice.status == InvoiceStatus.Quote) "Quote" else "Invoice"
 

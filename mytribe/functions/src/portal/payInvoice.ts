@@ -37,6 +37,7 @@ import {
 import { INVOICE_WRITTEN_OFF_CODE, isWrittenOff } from '../lib/invoiceArchive';
 import { OPEN_CHECKOUT_SESSIONS_FIELD } from '../lib/checkoutSessionSweep';
 import { hiddenFromHousehold } from '../lib/quoteDecision';
+import { invoiceLeadName, invoiceNumberText } from '../lib/invoiceNaming';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
@@ -359,8 +360,12 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
             currency: 'usd',
             unit_amount: amountCents,
             product_data: {
-              name: `Invoice #${args.invoiceId}`,
-              description: typeof inv['client'] === 'string' ? (inv['client'] as string) : `Tribe ${kinfolkId}`,
+              // #2453: the household reads this on Stripe's page. Its number, never its id.
+              name: checkoutLineName(inv['invoiceNumber']),
+              // The household's name when the invoice carries one. No name, no line: a stored id is never shown.
+              ...(typeof inv['client'] === 'string' && inv['client'].trim() !== ''
+                ? { description: inv['client'] }
+                : {}),
             },
           },
         },
@@ -659,3 +664,14 @@ export const payInvoice = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'STRIPE_SECRET_KEY', 'AUNTIE_OPERATOR_UIDS'] },
   wrapCallable('payInvoice', payInvoiceHandler),
 );
+
+/**
+ * #2453: the one line on Stripe's checkout page, "Invoice #1042". It used to
+ * carry the invoice's stored id. An invoice with no number reads "Invoice with
+ * no number". Stripe matches nothing on this name: the invoice is found by the
+ * session's metadata.
+ */
+export function checkoutLineName(invoiceNumber: unknown): string {
+  const n = invoiceNumberText(invoiceNumber);
+  return n === '' ? invoiceLeadName('') : `Invoice #${n}`;
+}

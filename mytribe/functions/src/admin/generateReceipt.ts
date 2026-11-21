@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -69,7 +70,7 @@ export async function generateReceiptHandler(
   const ref = db().collection('invoices').doc(args.invoiceId);
   const snap = await ref.get();
   if (!snap.exists) {
-    throw new HttpsError('not-found', `invoice ${args.invoiceId} not found`);
+    throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
   }
   const stored = snap.data() as { kinfolkId?: string; total?: unknown; totalCents?: unknown } | undefined;
   const familyId = stored?.kinfolkId ?? '';
