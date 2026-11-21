@@ -74,8 +74,13 @@ export function routeEmptyTextWhileArrived(status: VisitTrackingStatus): string 
       return 'Waiting for the first GPS ping. The field app writes one about every five seconds while a visit is in flight.';
   }
 }
-/** #2386: a ping this recent means a phone is tracking the visit. Two minutes. */
-export const LIVE_PING_WINDOW_MS = 2 * 60_000;
+/**
+ * #2386: a ping this recent means a phone is tracking the visit. Ten minutes:
+ * a tracking phone writes no ping while it stays within 5 m, so an Auntie
+ * sitting still with a Kin goes quiet for minutes at a time while she is still
+ * tracking. The same window on Android (`domain/GpsLine.kt`) and the console.
+ */
+export const LIVE_PING_WINDOW_MS = 10 * 60_000;
 
 /** How often the Arrived card reads the clock again, so "live" ages out with no new ping. */
 export const GPS_LINE_TICK_MS = 15_000;

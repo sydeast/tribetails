@@ -25,8 +25,13 @@ import java.time.format.DateTimeFormatter
  */
 data class GpsLine(val text: String, val live: Boolean)
 
-/** #2386: a ping this recent means a phone is tracking the visit. Two minutes. */
-const val LIVE_PING_WINDOW_MS: Long = 2 * 60_000L
+/**
+ * #2386: a ping this recent means a phone is tracking the visit. Ten minutes:
+ * a tracking phone writes no ping while it stays within 5 m, so an Auntie
+ * sitting still with a Kin goes quiet for minutes at a time while she is still
+ * tracking. The same window on every client.
+ */
+const val LIVE_PING_WINDOW_MS: Long = 10 * 60_000L
 
 /** How often an Arrived card reads the clock again, so "live" ages out with no new ping. */
 const val GPS_LINE_TICK_MS: Long = 15_000L

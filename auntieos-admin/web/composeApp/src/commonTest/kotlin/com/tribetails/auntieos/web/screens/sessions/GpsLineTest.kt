@@ -43,7 +43,21 @@ class GpsLineTest {
     @Test
     fun theSameCrumbsFlipToTheLastPingAsTimePassesWithNoNewOne() {
         assertTrue(gpsLineFor(false, crumbs, chicago, nowMs = at + 30_000)!!.live)
-        assertFalse(gpsLineFor(false, crumbs, chicago, nowMs = at + 10 * 60_000)!!.live)
+        assertFalse(gpsLineFor(false, crumbs, chicago, nowMs = at + 15 * 60_000)!!.live)
+    }
+    @Test
+    fun theWindowIsTenMinutesLiveAtExactlyTenAfterTheLastPingAndNotAMillisecondLater() {
+        assertEquals(600_000L, LIVE_PING_WINDOW_MS)
+        val one = listOf(Breadcrumb(timestamp = at.toString()))
+        assertTrue(gpsLineFor(false, one, chicago, nowMs = at + 9 * 60_000 + 59_000)!!.live)
+        assertEquals(GpsLine("GPS tracking · live route", live = true), gpsLineFor(false, one, chicago, nowMs = at + 600_000))
+        assertEquals(GpsLine("GPS route · last ping 14:05", live = false), gpsLineFor(false, one, chicago, nowMs = at + 600_001))
+    }
+    @Test
+    fun anAuntieSittingStillWithAKinForSixMinutesStillReadsLive() {
+        val line = gpsLineFor(false, crumbs, chicago, nowMs = at + 6 * 60_000)!!
+        assertEquals("GPS tracking · live route", line.text)
+        assertTrue(line.live)
     }
 
     @Test

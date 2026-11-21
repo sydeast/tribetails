@@ -125,7 +125,7 @@ class UndoneDepartureTrackingTest {
     @Test
     fun `an undone visit nothing tracks says when the route last pinged, in 24 hours, with no live dot`() {
         val crumbs = listOf(LocationPoint(timestamp = now - 60_000), LocationPoint(timestamp = now))
-        val line = gpsLineFor(trackingHere = false, crumbs = crumbs, zone = chicago, nowMs = now + 10 * 60_000)!!
+        val line = gpsLineFor(trackingHere = false, crumbs = crumbs, zone = chicago, nowMs = now + 15 * 60_000)!!
         assertEquals("GPS route · last ping 14:05", line.text)
         assertFalse(line.live)
     }
