@@ -1527,7 +1527,7 @@ describe('the payments panel', () => {
     );
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
     const line = await screen.findByTestId('invoice-ledger-brought-over');
-    expect(line).toHaveTextContent('Paid before this invoice was brought over');
+    expect(line).toHaveTextContent('Paid in the old system');
     expect(line).toHaveTextContent('$15.00');
     expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$25.00');
     expect(screen.getByText('Still owed').closest('tr')).toHaveTextContent('$15.00');

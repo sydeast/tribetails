@@ -87,6 +87,7 @@ import {
   type PaymentAmount,
 } from '../src/lib/invoiceMath';
 import { invoiceStateOf } from '../src/lib/invoiceEditPolicy';
+import { invoiceStateStampOf } from '../src/lib/invoiceStateStamp';
 import { invoiceIsPaid } from '../src/lib/invoicePaidGate';
 import { chaseRefusalOf } from '../src/lib/invoiceChase';
 import { repairPlanFor } from '../src/lib/invoicePaymentRepair';
@@ -426,6 +427,24 @@ describe('#2470: what the screens are told', () => {
     hooks.db.current = ctx.db;
     const out = await enrichTemplateData('invoice.reminder', 'cli1', { invoiceId: 'inv1', kinfolkId: 'fam1' });
     expect(out.amount).toBe('$15.00');
+  });
+});
+
+describe('#2470: stamping the field changes no stored state stamp', () => {
+  // The backfill writes `broughtOverPaidCents` alone. That is right only if
+  // the stamp an invoice already carries is the stamp it would get with the
+  // field, for every shape the backfill stamps.
+  const without = (doc: Record<string, unknown>) => {
+    const { broughtOverPaidCents: _drop, ...rest } = doc;
+    return rest;
+  };
+  it.each([
+    ['part paid', BROUGHT],
+    ['paid in full', BROUGHT_PAID],
+    ['a quote part paid', { ...BROUGHT, status: 'quote' }],
+    ['a draft part paid', { ...BROUGHT, status: 'draft' }],
+  ])('%s', (_label, doc) => {
+    expect(invoiceStateStampOf(doc, 0)).toEqual(invoiceStateStampOf(without(doc), 0));
   });
 });
 

@@ -93,7 +93,7 @@ fun invoiceAppliedCentsOf(invoice: Invoice): Long? {
 }
 
 /** #2470: the line the Payments panel shows for the brought-over amount. */
-const val BROUGHT_OVER_LINE: String = "Paid before this invoice was brought over"
+const val BROUGHT_OVER_LINE: String = "Paid in the old system"
 
 fun invoicePartPaidOf(invoice: Invoice): InvoicePartPayment? {
     if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return null

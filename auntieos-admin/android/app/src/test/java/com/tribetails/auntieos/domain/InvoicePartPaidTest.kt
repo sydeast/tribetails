@@ -38,7 +38,7 @@ class InvoicePartPaidTest {
         assertEquals(InvoicePartPayment(paidCents = 2500L, remainingCents = 1500L), after)
         assertEquals(2500L, invoiceAppliedCents(inv(paidCents = 1000L).copy(broughtOverPaidCents = 1500L)))
         assertEquals(0L, invoiceAppliedCents(inv(paidCents = -5L).copy(broughtOverPaidCents = -1L)))
-        assertEquals("Paid before this invoice was brought over", BROUGHT_OVER_LINE)
+        assertEquals("Paid in the old system", BROUGHT_OVER_LINE)
     }
     @Test
     fun `is null for an open invoice nobody has paid`() {

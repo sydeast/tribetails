@@ -365,7 +365,7 @@ data class InvoicePartPayment(
 fun invoiceAppliedCents(invoice: Invoice): Long =
     invoice.paidCents.coerceAtLeast(0L) + invoice.broughtOverPaidCents.coerceAtLeast(0L)
 /** #2470: the line the Payments panel shows for [Invoice.broughtOverPaidCents]. */
-const val BROUGHT_OVER_LINE: String = "Paid before this invoice was brought over"
+const val BROUGHT_OVER_LINE: String = "Paid in the old system"
 fun invoicePartPaid(invoice: Invoice): InvoicePartPayment? {
     if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return null
     val paidCents = invoiceAppliedCents(invoice)

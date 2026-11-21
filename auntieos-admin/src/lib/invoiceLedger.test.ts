@@ -138,7 +138,7 @@ describe('#2470 the brought-over line', () => {
     expect(paymentsPanelIsEmpty({ payments: [], ledgerPayments: [], broughtOverPaidCents: 0 })).toBe(true);
   });
   it('is named in plain words', () => {
-    expect(BROUGHT_OVER_LINE).toBe('Paid before this invoice was brought over');
+    expect(BROUGHT_OVER_LINE).toBe('Paid in the old system');
   });
 });
 

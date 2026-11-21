@@ -168,7 +168,7 @@ class InvoiceDetailPaymentUnitsTest {
             Result.success(ledger()),
             invoice.copy(total = 40.0, amountDue = 15.0, paidCents = 1000L, broughtOverPaidCents = 1500L),
         )
-        rule.onNodeWithText("PAID BEFORE THIS INVOICE WAS BROUGHT OVER").assertExists()
+        rule.onNodeWithText("PAID IN THE OLD SYSTEM").assertExists()
         rule.onNodeWithText("$25.00 of $40.00 paid").assertExists()
         rule.onNodeWithText("No payment recorded against this invoice", substring = true).assertDoesNotExist()
     }

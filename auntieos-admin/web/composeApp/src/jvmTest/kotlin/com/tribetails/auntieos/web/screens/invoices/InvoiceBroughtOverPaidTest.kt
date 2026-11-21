@@ -54,7 +54,7 @@ class InvoiceBroughtOverPaidTest {
 
     @Test
     fun theLineIsInPlainWords() {
-        assertEquals("Paid before this invoice was brought over", BROUGHT_OVER_LINE)
+        assertEquals("Paid in the old system", BROUGHT_OVER_LINE)
         assertFalse(BROUGHT_OVER_LINE.contains("—"))
     }
 }

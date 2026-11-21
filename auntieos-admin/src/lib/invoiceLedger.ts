@@ -273,7 +273,7 @@ export function broughtOverCents(input: { broughtOverPaidCents?: number }): numb
   return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
 }
 /** #2470: the line the payments table shows for it. */
-export const BROUGHT_OVER_LINE = 'Paid before this invoice was brought over';
+export const BROUGHT_OVER_LINE = 'Paid in the old system';
 /**
  * Sum of the subcollection rows, for the panel's own footer. #2470: plus what
  * was paid before the invoice was brought over, when the caller passes it, so

@@ -139,6 +139,15 @@ describe('backfillCardInvoicePayments planInvoiceBackfill', () => {
     expect(plan).toMatchObject({ action: 'report', reason: 'would_overpay', totalCents: 4000, rowsCents: 4000, cardCents: 2500 });
   });
 
+  it('#2470 counts what was paid before the invoice was brought over, and stores the rows alone', () => {
+    // $40, $15 brought over, the card paid the $25 left.
+    const plan = planInvoiceBackfill('inv1', { ...PAID, broughtOverPaidCents: 1500 }, [], [card('evt_1', 2500)]);
+    expect(plan).toMatchObject({
+      action: 'write',
+      invoiceUpdate: { paymentStatus: 'PAID', totalCents: 4000, paidCents: 2500, overpaidCents: 0, status: 'paid' },
+    });
+  });
+
   it('reports when they would still fall short: a paid invoice is not turned into a part-paid one', () => {
     expect(planInvoiceBackfill('inv1', PAID, [], [card('evt_1', 2500)])).toMatchObject({ action: 'report', reason: 'still_short' });
   });
