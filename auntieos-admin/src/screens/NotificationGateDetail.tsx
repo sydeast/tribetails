@@ -84,7 +84,7 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
         <h4 className="notifgate__detail-heading">Who receives it</h4>
         {who.length === 0 ? (
           <p className="notifgate__detail-empty">
-            The server sent no recipient rule for this row. Upgrade MyTribe functions to see it.
+            Who gets this notice is not listed yet.
           </p>
         ) : (
           <ul className="notifgate__detail-list">
@@ -149,8 +149,8 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
         ) : (
           <>
             <p className="notifgate__detail-note">
-              Anything on this list can appear in the message, and therefore reach whoever the
-              recipient rule above resolves to.
+              Anything on this list can appear in the message, so everyone who gets this notice
+              can read it.
             </p>
             {/* #1592: what each field is, in words; the keys were developer text. */}
             <ul className="notifgate__detail-list" aria-label="What the body can carry">
