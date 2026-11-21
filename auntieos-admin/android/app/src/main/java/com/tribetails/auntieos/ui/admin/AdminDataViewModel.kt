@@ -1170,7 +1170,7 @@ class AdminDataViewModel(
     fun reviewAndSendDraftInvoice(invoice: Invoice) {
         if (invoice.id.isBlank()) return
         if (invoice.kinfolkId.isBlank()) {
-            _error.value = "This invoice has no client (kinfolk) on record, so it cannot be sent."
+            _error.value = "This invoice has no Kinfolk on record, so it cannot be sent."
             return
         }
         val quote = com.tribetails.auntieos.domain.isQuoteDraft(invoice)
