@@ -19,6 +19,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.CircleAlert
 import com.composables.icons.lucide.Lucide
+import com.tribetails.auntieos.web.data.INVOICE_WITH_NO_NUMBER
+import com.tribetails.auntieos.web.data.INVOICE_WITH_NO_NUMBER_LEAD
 import com.tribetails.auntieos.web.data.MAX_GIVE_CREDIT_REASON_LENGTH
 import com.tribetails.auntieos.web.data.OpenInvoiceDto
 import com.tribetails.auntieos.web.data.UnappliedDecision
@@ -43,11 +45,16 @@ import kotlinx.datetime.TimeZone
 
 // ---- Pure text and rules (commonTest covers every one) ----
 
-private fun invoiceLabel(number: String): String = number.ifBlank { "an unnumbered invoice" }
+/**
+ * " on invoice INV-1042", or nothing when the server had no number for it
+ * (#2417): the invoice on the checkout may be gone, and the line under this
+ * one already says why.
+ */
+private fun onInvoice(number: String): String = number.trim().let { if (it.isEmpty()) "" else " on invoice $it" }
 
 /** "$25.00 card payment on invoice INV-1042". */
 fun unappliedPaymentLine(p: UnappliedPaymentDto): String =
-    "${creditUsd(p.amountCents)} card payment on invoice ${invoiceLabel(p.invoiceNumber)}"
+    "${creditUsd(p.amountCents)} card payment${onInvoice(p.invoiceNumber)}"
 
 /** "Sep 27, 2026. Not applied because the invoice was already marked paid." */
 fun unappliedPaymentDetailLine(p: UnappliedPaymentDto, zone: TimeZone = TimeZone.currentSystemDefault()): String {
@@ -58,12 +65,12 @@ fun unappliedPaymentDetailLine(p: UnappliedPaymentDto, zone: TimeZone = TimeZone
 
 /** The dialog's lead line. */
 fun decideLeadLine(p: UnappliedPaymentDto): String =
-    "Card payment of ${creditUsd(p.amountCents)} on invoice ${invoiceLabel(p.invoiceNumber)}. " +
+    "Card payment of ${creditUsd(p.amountCents)}${onInvoice(p.invoiceNumber)}. " +
         "There are no refunds. Anything you do not credit or apply stays recorded on the payment."
 
-/** One picker row: "INV-1050, $40.00 due". */
+/** One picker row: "INV-1050, $40.00 due", or "Invoice with no number, $40.00 due". */
 fun openInvoiceOptionLabel(i: OpenInvoiceDto): String =
-    "${invoiceLabel(i.invoiceNumber)}, ${creditUsd(i.amountDueCents)} due"
+    "${i.invoiceNumber.trim().ifEmpty { INVOICE_WITH_NO_NUMBER_LEAD }}, ${creditUsd(i.amountDueCents)} due"
 
 const val DECIDE_NO_OPEN_INVOICES = "No open invoices for this household."
 const val UNAPPLIED_EMPTY_FROM_NOTICE = "No card payments are waiting for a decision."
@@ -153,7 +160,9 @@ fun decisionResultText(o: UnappliedDecisionOutcome): String {
     if (o.appliedCents > 0L) {
         val state = if (o.appliedInvoiceState == "settled") "paid in full"
         else "${creditUsd(o.appliedInvoiceAmountDueCents)} still due"
-        parts += "${creditUsd(o.appliedCents)} on invoice ${invoiceLabel(o.appliedInvoiceNumber)} ($state)."
+        val number = o.appliedInvoiceNumber.trim()
+        val invoice = if (number.isEmpty()) INVOICE_WITH_NO_NUMBER else "invoice $number"
+        parts += "${creditUsd(o.appliedCents)} on $invoice ($state)."
     }
     parts += "${creditUsd(o.keptCents)} kept on the payment."
     return parts.joinToString(" ")

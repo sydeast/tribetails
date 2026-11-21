@@ -63,8 +63,8 @@ and this is the whole list:
 | Permission | Access | The call that needs it |
 |---|---|---|
 | Checkout Sessions | write | `stripe.checkout.sessions.create` in `portal/payInvoice.ts:261` |
-| PaymentIntents | read | `stripe.paymentIntents.retrieve` in `billing/stripeWebhook.ts:455` and `billing/stripeDispute.ts:360` |
-| Charges | read | `stripe.charges.retrieve` in `billing/stripeDispute.ts:399` |
+| PaymentIntents | read | `stripe.paymentIntents.retrieve` in `billing/stripeWebhook.ts:455` and `billing/stripeDispute.ts:360`, and in `portal/payInvoice.ts` (`paymentBeingRecorded`, #2437) |
+| Charges | read | `stripe.charges.retrieve` in `billing/stripeDispute.ts:399`, and the `expand: ['latest_charge']` on `payInvoice`'s PaymentIntent retrieve (#2437). Without it that read fails, nothing is held, and `portal.invoice.checkout.recording.unreadable` is logged |
 | Balance transactions | read | the `expand: ['latest_charge.balance_transaction']` on that same retrieve at `billing/stripeWebhook.ts:455-456` |
 
 **Balance transactions is the one that fails silently, and it is the one people
@@ -225,6 +225,20 @@ true`), adds the event id to the invoice's `unappliedPaymentIds`, writes a
 by itself: account credit happens only when the admin enters an amount (#988),
 and there are no refunds. `report:duplicate-checkout-credits` lists the charges
 the old branch did credit.
+**While a finished payment is being recorded, Pay is refused** (#2437). Between
+the household paying at Stripe and the webhook landing, the invoice still reads
+owed. `payInvoice` opens no second checkout in that gap: it reads the invoice's
+stored checkouts back from Stripe, and when one is finished and paid with no
+`stripePayments/{paymentIntentId}` claim yet it answers "A payment on this
+invoice is still being recorded. Check again in a minute." (`details.code:
+payment_being_recorded`). The hold ends when the webhook writes the claim, or 15
+minutes after the card was charged, whichever comes first. Past 15 minutes
+`payInvoice` logs `portal.invoice.checkout.recording.overdue` at warn, with the
+invoice, session and PaymentIntent ids, and offers Pay again. That line means a
+paid event is late or is not arriving: open the endpoint's delivery log in the
+Stripe dashboard and resend the event. The webhook applies it whenever it
+comes, and a second payment made in the meantime is held for the owner like any
+other second charge.
 A cancelled invoice is held the same way (#2358). `payInvoice` opens no checkout
 for one, but a checkout page opened before the cancel can still be paid on:
 cancelling does not expire it. The charge is recorded as an unapplied payment

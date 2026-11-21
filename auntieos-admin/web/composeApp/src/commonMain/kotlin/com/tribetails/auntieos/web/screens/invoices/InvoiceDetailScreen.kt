@@ -1289,7 +1289,7 @@ private fun RecordPaymentDialog(
         visible   = visible,
         title     = "Record payment",
         onDismiss = onDismiss,
-        hint      = "Applies a payment to invoice #${invoice.invoiceNumber.ifBlank { "-" }}.",
+        hint      = recordPaymentHint(invoice),
         maxWidth  = 460.dp,
         footer    = {
             GhostButton(label = "Cancel", onClick = onDismiss, enabled = !submitting)

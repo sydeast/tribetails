@@ -17,6 +17,7 @@ import {
   toFamilyFields,
 } from './kinMirror';
 import { DEFAULT_KIN_STATUS, isInactiveKinStatus } from '../lib/kinStatus';
+import { isFamilyKinPath } from '../lib/kinArchive';
 
 type FlatKinDoc = {
   kinfolkId?: string;
@@ -58,6 +59,12 @@ function familyPathFor(kinfolkId: string, kinId: string): string {
  * nobody made), and the household's Tribe page then said "No Kin yet" for a
  * household whose Directory card listed one. `adoptFlatKin` makes the copy.
  *
+ * #2290: a link that names a household copy that is NOT THERE is answered the
+ * same way as no link at all. Admin Android wrote `families/{kinfolkId}/kin/
+ * {flatId}` onto every Kin it made, right after the add, and this mirror made
+ * a copy at that path without looking for the one the household already had.
+ * The household then saw the Kin twice. `adoptFlatKin` now looks first.
+ *
  * The household copy is never written with a household-owned field (name,
  * photo, status) once it exists. The one exception is a `status` SEED: when
  * the merge would otherwise create a statusless family doc it is stamped
@@ -72,12 +79,6 @@ export async function mirrorFlatKinToFamily(
     return { action: 'skipped', reason: 'family-origin' };
   }
 
-  const familyKinPath = text(after.familyKinPath);
-  if (familyKinPath === '') {
-    if (!flatDocId) return { action: 'skipped', reason: 'no-link' };
-    return adoptFlatKin(flatDocId, after);
-  }
-
   // Inclusion list first, translated, then strip every household-owned field
   // and every staff-only field. The lists are disjoint today, so both strips
   // are no-ops; they are here so that adding a field to STAFF_EDITABLE_FIELDS
@@ -88,6 +89,20 @@ export async function mirrorFlatKinToFamily(
     omitKeys(toFamilyFields(after, changedKeys(before, after, STAFF_EDITABLE_FIELDS)), PARENT_OWNED_FIELDS),
     STAFF_ONLY_KIN_FIELDS,
   );
+  // What this write hands a household copy that is FOUND rather than made. On
+  // an edit, the shared fields the Admin just changed. On a create every field
+  // counts as changed, and a copy the household already keeps is not
+  // overwritten with the office's first draft.
+  const carried = before === undefined ? {} : payload;
+
+  const familyKinPath = text(after.familyKinPath);
+  if (familyKinPath === '') {
+    if (!flatDocId) return { action: 'skipped', reason: 'no-link' };
+    // No client writes the link (#2290), so an edit can be the write that
+    // first ties a record to the household's copy. The edit goes with it.
+    return adoptFlatKin(flatDocId, after, { changes: carried });
+  }
+
   // A link that is new on this write (a create, or admin Android stamping one
   // after its add) or a Kin coming back from archive may name a household copy
   // that does not exist yet. Those are the writes that make sure it does.
@@ -96,6 +111,17 @@ export async function mirrorFlatKinToFamily(
   if (Object.keys(payload).length === 0 && !linkIsNew && !restored) {
     return { action: 'skipped', reason: 'no-change' };
   }
+
+  // A missing copy can be looked for only when this record can be named and
+  // the link stays inside its own household. Anything else keeps the plain
+  // create below.
+  const household = text(after.kinfolkId).trim();
+  const adoptable =
+    flatDocId !== undefined &&
+    household !== '' &&
+    !household.includes('/') &&
+    isFamilyKinPath(familyKinPath) &&
+    familyKinPath.startsWith(`families/${household}/kin/`);
 
   // The read and the write share a transaction so a memorial the household
   // sets concurrently cannot be overwritten by a stale "absent" read.
@@ -106,6 +132,9 @@ export async function mirrorFlatKinToFamily(
       // No household copy: make the whole one, not a nameless shell of the
       // changed fields. An archived Kin gets none; it is made when restored.
       if (isInactiveKinStatus(after.status)) return 'none' as const;
+      // #2290: the household may already hold this Kin under another id.
+      // Resolved below, outside this transaction.
+      if (adoptable) return 'missing' as const;
       tx.set(familyRef, {
         ...buildFamilyCopyFromFlat(after),
         ...payload,
@@ -133,58 +162,119 @@ export async function mirrorFlatKinToFamily(
     );
     return 'merged' as const;
   });
+  if (wrote === 'missing' && flatDocId !== undefined) {
+    return adoptFlatKin(flatDocId, after, { missingPath: familyKinPath, changes: carried });
+  }
   if (wrote === 'none') return { action: 'skipped', reason: 'no-change', familyKinPath };
   return { action: wrote === 'created' ? 'adopted' : 'mirrored', familyKinPath };
 }
 
 /**
- * #1847. Gives a flat Kin with no link its household copy, or ties it to the
- * one it already has. Never makes a second copy of one Kin:
+ * #1847, #2290. Gives a flat Kin with no usable link its household copy, or
+ * ties it to the one it already has. Never makes a second copy of one Kin:
  *   - a household copy already stamped with this record keeps it (the pointer
- *     was all that was missing);
+ *     was all that was missing, or was wrong);
  *   - an unstamped, live household copy of the same name is the same animal
  *     (a seeded household, or a Kin the household added before the link
- *     existed), and is tied to this record rather than duplicated;
+ *     existed), and is tied to this record rather than duplicated. Not when
+ *     another office record of this household already points at that copy:
+ *     the copy is that record's, stamped or not, and two office records never
+ *     share one household Kin. This record then gets its own copy;
  *   - otherwise a copy is made at `families/{kinfolkId}/kin/{flatId}`, the
  *     path admin Android has always stamped for a Kin the office made.
  * An archived or memorialised record gets nothing: it would only be hidden.
- * The claim is made in a transaction on the flat doc, so a link that arrived
- * in the meantime (the household's own add taking this record by name) wins.
+ *
+ * `missingPath` is the link the record carries when that link names a copy
+ * that does not exist (#2290). The record is then tied to the copy found
+ * above and its link is corrected; with none found, the copy is made at
+ * `missingPath`, as it always was. `changes` are the shared fields this write
+ * changed, already translated: they go onto a copy that was found, so the
+ * Admin's edit is not lost with the bad link, nor on the edit that first ties
+ * a record that had no link.
+ *
+ * The claim is made in a transaction that reads the record and the chosen
+ * copy again. A link that arrived in the meantime wins (the household's own
+ * add taking this record by name), and a same-name copy that another record
+ * took in the meantime is left to it: this record gets its own. "Took" is read
+ * both ways, the copy's stamp and the other record's link, because the forward
+ * mirror writes the link first and the stamp second.
  */
-export async function adoptFlatKin(flatId: string, flat: FlatKinDoc): Promise<FlatMirrorResult> {
+export async function adoptFlatKin(
+  flatId: string,
+  flat: FlatKinDoc,
+  opts: { missingPath?: string; changes?: Record<string, unknown> } = {},
+): Promise<FlatMirrorResult> {
   const kinfolkId = text(flat.kinfolkId).trim();
   if (kinfolkId === '' || kinfolkId.includes('/') || flatId.includes('/')) {
     return { action: 'skipped', reason: 'no-household' };
   }
   if (isInactiveKinStatus(flat['status'])) return { action: 'skipped', reason: 'inactive' };
   const firestore = db();
+  const missingPath = opts.missingPath ?? '';
+  const changes = opts.changes ?? {};
 
   const byId = (a: { id: string }, b: { id: string }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  // The office records whose link names a household copy, and whether one of
+  // them is another record of this household. A record with no household of
+  // its own counts: its link is all that says where it sits.
+  const linkedTo = (path: string) => firestore.collection('kin').where('familyKinPath', '==', path);
+  const isAnotherRecord = (d: { id: string; data: () => unknown }): boolean => {
+    if (d.id === flatId) return false;
+    const owner = text(((d.data() ?? {}) as Record<string, unknown>)['kinfolkId']);
+    return owner === '' || owner === kinfolkId;
+  };
   const stamped = await firestore.collection(`families/${kinfolkId}/kin`).where('legacyKinId', '==', flatId).get();
-  let targetKinId: string | null = [...stamped.docs].sort(byId)[0]?.id ?? null;
-  if (targetKinId === null) {
+  let foundKinId: string | null = [...stamped.docs].sort(byId)[0]?.id ?? null;
+  if (foundKinId === null) {
     const name = text(flat['name']).trim();
     if (name !== '') {
       const byName = await firestore.collection(`families/${kinfolkId}/kin`).where('name', '==', name).get();
-      const twin = [...byName.docs].sort(byId).find((d) => {
+      const twins = [...byName.docs].sort(byId).filter((d) => {
         const data = (d.data() ?? {}) as Record<string, unknown>;
         return text(data['legacyKinId']) === '' && !isInactiveKinStatus(data['status']);
       });
-      targetKinId = twin?.id ?? null;
+      for (const twin of twins) {
+        const linked = await linkedTo(familyPathFor(kinfolkId, twin.id)).get();
+        if (linked.docs.some(isAnotherRecord)) continue;
+        foundKinId = twin.id;
+        break;
+      }
     }
   }
-  const path = familyPathFor(kinfolkId, targetKinId ?? flatId);
-  const familyRef = firestore.doc(path);
+  const ownPath = missingPath !== '' ? missingPath : familyPathFor(kinfolkId, flatId);
+  const foundPath = foundKinId === null ? null : familyPathFor(kinfolkId, foundKinId);
   const flatRef = firestore.doc(`kin/${flatId}`);
+  const ownRef = firestore.doc(ownPath);
+  const foundRef = foundPath === null || foundPath === ownPath ? null : firestore.doc(foundPath);
 
   const outcome = await firestore.runTransaction(async (tx) => {
     const flatSnap = await tx.get(flatRef);
-    const famSnap = await tx.get(familyRef);
-    if (!flatSnap.exists) return 'gone' as const;
+    const ownSnap = await tx.get(ownRef);
+    const foundSnap = foundRef ? await tx.get(foundRef) : null;
+    const foundLinks = foundRef && foundPath !== null ? await tx.get(linkedTo(foundPath)) : null;
+    if (!flatSnap.exists) return { state: 'gone' as const };
     const current = (flatSnap.data() ?? {}) as Record<string, unknown>;
     const pointer = text(current['familyKinPath']);
-    if (pointer !== '' && pointer !== path) return 'linked-elsewhere' as const;
-    if (isInactiveKinStatus(current['status'])) return 'inactive' as const;
+
+    // The copy found before the transaction is used only if it is still this
+    // record's to take: stamped with it, or unstamped, live and with no other
+    // office record pointing at it. A copy at the link itself that turned up
+    // meanwhile is the copy, whatever was found.
+    const foundData = foundSnap?.exists ? ((foundSnap.data() ?? {}) as Record<string, unknown>) : null;
+    const foundStamp = foundData === null ? null : text(foundData['legacyKinId']);
+    const foundIsFree =
+      foundData !== null &&
+      foundStamp === '' &&
+      !isInactiveKinStatus(foundData['status']) &&
+      !(foundLinks?.docs.some(isAnotherRecord) ?? false);
+    const foundIsOurs = foundData !== null && (foundStamp === flatId || foundIsFree);
+    const useFound = foundRef !== null && foundIsOurs && !(missingPath !== '' && ownSnap.exists);
+    const path = useFound && foundPath !== null ? foundPath : ownPath;
+    const familyRef = useFound && foundRef !== null ? foundRef : ownRef;
+    const famSnap = useFound && foundSnap !== null ? foundSnap : ownSnap;
+
+    if (pointer !== '' && pointer !== path && pointer !== missingPath) return { state: 'linked-elsewhere' as const };
+    if (isInactiveKinStatus(current['status'])) return { state: 'inactive' as const };
     if (!famSnap.exists) {
       tx.set(familyRef, {
         ...buildFamilyCopyFromFlat(current),
@@ -195,27 +285,47 @@ export async function adoptFlatKin(flatId: string, flat: FlatKinDoc): Promise<Fl
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
-    } else if (text(((famSnap.data() ?? {}) as Record<string, unknown>)['legacyKinId']) === '') {
-      tx.set(familyRef, { legacyKinId: flatId, familyKinPath: path, ...mirrorStamp(MIRROR_ORIGIN_FLAT) }, { merge: true });
+    } else {
+      const fam = (famSnap.data() ?? {}) as Record<string, unknown>;
+      const link = text(fam['legacyKinId']) === '' ? { legacyKinId: flatId, familyKinPath: path } : {};
+      const carried = Object.keys(changes).length > 0;
+      const seedStatus = carried && text(fam['status']) === '' ? { status: DEFAULT_KIN_STATUS } : {};
+      if (carried || Object.keys(link).length > 0) {
+        tx.set(
+          familyRef,
+          {
+            ...changes,
+            ...seedStatus,
+            ...link,
+            ...mirrorStamp(MIRROR_ORIGIN_FLAT),
+            ...(carried ? { updatedAt: FieldValue.serverTimestamp() } : {}),
+          },
+          { merge: true },
+        );
+      }
     }
-    tx.set(
-      flatRef,
-      { kinfolkId, familyKinPath: path, legacyKinId: flatId, ...mirrorStamp(MIRROR_ORIGIN_FAMILY) },
-      { merge: true },
-    );
-    return famSnap.exists ? ('linked' as const) : ('adopted' as const);
+    // The record's own side of the link, written only when it is not already
+    // right: a link that is right needs no echo.
+    if (pointer !== path || text(current['legacyKinId']) !== flatId) {
+      tx.set(
+        flatRef,
+        { kinfolkId, familyKinPath: path, legacyKinId: flatId, ...mirrorStamp(MIRROR_ORIGIN_FAMILY) },
+        { merge: true },
+      );
+    }
+    return { state: famSnap.exists ? ('linked' as const) : ('adopted' as const), path };
   });
 
-  if (outcome === 'adopted' || outcome === 'linked') {
+  if (outcome.state === 'adopted' || outcome.state === 'linked') {
     logEvent({
       severity: 'info',
       function: 'onFlatKinWrite',
-      event: outcome === 'adopted' ? 'mirror.family.adopted' : 'mirror.family.linked',
-      extra: { kinfolkId, flatId, familyKinPath: path },
+      event: outcome.state === 'adopted' ? 'mirror.family.adopted' : 'mirror.family.linked',
+      extra: { kinfolkId, flatId, familyKinPath: outcome.path, relinked: missingPath !== '' && outcome.path !== missingPath },
     });
-    return { action: outcome, familyKinPath: path };
+    return { action: outcome.state, familyKinPath: outcome.path };
   }
-  return { action: 'skipped', reason: outcome };
+  return { action: 'skipped', reason: outcome.state };
 }
 
 /**

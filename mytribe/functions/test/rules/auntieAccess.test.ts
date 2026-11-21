@@ -803,12 +803,104 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   it('the owner creates, reads, approves and deletes a draft of every type', async () => {
     const env = await getEnv();
     const db = asOwner(env).firestore();
-    for (const [path, draft] of [[PUSH, push], [EMAIL, email], [TALE, tale], [OLDER, older]] as const) {
+    for (const [path, draft] of [[PUSH, push], [TALE, tale], [OLDER, older]] as const) {
       await assertSucceeds(db.doc(path).set(draft));
       await assertSucceeds(db.doc(path).get());
       await assertSucceeds(db.doc(path).update({ status: 'approved', generatedCopy: 'Final words', approvedBy: 'owner-1' }));
       await assertSucceeds(db.doc(path).delete());
     }
+    // An Email or Text nobody has approved is edited and deleted like the rest.
+    await assertSucceeds(db.doc(EMAIL).set(email));
+    await assertSucceeds(db.doc(EMAIL).get());
+    await assertSucceeds(db.doc(EMAIL).update({ generatedCopy: 'Edited words' }));
+    await assertSucceeds(db.doc(EMAIL).delete());
+  });
+  // ── #2428: an Email or Text goes out once, and a sent draft is kept ────────
+  const APPROVE = { status: 'approved', generatedCopy: 'Final words', approvedAt: '2026-11-20T10:00:00.000Z', approvedBy: 'owner-1' };
+  it('#2428: an installed client approves an Email or Text draft once, and is refused the second approve that would send it again', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    for (const [i, typeField] of [
+      { communication_type: 'email' },
+      { communication_type: 'sms' },
+      { communicationType: 'email' },
+      { communicationType: 'sms' },
+    ].entries()) {
+      const path = `generated_drafts/msg-${String(i)}`;
+      await seed(path, { ...base, ...typeField, createdOn: '2026-11-02T10:00:00.000Z' });
+      // The write every client before #2428 made, then sent the message itself.
+      await assertSucceeds(db.doc(path).update(APPROVE));
+      // The same draft opened again: the approve write is the gate, and it is shut.
+      await assertFails(db.doc(path).update({ ...APPROVE, generatedCopy: 'Words to send again' }));
+      await assertFails(db.doc(path).update({ generatedCopy: 'Edited after it went' }));
+      await assertFails(db.doc(path).update({ status: 'generated' }));
+      await assertFails(db.doc(path).set({ ...base, ...typeField, status: 'approved' }));
+      await assertFails(db.doc(path).delete());
+    }
+  });
+  it('#2428: a draft sendGeneratedDraft has claimed or stamped is not the client\'s to change or delete', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    const states: Record<string, unknown>[] = [
+      { status: 'approved', sendClaimedAt: '2026-11-20T10:00:00.000Z' },
+      { status: 'approved', sentAt: '2026-11-20T10:00:01.000Z', sentChannel: 'email' },
+      // The stamp alone keeps it, whatever the status reads.
+      { status: 'generated', sentAt: '2026-11-20T10:00:01.000Z' },
+    ];
+    for (const [i, state] of states.entries()) {
+      const path = `generated_drafts/claimed-${String(i)}`;
+      await seed(path, { ...email, ...state });
+      await assertSucceeds(db.doc(path).get());
+      await assertFails(db.doc(path).update(APPROVE));
+      await assertFails(db.doc(path).delete());
+    }
+  });
+  it('#2428: an Email whose send the provider refused is unsent again, and is approved or deleted like any other', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    await seed(EMAIL, { ...email, sendFailedAt: '2026-11-20T10:00:01.000Z' });
+    await assertSucceeds(db.doc(EMAIL).update(APPROVE));
+    await seed('generated_drafts/email-2', { ...email, sendFailedAt: '2026-11-20T10:00:01.000Z' });
+    await assertSucceeds(db.doc('generated_drafts/email-2').delete());
+  });
+  it('#2428: a draft a household was sent is not deleted directly: a sent KinTale, and a Push on their list or their phone', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    await seed('generated_drafts/sent-tale', { ...tale, status: 'published', publishedReportId: 'r1' });
+    await seed('generated_drafts/sent-push', { ...push, status: 'approved', pushOutcome: 'sent' });
+    await seed('generated_drafts/listed-push', { ...push, status: 'approved', pushOutcome: 'listed' });
+    await seed('generated_drafts/older-push', { ...older, communicationType: 'push', status: 'approved', pushOutcome: 'sent' });
+    for (const path of ['generated_drafts/sent-tale', 'generated_drafts/sent-push', 'generated_drafts/listed-push', 'generated_drafts/older-push']) {
+      await assertFails(db.doc(path).delete());
+    }
+  });
+  it('#2428: a Push the household was sent is not approved again with new words by a client', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    await seed('generated_drafts/sent-push', { ...push, status: 'approved', pushOutcome: 'sent' });
+    await seed('generated_drafts/listed-push', { ...push, status: 'approved', pushOutcome: 'listed', pushReason: 'no_device' });
+    await seed('generated_drafts/older-push', { ...older, communicationType: 'push', status: 'approved', pushOutcome: 'listed' });
+    for (const path of ['generated_drafts/sent-push', 'generated_drafts/listed-push', 'generated_drafts/older-push']) {
+      await assertSucceeds(db.doc(path).get());
+      // The approve write an installed client makes before it calls the push again.
+      await assertFails(db.doc(path).update({ ...APPROVE, generatedCopy: 'New words for a notice they already have' }));
+      await assertFails(db.doc(path).update({ generatedCopy: 'Edited after it went' }));
+    }
+  });
+  it('#2428: a Push that reached nobody is still the owner\'s to approve again and to delete', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    // Held by the send gate, and one whose send never answered (#2381).
+    await seed('generated_drafts/held-push', { ...push, status: 'approved', pushOutcome: 'held', pushReason: 'household_notices_off' });
+    await seed('generated_drafts/unanswered-push', { ...push, status: 'approved' });
+    for (const path of ['generated_drafts/held-push', 'generated_drafts/unanswered-push']) {
+      await assertSucceeds(db.doc(path).update(APPROVE));
+      await assertSucceeds(db.doc(path).delete());
+    }
+    // A Social, Blog or General draft is sent by nothing, so approving it twice sends nothing twice.
+    await seed('generated_drafts/blog-1', { ...base, communication_type: 'blog_post', status: 'approved' });
+    await assertSucceeds(db.doc('generated_drafts/blog-1').update(APPROVE));
+    await assertSucceeds(db.doc('generated_drafts/blog-1').delete());
   });
   it('the owner lists every draft with no type on the query', async () => {
     const env = await getEnv();

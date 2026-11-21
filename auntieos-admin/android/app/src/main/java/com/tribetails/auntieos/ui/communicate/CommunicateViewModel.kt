@@ -152,6 +152,8 @@ data class CommunicateUiState(
     val pushNotice: HouseholdPushNotice? = null,
     /** #2061: a held push being tried again. */
     val isRetryingPush: Boolean = false,
+    /** #2428: an Email or Text that had already gone out, shown in place of Approve. */
+    val sentNotice: SentDraftNotice? = null,
     // #1563: a stored `generated_drafts` doc opened from KinTales or Home.
     val draftLoading: Boolean = false,
     val draftLoadError: String? = null,
@@ -491,6 +493,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     generatedModel        = result.model,
                     savedDraftId          = null,
                     pushNotice            = null,
+                    sentNotice            = null,
                     publishedReportId     = null,
                     publishedBefore       = false,
                     draftDeleted          = false,
@@ -519,6 +522,9 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     fun requestApprove() {
         val state = _uiState.value
         if (state.isSaving) return
+        // #2428: a draft that is already approved or sent has no Approve. The
+        // button is off for one; this is the same rule for a call that got past it.
+        if (state.savedDraftId != null || state.publishedReportId != null) return
         if (state.draftId == null) {
             _uiState.value = state.copy(error = "This draft was not saved, so there is nothing to approve. Regenerate and try again.")
             return
@@ -626,6 +632,15 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                         name,
                     )
                 } else null
+                // #2428: a draft that already went out opens as sent: approved,
+                // with what happened and neither button. It used to open as
+                // needing approval, and approving an Email or Text again sent
+                // it to the household a second time.
+                val sentName = household?.displayName?.ifBlank { null }
+                    ?: draft.kinfolkName?.ifBlank { null } ?: "the household"
+                val sentPush = sentPushResult(draft)?.let { householdPushNotice(it, sentName) }
+                val sentMessage = sentDraftNotice(draft, sentName)
+                val openNotice = heldNotice ?: sentPush
                 _uiState.value = _uiState.value.copy(
                     draftLoading         = false,
                     commType             = type,
@@ -636,8 +651,9 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     generatedKinfolkName = draft.kinfolkName.orEmpty(),
                     generatedCommType    = type,
                     generatedModel       = draft.model,
-                    savedDraftId         = if (heldNotice != null) draft.id else null,
-                    pushNotice           = heldNotice,
+                    savedDraftId         = if (openNotice != null || sentMessage != null) draft.id else null,
+                    pushNotice           = openNotice,
+                    sentNotice           = sentMessage,
                     publishedReportId    = draft.publishedReportId.ifBlank { null },
                     publishedBefore      = draft.isPublished,
                     pendingKinfolkId     = if (household == null && kinfolkId.isNotBlank()) kinfolkId else null,
@@ -705,6 +721,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                         generatedModel = "",
                         savedDraftId = null,
                         pushNotice = null,
+                        sentNotice = null,
                         publishedReportId = null,
                         successMessage = "Draft deleted.",
                     )
@@ -714,8 +731,72 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 }
         }
     }
+    /**
+     * #2428: approve and send an Email or Text draft through `sendGeneratedDraft`.
+     * The server sends it once: a draft that already went out answers
+     * `already_sent`, and the screen says so and claims no new send. A refused
+     * send leaves the draft unapproved, so Approve and send is still there.
+     * The Activity Log entry follows a real send and never comes before it.
+     */
+    private suspend fun sendMessageDraft(state: CommunicateUiState, draftId: String, channel: ExternalChannel) {
+        val sent = try {
+            repo.sendGeneratedDraft(
+                draftId = draftId,
+                kinfolkId = state.kinfolkId ?: approveRecipient(state)?.id.orEmpty(),
+                body = state.generatedCopy,
+                subject = state.subject.trim().takeIf { channel == ExternalChannel.Email },
+            )
+        } catch (t: Throwable) {
+            t.rethrowIfCancellation()
+            Result.failure(t)
+        }
+        val result = sent.getOrElse { e ->
+            AuntieLog.e("Draft $draftId was not sent", e)
+            _uiState.value = _uiState.value.copy(isSaving = false, error = externalSendErrorText(e.message))
+            return
+        }
+        if (result.outcome != DRAFT_SENT) {
+            _uiState.value = _uiState.value.copy(
+                isSaving     = false,
+                savedDraftId = draftId,
+                sentNotice   = alreadySentNotice(pushHousehold(state)),
+            )
+            return
+        }
+        // Never allowed to undo the state below: the message is out, and a
+        // screen left spinning would invite a second tap.
+        val auditFailure: Throwable? = try {
+            repo.logActivity(
+                ActivityLogEntry(
+                    actionType = "DRAFT_APPROVED",
+                    description = com.tribetails.auntieos.ui.admin.ActivityWords.DRAFT_APPROVED,
+                    status = "SUCCESS",
+                    targetId = draftId,
+                    targetCollection = "generated_drafts",
+                    familyId = state.kinfolkId.orEmpty(),
+                ),
+            ).exceptionOrNull()
+        } catch (t: Throwable) {
+            t.rethrowIfCancellation()
+            t
+        }
+        if (auditFailure != null) AuntieLog.e("Audit entry for draft $draftId failed", auditFailure)
+        val auditNote = auditFailure?.let {
+            " The audit entry could not be written: " + (it.message ?: "unknown error")
+        }.orEmpty()
+        _uiState.value = _uiState.value.copy(
+            isSaving       = false,
+            savedDraftId   = draftId,
+            successMessage = draftSentMessage(channel, result) + auditNote,
+        )
+    }
     fun approveDraft() {
         val state = _uiState.value
+        // #2428: never a second approve of a draft that is already approved or sent.
+        if (state.savedDraftId != null || state.publishedReportId != null) {
+            _uiState.value = state.copy(approveConfirmOpen = false)
+            return
+        }
         // #1563: approving a KinTale sends it. It used to stamp the draft and reach nobody.
         if (state.commType == "visit_report") {
             sendKinTaleDraft()
@@ -742,6 +823,14 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         AuntieLog.i("Approving and saving draft: $draftId")
         // #2389: set before the coroutine starts, so a second tap finds it.
         _uiState.value = state.copy(isSaving = true, error = null, approveConfirmOpen = false)
+        // #2428: an Email or Text is approved and sent by the server in one
+        // call, which marks the draft sent. No approve write from here and no
+        // `sendExternalMessage`: that pair left nothing on the draft to say it
+        // had gone, so it could be approved and sent again.
+        if (channel != null) {
+            viewModelScope.launch { sendMessageDraft(state, draftId, channel) }
+            return
+        }
         viewModelScope.launch {
             repo.approveDraft(draftId, state.generatedCopy, state.kinfolkId)
                 .onSuccess {
@@ -808,54 +897,18 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                         _uiState.value = _uiState.value.afterPush(draftId, notice.copy(body = notice.body + auditNote))
                         return@onSuccess
                     }
-                    // #1625: the send, AFTER the approve write landed, the same
-                    // order as the web admin. A Text or Email approve that sent
-                    // nothing left the household unreached while the screen said
-                    // the draft was done.
-                    if (channel == null || recipient == null) {
-                        _uiState.value = _uiState.value.copy(
-                            isSaving       = false,
-                            savedDraftId   = draftId,
-                            successMessage = if (auditFailure == null) {
-                                "Draft approved and logged to the audit trail."
-                            } else {
-                                "Draft approved.$auditNote"
-                            },
-                        )
-                        return@onSuccess
-                    }
-                    val sent = try {
-                        repo.sendExternalMessage(
-                            channel = channel.wire,
-                            to = if (channel == ExternalChannel.Email) recipient.email.trim() else recipient.phoneNumber.trim(),
-                            subject = state.subject.trim().takeIf { channel == ExternalChannel.Email },
-                            body = state.generatedCopy,
-                            transactional = true,
-                        )
-                    } catch (t: Throwable) {
-                        t.rethrowIfCancellation()
-                        Result.failure(t)
-                    }
-                    sent.onSuccess { result ->
-                        _uiState.value = _uiState.value.copy(
-                            isSaving       = false,
-                            savedDraftId   = draftId,
-                            successMessage = "Draft approved and sent by " +
-                                (if (channel == ExternalChannel.Email) "email" else "text") +
-                                " to ${result.recipientRedacted}.$auditNote",
-                        )
-                    }.onFailure { e ->
-                        AuntieLog.e("Approved draft $draftId but the send failed", e)
-                        // Approved stays approved: the write landed. The error
-                        // says the household did not get it, so nobody assumes
-                        // it went out.
-                        _uiState.value = _uiState.value.copy(
-                            isSaving     = false,
-                            savedDraftId = draftId,
-                            error        = "The draft is approved, but the send failed: " +
-                                externalSendErrorText(e.message) + auditNote,
-                        )
-                    }
+                    // A Social, Blog or General draft: approved and logged,
+                    // sent by nothing. (An Email or Text never reaches this
+                    // write; see `sendMessageDraft`.)
+                    _uiState.value = _uiState.value.copy(
+                        isSaving       = false,
+                        savedDraftId   = draftId,
+                        successMessage = if (auditFailure == null) {
+                            "Draft approved and logged to the audit trail."
+                        } else {
+                            "Draft approved.$auditNote"
+                        },
+                    )
                 }
                 .onFailure { e ->
                     AuntieLog.e("Failed to save draft", e)

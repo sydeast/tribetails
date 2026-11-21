@@ -28,7 +28,16 @@ fun quoteIsChangeable(invoice: Invoice): Boolean =
  */
 fun invoiceDocTitle(invoice: Invoice): String {
     val quote = isQuoteDraft(invoice) || invoice.status.trim().lowercase() == "quote"
-    return "${if (quote) "Quote" else "Invoice"} #${invoice.invoiceNumber.ifBlank { "-" }}"
+    val noun = if (quote) "Quote" else "Invoice"
+    val number = invoice.invoiceNumber.trim()
+    return if (number.isEmpty()) "$noun with no number" else "$noun #$number"
+}
+
+/** The Record payment dialog's line under its title. An invoice with no number is named in words. */
+fun recordPaymentHint(invoice: Invoice): String {
+    val number = invoice.invoiceNumber.trim()
+    return if (number.isEmpty()) "Applies a payment to an invoice with no number."
+    else "Applies a payment to invoice #$number."
 }
 
 /** `details.code` when `createQuote` saved the quote as a draft but could not send it (#2087). */

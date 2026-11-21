@@ -244,6 +244,34 @@ class DesktopDiffedSavesTest {
         )
     }
 
+    /**
+     * #2289: one household record per household. The portal's first vet pick
+     * makes the record at `household_data/{householdId}`. A console screen that
+     * loaded with no record and saves afterwards must join that record, at that
+     * same id, and leave the household's vet alone. The console already wrote a
+     * new household this way; this pins it, because admin web and admin Android
+     * did not and each made a second record.
+     */
+    @Test
+    fun aHouseholdThatPickedItsVetFirstGetsTheConsoleSaveInTheSameRecord() = runBlocking<Unit> {
+        docs["household_data/kf2"] = buildJsonObject {
+            put("kinfolkId", str("kf2"))
+            put("primaryVetClinicId", str("clinic_riverside"))
+            put("createdAt", str("2026-11-20T09:00:00.000Z"))
+        }
+
+        // `loaded` is null: the screen read "no record" before the household's pick.
+        val r = FirestoreClient().saveHouseholdData(null, HouseholdData(kinfolkId = "kf2", foodLocation = "Pantry"))
+
+        assertEquals(WriteResult.Ok(true), r)
+        assertEquals(setOf("foodLocation", "kinfolkId"), masks.single()!!.toSet())
+        assertEquals(listOf("household_data/kf2"), docs.keys.filter { it.startsWith("household_data/") }, "one record, at the household id")
+        val doc = stored("household_data/kf2")
+        assertEquals(str("clinic_riverside"), doc["primaryVetClinicId"], "the household's vet stands")
+        assertEquals(str("Pantry"), doc["foodLocation"])
+        assertEquals(str("2026-11-20T09:00:00.000Z"), doc["createdAt"])
+    }
+
     @Test
     fun aBlankNewHouseholdWritesNothing() = runBlocking<Unit> {
         assertEquals(WriteResult.Ok(false), FirestoreClient().saveHouseholdData(null, HouseholdData(kinfolkId = "kf2")))

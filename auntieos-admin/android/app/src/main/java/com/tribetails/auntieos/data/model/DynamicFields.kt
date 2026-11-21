@@ -139,8 +139,16 @@ data class HouseholdData(
     var petSitterBackup: String = "",
     var dogWalkerBackup: String = "",
 
-    var createdAt: String = "",
-    var updatedAt: String = ""
+    // #2445: held raw, not typed String. Every admin writer stores these as
+    // ISO-8601 text, but the portal's vet pick and a backfill stored server
+    // Timestamps, and a `String` property throws under toObject() on a
+    // Timestamp: one such record failed the household's whole read, and the
+    // Vet Clinics household count with it. Same pattern as Kin.updatedAt and
+    // KinCareSession.createdAt. Nothing on this client reads either value, and
+    // neither is ever written from the model (`householdCreateFields` and
+    // `updateHouseholdFields` stamp them at write time).
+    var createdAt: Any? = "",
+    var updatedAt: Any? = ""
 )
 
 // Media Storage Models

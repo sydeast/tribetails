@@ -479,6 +479,11 @@ private fun ComposePanel(
             if (state.generatedCopy.isNotBlank()) {
                 DraftCallout(
                     subtitle = draftCalloutSubtitle(state.generatedKinfolkName, state.generatedCommType),
+                    // #2428: a draft that was approved or sent no longer says it needs approval.
+                    needsApproval = draftNeedsApproval(
+                        sent = state.publishedReportId != null,
+                        approved = state.savedDraftId != null,
+                    ),
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                     AuntieFieldLabel(text = "Edit before approving")
@@ -512,7 +517,7 @@ private fun ComposePanel(
                 Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
                     PrimaryButton(
                         label = when {
-                            sent -> "Sent"
+                            sent || state.sentNotice != null -> "Sent"
                             state.savedDraftId != null -> "Approved"
                             isKinTale || approveChannel != null || isPush -> "Approve and send"
                             else -> "Approve draft"
@@ -533,9 +538,9 @@ private fun ComposePanel(
                     Text(
                         text = when {
                             approveChannel != null ->
-                                "Approving saves the draft, logs it to the audit trail, then sends it to the household by " +
+                                "Approving sends this to the household by " +
                                     (if (approveChannel == ExternalChannel.Email) "email" else "text") +
-                                    ". Nothing sends unless the save lands."
+                                    ", marks the draft sent and logs it to the audit trail. A draft is sent once."
                             isKinTale -> "Approving sends this KinTale to the household's portal."
                             isPush -> "Approving saves the draft, logs it, then pushes it to the household. The line below says what reached them."
                             else -> "Approving saves the draft and logs it to the audit trail. This type sends nothing from here."
@@ -609,6 +614,14 @@ private fun ComposePanel(
                 }
                 state.pushNotice?.let { notice ->
                     HouseholdPushNoticeBlock(notice = notice, retrying = state.isRetryingPush, onRetry = viewModel::retryHouseholdPush)
+                }
+                // #2428: an Email or Text that had already gone out says so here,
+                // where Approve would be.
+                state.sentNotice?.let { notice ->
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(notice.title, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                        Text(notice.body, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    }
                 }
             }
 
@@ -1374,9 +1387,9 @@ private fun RecipientPicker(
     }
 }
 
-/** "Auntie AI draft · needs approval" callout above the editable copy. */
+/** "Auntie AI draft" callout above the editable copy, with "needs approval" until the draft is approved or sent. */
 @Composable
-private fun DraftCallout(subtitle: String) {
+private fun DraftCallout(subtitle: String, needsApproval: Boolean = true) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     Row(
@@ -1404,11 +1417,13 @@ private fun DraftCallout(subtitle: String) {
                 )
             }
         }
-        AuntieStatusPill(
-            label = "needs approval",
-            tone = AuntieStatusTone.Purple,
-            mono = true,
-        )
+        if (needsApproval) {
+            AuntieStatusPill(
+                label = "needs approval",
+                tone = AuntieStatusTone.Purple,
+                mono = true,
+            )
+        }
     }
 }
 

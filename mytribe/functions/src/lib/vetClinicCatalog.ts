@@ -1,4 +1,4 @@
-import { FieldValue, type Firestore, type Transaction } from 'firebase-admin/firestore';
+import { type Firestore, type Transaction } from 'firebase-admin/firestore';
 
 /**
  * Shared logic for the `vet_clinics` catalog writes (`updateVetClinic`,
@@ -223,20 +223,47 @@ export async function resolveVetClinicSummary(firestore: Firestore, clinicId: st
 }
 
 /**
+ * The `household_data` doc a household's FIRST record is made at (#2289): its
+ * own id. Every creator uses this path (this module, admin web, admin Android,
+ * the desktop console) and `firestore.rules` refuses a client create at any
+ * other, so two creates at once land on one document instead of making two.
+ * A record from before this rule sits under an auto id and is found by its
+ * `kinfolkId` field (`findHouseholdData`).
+ */
+export function householdDataPath(kinfolkId: string): string {
+  return `household_data/${kinfolkId}`;
+}
+
+/**
  * Sets the household's vet ('' clears it): `household_data.primaryVetClinicId`,
- * creating the household's doc when it has none (keyed by the household id,
- * with the `kinfolkId` field the admin finds it by, so a retry finds the same
- * doc), and deletes the legacy row. One transaction.
+ * creating the household's doc when it has none, and deletes the legacy row.
+ *
+ * One transaction, and the record is LOOKED UP INSIDE IT (#2289). The lookup
+ * used to run first, so a record the office made between the lookup and the
+ * write was missed and the household got a second one. A record that is there
+ * is merged into, never replaced: the office's fields stand. The merge carries
+ * `kinfolkId` too, so a record keyed by the household id that lacks the field
+ * becomes one the admin's `where kinfolkId ==` lookup finds.
+ *
+ * `createdAt` / `updatedAt` are ISO-8601 TEXT, the type every other writer of
+ * this collection stores (admin web `api/householdData.ts`, admin Android
+ * `getCurrentTimestamp()`). They were server timestamps here, and admin
+ * Android decodes both as `String`: one Timestamp failed the whole read (#2445).
  */
 export async function writeHouseholdVetClinicId(firestore: Firestore, kinfolkId: string, clinicId: string): Promise<void> {
-  const found = await findHouseholdData(firestore, kinfolkId);
-  const ref = found?.ref ?? firestore.doc(`household_data/${kinfolkId}`);
+  const ownRef = firestore.doc(householdDataPath(kinfolkId));
+  const byField = firestore.collection('household_data').where('kinfolkId', '==', kinfolkId).limit(1);
   const familyRef = firestore.doc(`families/${kinfolkId}`);
   await firestore.runTransaction(async (tx: Transaction) => {
-    const [hdSnap, famSnap] = [await tx.get(ref), await tx.get(familyRef)];
-    const stamp = { primaryVetClinicId: clinicId, updatedAt: FieldValue.serverTimestamp() };
-    if (hdSnap.exists) tx.set(ref, stamp, { merge: true });
-    else tx.set(ref, { ...stamp, kinfolkId, createdAt: FieldValue.serverTimestamp() });
+    const found = await tx.get(byField);
+    const ownSnap = await tx.get(ownRef);
+    const famSnap = await tx.get(familyRef);
+    const ref = found.docs[0]?.ref ?? ownRef;
+    const exists = found.docs.length > 0 || ownSnap.exists;
+    const now = new Date().toISOString();
+    const stamp = { primaryVetClinicId: clinicId, kinfolkId, updatedAt: now };
+    if (exists) tx.set(ref, stamp, { merge: true });
+    else tx.set(ref, { ...stamp, createdAt: now });
     const rows = (famSnap.data() ?? {})['customFields'];
     if (Array.isArray(rows) && rows.some((r) => typeof r === 'object' && r !== null && (r as Data)['key'] === LEGACY_VET_ROW_KEY)) {
       tx.set(

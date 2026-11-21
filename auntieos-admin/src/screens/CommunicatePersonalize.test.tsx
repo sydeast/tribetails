@@ -28,6 +28,9 @@ vi.mock('../api/communicateApprove', async (orig) => ({
 
 const { sendExternalMessage } = vi.hoisted(() => ({ sendExternalMessage: vi.fn() }));
 vi.mock('../api/externalSend', () => ({ sendExternalMessage, suppressExternalRecipient: vi.fn() }));
+// #2428: an Email or Text draft is approved and sent by one server call.
+const { sendGeneratedDraft } = vi.hoisted(() => ({ sendGeneratedDraft: vi.fn() }));
+vi.mock('../api/draftSend', () => ({ sendGeneratedDraft }));
 // #2061: only the wire is stubbed; the sentences are the real ones.
 const { sendHouseholdPush } = vi.hoisted(() => ({ sendHouseholdPush: vi.fn() }));
 vi.mock('../api/householdPush', async (orig) => ({
@@ -90,6 +93,7 @@ function setup(rows: Async<Kinfolk[]> = { status: 'ready', data: ROWS }) {
   generateDraft.mockReset();
   approveGeneratedDraft.mockReset();
   sendExternalMessage.mockReset();
+  sendGeneratedDraft.mockReset().mockResolvedValue({ outcome: 'sent', auditWarning: null });
   publishGeneratedDraft.mockReset().mockResolvedValue({ ok: true, reportId: 'r1', alreadyPublished: false });
   deleteGeneratedDraft.mockReset().mockResolvedValue(undefined);
   useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
@@ -374,21 +378,26 @@ describe('approve', () => {
 
     await user.click(screen.getByRole('button', { name: 'Approve and send' }));
     expect(await screen.findByText(/not undoable/i)).toBeInTheDocument();
-    expect(approveGeneratedDraft).not.toHaveBeenCalled();
+    expect(sendGeneratedDraft).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Send now' }));
-    await waitFor(() => expect(approveGeneratedDraft).toHaveBeenCalled());
-    expect(typeof approveGeneratedDraft.mock.calls[0]?.[0]?.deliver).toBe('function');
+    await waitFor(() => expect(sendGeneratedDraft).toHaveBeenCalledTimes(1));
+    // #2428: the server approves and sends. The screen names the draft and the
+    // household and hands over no address; it makes no approve write of its own
+    // and never calls the external send, which knows nothing of the draft.
+    expect(sendGeneratedDraft).toHaveBeenCalledWith({
+      draftId: 'd1',
+      kinfolkId: 'kf1',
+      body: 'Nova had the best day at the park today.',
+      subject: 'Nova at the park',
+    });
+    expect(approveGeneratedDraft).not.toHaveBeenCalled();
+    expect(sendExternalMessage).not.toHaveBeenCalled();
   });
 
   it('#1592: a delivered approve says it was sent, never the provider message id', async () => {
     const user = setup();
-    approveGeneratedDraft.mockResolvedValue({
-      ok: true,
-      auditWarning: null,
-      providerId: 'SG.msg-123',
-      delivered: true,
-    });
+    sendGeneratedDraft.mockResolvedValue({ outcome: 'sent', auditWarning: null, providerMessageId: 'SG.msg-123' });
     generateDraft.mockResolvedValue(draftResult({ communication_type: 'email' }));
     render(<CommunicatePersonalize />);
     await user.click(screen.getByRole('radio', { name: 'Email' }));
@@ -780,13 +789,17 @@ describe('reopening a held Push draft (#2293)', () => {
     expect(await screen.findByText('This draft was written for a different household.')).toBeInTheDocument();
     expect(screen.queryByText(/Sent to Dana Halbrook's phone/)).toBeNull();
   });
-  it('a Push draft that went out opens as an ordinary approved draft, with no Try again', async () => {
+  it('#2428: a Push draft that went out opens as sent, with no Try again, no Approve and no Delete', async () => {
     setup();
     stored({ ...HELD, pushOutcome: 'sent', pushReason: '' });
     render(<CommunicatePersonalize draftId="gd1" />);
     await screen.findByLabelText(/edit before approving/i);
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     expect(screen.queryByText('Not sent')).toBeNull();
+    // Until #2428 this opened as "needs approval" with both buttons.
+    expect(screen.getByText('Push sent')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and send' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
   });
 
   // ── #2381 ────────────────────────────────────────────────────────────────

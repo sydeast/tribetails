@@ -36,6 +36,14 @@ import {
 } from '../lib/invoicePaidGate';
 import { INVOICE_WRITTEN_OFF_CODE, isWrittenOff } from '../lib/invoiceArchive';
 import { OPEN_CHECKOUT_SESSIONS_FIELD } from '../lib/checkoutSessionSweep';
+import {
+  chargeTimeMsOf,
+  checkoutSessionIdsToRead,
+  finishedCheckoutOf,
+  holdsPay,
+  PAYMENT_BEING_RECORDED,
+  PAYMENT_BEING_RECORDED_CODE,
+} from '../lib/checkoutBeingRecorded';
 import { hiddenFromHousehold } from '../lib/quoteDecision';
 
 export const Args = z.object({
@@ -422,7 +430,44 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // Fail-soft throughout: any doubt, including an unreadable session, mints a
   // fresh one. A household must never be unable to pay a bill because a stale
   // id could not be inspected.
-  const reusable = await findReusableSession(stripe, {
+  //
+  // #2437: BUT FIRST, A CHECKOUT THAT HAS FINISHED AND WHOSE PAYMENT IS NOT ON
+  // THE INVOICE YET. Between the household paying at Stripe and the webhook
+  // recording it, the invoice still reads owed, and the reuse below treated a
+  // finished session exactly like an expired one: it made a new checkout, and
+  // a second payment is a second real charge. So every checkout stored on this
+  // invoice is read once here (the pending one is the same read the reuse
+  // makes, shared through `readSession`), and Pay is refused while one of them
+  // is finished, paid and not yet claimed by the webhook.
+  // `lib/checkoutBeingRecorded.ts` has the rule, the window after which a
+  // payment that never lands stops holding Pay, and why any doubt opens the
+  // checkout.
+  const sessionReads = new Map<string, Promise<unknown>>();
+  const readSession = (id: string): Promise<unknown> => {
+    let read = sessionReads.get(id);
+    if (read === undefined) {
+      read = stripe.checkout.sessions.retrieve(id);
+      sessionReads.set(id, read);
+    }
+    return read;
+  };
+  const recording = await paymentBeingRecorded(stripe, {
+    sessionIds: checkoutSessionIdsToRead(inv),
+    invoiceId: args.invoiceId,
+    readSession,
+    uid,
+  });
+  if (recording !== null) {
+    logEvent({
+      severity: 'info',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.refused.recording',
+      uid,
+      extra: { invoiceId: args.invoiceId, kinfolkId, amountCents, ...recording },
+    });
+    throw new HttpsError('failed-precondition', PAYMENT_BEING_RECORDED, { code: PAYMENT_BEING_RECORDED_CODE });
+  }
+  const reusable = await findReusableSession({ checkout: { sessions: { retrieve: readSession } } }, {
     sessionId: typeof inv['pendingCheckoutSessionId'] === 'string' ? (inv['pendingCheckoutSessionId'] as string) : null,
     invoiceId: args.invoiceId,
     amountCents,
@@ -585,6 +630,81 @@ async function findReusableSession(
   if (s.metadata?.['invoiceId'] !== want.invoiceId) return null;
   if (s.metadata?.[CHECKOUT_ROUND_METADATA_KEY] !== String(want.checkoutRound)) return null;
   return { id: s.id, url: s.url };
+}
+
+/**
+ * #2437: the finished card payment on one of this invoice's stored checkouts
+ * that the webhook has not recorded yet, or null when there is none and a
+ * checkout may open. `lib/checkoutBeingRecorded.ts` has the rule; this does
+ * its reads.
+ *
+ *   the stored checkouts   one Stripe read each, at most
+ *                          `MAX_CHECKOUT_SESSIONS_READ`, together. One that
+ *                          cannot be read is skipped.
+ *   recorded or not        `stripePayments/{paymentIntentId}`, the claim the
+ *                          webhook writes with its decision.
+ *   when it was charged    one more Stripe read, made only for a payment that
+ *                          is finished and unclaimed: the PaymentIntent with
+ *                          its charge. Unreadable means nothing is held.
+ *
+ * Nothing is written. The webhook alone records a payment.
+ */
+async function paymentBeingRecorded(
+  stripe: { paymentIntents?: { retrieve: (id: string, params: { expand: string[] }) => Promise<unknown> } },
+  want: {
+    sessionIds: readonly string[];
+    invoiceId: string;
+    readSession: (id: string) => Promise<unknown>;
+    uid: string;
+  },
+): Promise<{ sessionId: string; paymentIntentId: string; paidAtMs: number } | null> {
+  if (want.sessionIds.length === 0) return null;
+  const sessions = await Promise.all(want.sessionIds.map((id) => want.readSession(id).catch(() => null)));
+  const seen = new Set<string>();
+  for (const raw of sessions) {
+    const finished = finishedCheckoutOf(raw, want.invoiceId);
+    if (finished === null || seen.has(finished.paymentIntentId)) continue;
+    seen.add(finished.paymentIntentId);
+    const claim = await db().collection('stripePayments').doc(finished.paymentIntentId).get();
+    if (claim.exists) continue;
+    let paidAtMs: number | null = null;
+    let unreadable: string | undefined;
+    try {
+      paidAtMs = chargeTimeMsOf(
+        await stripe.paymentIntents!.retrieve(finished.paymentIntentId, { expand: ['latest_charge'] }),
+      );
+    } catch (err) {
+      unreadable = (err as Error)?.message;
+    }
+    if (paidAtMs === null) {
+      // A finished payment with no time to measure from holds nothing: with
+      // no time there is no end to the hold either.
+      logEvent({
+        severity: 'warn',
+        function: 'payInvoice',
+        event: 'portal.invoice.checkout.recording.unreadable',
+        uid: want.uid,
+        errorMessage: unreadable,
+        extra: { invoiceId: want.invoiceId, ...finished },
+      });
+      continue;
+    }
+    if (!holdsPay(paidAtMs, Date.now())) {
+      // Charged, and still not recorded after the window: the webhook is late
+      // or is not arriving. Pay is offered again, and this line is how the
+      // operator finds out (docs/runbooks/stripe.md).
+      logEvent({
+        severity: 'warn',
+        function: 'payInvoice',
+        event: 'portal.invoice.checkout.recording.overdue',
+        uid: want.uid,
+        extra: { invoiceId: want.invoiceId, ...finished, paidAtMs },
+      });
+      continue;
+    }
+    return { ...finished, paidAtMs };
+  }
+  return null;
 }
 
 /**

@@ -131,12 +131,23 @@ export function ledgerRowBalanceCents(
 ): number {
   return row.unappliedCents;
 }
-/** The "Applied to #n" cell: the invoice number, the id, or the honest absence. */
+/**
+ * #2417, #2420: how an invoice that has no number is named wherever its number
+ * would stand. Never its stored id. The same words ship on admin Android and
+ * the desktop console.
+ */
+export const INVOICE_WITH_NO_NUMBER = 'an invoice with no number';
+/** The same, where it opens a line. */
+export const INVOICE_WITH_NO_NUMBER_LEAD = 'Invoice with no number';
+/**
+ * The "Applied to #n" cell: the invoice number, the words for an invoice that
+ * has none, or `''` when the payment touched no balance at all.
+ */
 export function ledgerRowAppliedLabel(
   row: Pick<GetInvoiceLedgerResultLedgerPayment, 'appliedInvoiceId' | 'appliedInvoiceNumber'>,
 ): string {
   if (row.appliedInvoiceNumber.trim() !== '') return `#${row.appliedInvoiceNumber.trim()}`;
-  if (row.appliedInvoiceId.trim() !== '') return row.appliedInvoiceId.trim();
+  if (row.appliedInvoiceId.trim() !== '') return INVOICE_WITH_NO_NUMBER;
   return '';
 }
 /**

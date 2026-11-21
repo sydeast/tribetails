@@ -2140,7 +2140,7 @@ class DirectoryViewModel(
         viewModelScope.launch {
             _editKinState.value = state.copy(isSaving = true, error = null)
 
-            repository.updateKinFields(state.kinId, updatedKin.kinfolkId, changes, baseline.familyKinPath).onSuccess {
+            repository.updateKinFields(state.kinId, changes).onSuccess {
                 AuntieLog.i("Kin changes saved")
                 loadedKin = updatedKin
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -2297,10 +2297,7 @@ class DirectoryViewModel(
                 // Only the photo changed; see uploadKinfolkPhoto above.
                 repository.updateKinFields(
                     state.kinId,
-                    state.kinfolkId,
                     mapOf("profilePictureUrl" to media.storageUrl),
-                    // #2115: the link the Kin was loaded with, never re-derived.
-                    loadedKin?.takeIf { it.id == state.kinId }?.familyKinPath,
                 ).onSuccess {
                     loadedKin = loadedKin?.copy(profilePictureUrl = media.storageUrl)
                     _editKinState.value = withPhoto.copy(isUploadingPhoto = false)
