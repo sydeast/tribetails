@@ -218,8 +218,8 @@ describe('getMyInvoicesHandler', () => {
     const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
     const res = await getMyInvoicesHandler({ data: {}, auth: { uid: 'u1' } } as any);
     expect(res.open[0].lineItems).toEqual([
-      { lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1', label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null },
-      { lineId: 'session:vis_2', source: 'session', sessionId: 'vis_2', label: '2Hrs', dateIso: '2026-07-02', amountCents: 8000, qty: null, unitCents: null },
+      { lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1', label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null, discountCents: null },
+      { lineId: 'session:vis_2', source: 'session', sessionId: 'vis_2', label: '2Hrs', dateIso: '2026-07-02', amountCents: 8000, qty: null, unitCents: null, discountCents: null },
     ]);
     // Invoice without sessionIds carries no lineItems field at all.
     expect(res.paid[0].lineItems).toBeUndefined();
@@ -268,6 +268,7 @@ describe('invoice lineItem pure mappers', () => {
       amountCents: 2500,
       qty: null,
       unitCents: null,
+      discountCents: null,
     });
   });
   it('mapSessionToLineItem accepts older type/date/price fields', async () => {
@@ -281,6 +282,7 @@ describe('invoice lineItem pure mappers', () => {
       amountCents: 8000,
       qty: null,
       unitCents: null,
+      discountCents: null,
     });
   });
   it('mapSessionToLineItem degrades gracefully on sparse docs', async () => {
@@ -294,6 +296,7 @@ describe('invoice lineItem pure mappers', () => {
       amountCents: null,
       qty: null,
       unitCents: null,
+      discountCents: null,
     });
     expect(mapSessionToLineItem('vis_4', { rate: 'not-a-number' }).amountCents).toBeNull();
   });
@@ -386,11 +389,11 @@ describe('getMyInvoices prefers the stored line items', () => {
   it('renders the stored lines, with the same arithmetic the server totals with', async () => {
     const res = await load({ invoiceStatus: 'open', amountDue: 64, total: 64, lineItems: LINES });
     expect(res.open[0].lineItems).toEqual([
-      { lineId: 'stored:0', source: 'stored', sessionId: '', label: 'Daily visit', dateIso: null, amountCents: 6000, qty: 3, unitCents: 2000 },
+      { lineId: 'stored:0', source: 'stored', sessionId: '', label: 'Daily visit', dateIso: null, amountCents: 6000, qty: 3, unitCents: 2000, discountCents: 0 },
       // 500 gross minus a 100 line discount. Rounded once at the line, exactly as
       // invoiceMath.ts#lineAmountCents does, or the breakdown would not add up to
       // the total printed under it.
-      { lineId: 'stored:1', source: 'stored', sessionId: '', label: 'Extra dog', dateIso: null, amountCents: 400, qty: 1, unitCents: 500 },
+      { lineId: 'stored:1', source: 'stored', sessionId: '', label: 'Extra dog', dateIso: null, amountCents: 400, qty: 1, unitCents: 500, discountCents: 100 },
     ]);
   });
   it('IGNORES sessionIds entirely when the invoice has its own lines', async () => {
@@ -411,7 +414,7 @@ describe('getMyInvoices prefers the stored line items', () => {
       { 'kin_care_sessions/vis_1': { serviceType: '30Minute', startTime: '2026-07-01T10:00:00', rate: '25' } },
     );
     expect(res.open[0].lineItems).toEqual([
-      { lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1', label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null },
+      { lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1', label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null, discountCents: null },
     ]);
   });
   // #408: a line drawn from a visit stays bound to it, and the household's copy
@@ -437,6 +440,7 @@ describe('getMyInvoices prefers the stored line items', () => {
         amountCents: 2500,
         qty: 1,
         unitCents: 2500,
+        discountCents: 0,
       },
     ]);
   });
@@ -465,6 +469,86 @@ describe('getMyInvoices prefers the stored line items', () => {
     expect(res.open[0].lineItems?.[1]).toMatchObject({ sessionId: '', dateIso: null });
     expect(res.open[0].lineItems?.[0]).toMatchObject({ sessionId: 'vis_1', dateIso: '2026-07-01T10:00:00' });
   });
+  it('#1974: ships the line discount, the subtotal and the invoice discount, so the lines add up to the total', async () => {
+    // The walk invoice: $25.00, $9.00, 2 x $600.00 with $50.00 off, then $10.00 off the invoice.
+    const res = await load({
+      invoiceStatus: 'open',
+      amountDue: 1174,
+      total: 1174,
+      discount: 'Thanks for the referral',
+      invoiceDiscountCents: 1000,
+      lineItems: [
+        { description: 'Drop in', qty: 1, unitCents: 2500 },
+        { description: 'Supplies', qty: 1, unitCents: 900 },
+        { description: 'Overnight', qty: 2, unitCents: 60000, discountCents: 5000 },
+      ],
+    });
+    const inv = res.open[0];
+    expect(inv.lineItems?.map((l) => [l.amountCents, l.discountCents])).toEqual([
+      [2500, 0],
+      [900, 0],
+      [115000, 5000],
+    ]);
+    expect(inv.subtotalCents).toBe(118400);
+    expect(inv.invoiceDiscountCents).toBe(1000);
+    const lineSum = (inv.lineItems ?? []).reduce((s, l) => s + (l.amountCents ?? 0), 0);
+    expect(lineSum).toBe(inv.subtotalCents);
+    expect(inv.subtotalCents! - inv.invoiceDiscountCents!).toBe(Math.round(inv.total * 100));
+    // The note still ships; the clients print it beside the amount.
+    expect(inv.discount).toBe('Thanks for the referral');
+  });
+
+  it('#1974: an invoice with lines and no invoice discount ships 0, not null', async () => {
+    const res = await load({ invoiceStatus: 'open', amountDue: 64, total: 64, lineItems: LINES });
+    expect(res.open[0].subtotalCents).toBe(6400);
+    expect(res.open[0].invoiceDiscountCents).toBe(0);
+  });
+
+  it('#1974: an unreadable invoice discount reads as none, never a guess', async () => {
+    for (const bad of [-5, 10.5, 'ten', null]) {
+      const res = await load({ invoiceStatus: 'open', amountDue: 64, total: 64, lineItems: LINES, invoiceDiscountCents: bad });
+      expect(res.open[0].invoiceDiscountCents).toBe(0);
+    }
+  });
+
+  it('#1974: a legacy invoice with no stored lines has no subtotal and no invoice discount figure', async () => {
+    const res = await load(
+      { invoiceStatus: 'open', amountDue: 25, total: 25, discount: '10%', sessionIds: ['vis_1'] },
+      { 'kin_care_sessions/vis_1': { serviceType: '30Minute', startTime: '2026-07-01T10:00:00', rate: '25' } },
+    );
+    expect(res.open[0].subtotalCents).toBeNull();
+    expect(res.open[0].invoiceDiscountCents).toBeNull();
+    expect(res.open[0].lineItems?.[0].discountCents).toBeNull();
+    expect(res.open[0].discount).toBe('10%');
+  });
+
+  it('#1974: the household figures match the PDF to the cent, odd quantities and cents included', async () => {
+    const doc = {
+      invoiceStatus: 'open',
+      kinfolkId: '3',
+      invoiceDiscountCents: 333,
+      lineItems: [
+        { description: 'Half day', qty: 1.5, unitCents: 3333, discountCents: 17 },
+        { description: 'Walk', qty: 3, unitCents: 1999 },
+        { description: 'Overnight', qty: 2.25, unitCents: 4567, discountCents: 1001 },
+      ],
+    };
+    const { invoiceForPdf } = await import('../src/lib/invoicePdf');
+    const { computeInvoiceTotals } = await import('../src/lib/invoiceMath');
+    const pdf = invoiceForPdf('inv1', doc);
+    // The total the office's save writes (`updateInvoice` via invoiceMath), so
+    // the household, the PDF and the admin all close on the same figure.
+    const totalCents = computeInvoiceTotals(doc.lineItems, doc.invoiceDiscountCents, 0).totalCents;
+    expect(totalCents).toBe(pdf.subtotalCents - pdf.invoiceDiscountCents);
+    const res = await load({ ...doc, total: totalCents / 100, amountDue: totalCents / 100 });
+    const inv = res.open[0];
+    expect(inv.lineItems?.map((l) => l.amountCents)).toEqual(pdf.lineItems.map((l) => l.amountCents));
+    expect(inv.lineItems?.map((l) => l.discountCents)).toEqual(pdf.lineItems.map((l) => l.discountCents));
+    expect(inv.subtotalCents).toBe(pdf.subtotalCents);
+    expect(inv.invoiceDiscountCents).toBe(pdf.invoiceDiscountCents);
+    expect(Math.round(inv.total * 100)).toBe(inv.subtotalCents! - inv.invoiceDiscountCents!);
+  });
+
   it('gives every row a key that is unique within the invoice', async () => {
     // Keying on sessionId collapsed every stored row onto one empty key, which
     // is a rendering bug the server can prevent rather than hope about.
