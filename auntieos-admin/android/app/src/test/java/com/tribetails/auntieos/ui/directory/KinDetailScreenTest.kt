@@ -111,6 +111,9 @@ class KinDetailScreenTest {
         coEvery { kinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { removalRepo.list(any()) } returns Result.success(emptyList())
+        // #1822: every upcoming visit already has this Kin unless a test says otherwise.
+        coEvery { kinCareRepo.addKinToUpcomingVisits(any(), any(), any()) } returns
+            Result.success(com.tribetails.auntieos.domain.AddKinToVisitsAnswer("k1", null, upcoming = 0, added = 0))
         coEvery { repo.getHouseholdData(any()) } returns Result.success(null)
         coEvery { repo.getVetClinicsOnce() } returns Result.success(listOf(cedar, river))
         coEvery { repo.getBusinessSettings() } returns Result.success(
@@ -397,6 +400,33 @@ class KinDetailScreenTest {
         assertEquals("s1", opened)
     }
 
+    // #1822: the owner's "Add <Kin> to the N upcoming visits".
+    @Test
+    fun `upcoming visits without this Kin offer to add it, asking first`() {
+        coEvery { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", false) } returns
+            Result.success(com.tribetails.auntieos.domain.AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 2, added = 0))
+        coEvery { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", true) } returns
+            Result.success(com.tribetails.auntieos.domain.AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 2, added = 2))
+        show()
+        rule.onNodeWithText("Add Biscuit to the 2 upcoming visits").performClick()
+        coVerify(exactly = 0) { kinCareRepo.addKinToUpcomingVisits(any(), any(), true) }
+        rule.onNodeWithText(
+            "Biscuit will be on the 2 upcoming visits already booked for this household. Visits that have started or are over stay as they are.",
+        ).assertIsDisplayed()
+        coEvery { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", false) } returns
+            Result.success(com.tribetails.auntieos.domain.AddKinToVisitsAnswer("k1", "Biscuit", upcoming = 0, added = 0))
+        rule.onNodeWithText("Add Biscuit").performClick()
+        rule.waitForIdle()
+        coVerify(exactly = 1) { kinCareRepo.addKinToUpcomingVisits("kf1", "k1", true) }
+        rule.onNodeWithText("Added Biscuit to 2 upcoming visits.").assertIsDisplayed()
+        rule.onNodeWithText("Add Biscuit to the 2 upcoming visits").assertDoesNotExist()
+    }
+    @Test
+    fun `no card when every upcoming visit already has this Kin`() {
+        show()
+        rule.onNodeWithText("Add Biscuit to the upcoming visit").assertDoesNotExist()
+        rule.onNodeWithText("Checking upcoming visits…").assertDoesNotExist()
+    }
     // ── the panels, empty ────────────────────────────────────────────────────
 
     @Test

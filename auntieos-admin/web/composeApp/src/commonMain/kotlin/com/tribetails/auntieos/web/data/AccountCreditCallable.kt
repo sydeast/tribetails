@@ -102,12 +102,24 @@ data class CreditUseDto(
     val invoiceNumber: String?,
 )
 
+/**
+ * #1939: credit in the balance that no listed credit accounts for. Listed
+ * credits plus this, less every use, is the balance.
+ */
+data class EarlierCreditDto(
+    val amountCents: Long,
+    /** What is still unspent of it. */
+    val remainingCents: Long,
+)
+
 /** The household's credit history. Lists newest first, as the server sends them. */
 data class AccountCreditHistory(
     val kinfolkId: String,
     val accountBalanceCents: Long,
     val credits: List<GivenCreditDto>,
     val uses: List<CreditUseDto>,
+    /** Null when there is none, and when an older server sends no key. */
+    val earlierCredit: EarlierCreditDto? = null,
 )
 
 private fun JsonObject.str(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
@@ -149,6 +161,11 @@ fun decodeAccountCreditHistory(body: String): AccountCreditHistory {
                 invoiceId = u.str("invoiceId"),
                 invoiceNumber = u.strOrNull("invoiceNumber"),
             )
+        },
+        earlierCredit = (obj["earlierCredit"] as? JsonObject)?.let { e ->
+            val amount = e.longOrNull("amountCents")
+            val remaining = e.longOrNull("remainingCents")
+            if (amount == null || remaining == null) null else EarlierCreditDto(amount, remaining)
         },
     )
 }

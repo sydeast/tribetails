@@ -1,0 +1,1 @@
+{{Business}}: your MyTribe invite is ready. Accept it within {{expiresInDays}} days: {{claimUrl}}

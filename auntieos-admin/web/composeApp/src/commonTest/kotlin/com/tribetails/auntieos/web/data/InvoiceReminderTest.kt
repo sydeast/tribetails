@@ -50,6 +50,29 @@ class InvoiceReminderTest {
     }
 
     @Test
+    fun aReminderHeldAtItsSendTimeReadsHeldNotSent() {
+        // #2515
+        val heldAt = t + 5 * 60 * 1000
+        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, TimeZone.UTC, appOnly = false, heldAtMs = heldAt))
+        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, TimeZone.UTC, appOnly = true, heldAtMs = heldAt))
+        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, TimeZone.UTC, heldAtMs = t))
+        // A reminder sent after the hold stamps a later time and reads as sent.
+        assertEquals("Sep 14, 4:10 PM", lastReminderLabel(heldAt + 60 * 60 * 1000, TimeZone.UTC, heldAtMs = heldAt))
+        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, TimeZone.UTC, heldAtMs = null))
+        assertEquals("none sent", lastReminderLabel(null, TimeZone.UTC, heldAtMs = heldAt))
+    }
+
+    @Test
+    fun theListLineSaysHeldInsteadOfReminded() {
+        // #2515
+        val heldAt = t + 5 * 60 * 1000
+        assertEquals("reminder held, not sent", reminderListLine(t, false, heldAt, TimeZone.UTC))
+        assertEquals("reminded Sep 14, 3:05 PM, app only", reminderListLine(t, true, null, TimeZone.UTC))
+        assertEquals("reminded Sep 14, 4:10 PM", reminderListLine(heldAt + 60 * 60 * 1000, false, heldAt, TimeZone.UTC))
+        assertEquals("reminded none sent", reminderListLine(null, false, heldAt, TimeZone.UTC))
+    }
+
+    @Test
     fun decodesAnAlreadySentAnswer() {
         assertEquals(
             ReminderOutcome(false, "recent", t, t + day),

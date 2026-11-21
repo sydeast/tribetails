@@ -1,0 +1,1 @@
+{{primaryDisplayName}} invited you to MyTribe. Accept within {{expiresInDays}} days: {{claimUrl}}

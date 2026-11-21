@@ -75,6 +75,8 @@ import com.tribetails.auntieos.web.data.linkPickerOnOtherInvoice
 import com.tribetails.auntieos.web.data.toggleLinkPick
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
 import com.tribetails.auntieos.web.data.InvoicePaymentEntry
+import com.tribetails.auntieos.web.data.PAYMENT_LANDED_NO_ANSWER_CODE
+import com.tribetails.auntieos.web.data.PAYMENT_EARLIER_ON_RECORD_CODE
 import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
 import com.tribetails.auntieos.web.data.receiptGeneratedMessage
 import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
@@ -494,6 +496,7 @@ private fun InvoiceDetailBody(
         onDismiss  = {
             // Not while the call is in flight: its answer has to land somewhere.
             if (!recordingPayment) {
+                // #2297: Cancel keeps a key whose press failed (PaymentSubmissionKeys).
                 showRecordPayment = false
                 recordPaymentError = null
             }
@@ -520,7 +523,18 @@ private fun InvoiceDetailBody(
                     }
                     is WriteResult.Err -> {
                         recordingPayment = false
-                        recordPaymentError = recordPaymentRefusalText(r.message)
+                        // #2297: the payments as they stand now, which the
+                        // check after the failure has just read.
+                        ledgerReload += 1
+                        if (r.code == PAYMENT_LANDED_NO_ANSWER_CODE || r.code == PAYMENT_EARLIER_ON_RECORD_CODE) {
+                            // It landed, and its answer is still missing, or the
+                            // answer is an earlier press's. A payment is on the
+                            // invoice, so the dialog closes.
+                            showRecordPayment = false
+                            showToast(r.message, true)
+                        } else {
+                            recordPaymentError = recordPaymentRefusalText(r.message)
+                        }
                     }
                 }
             }
@@ -620,6 +634,14 @@ private fun InvoiceDetailBody(
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
+                // #2258: the payment terms the invoice will carry.
+                if (action == "convert") {
+                    Text(
+                        convertQuoteTermsLine(invoice),
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                    )
+                }
             }
         }
 
@@ -837,7 +859,7 @@ private fun InvoiceDetailBody(
                         else -> invoice.dueDate
                     },
                 )
-                DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly))
+                DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly, heldAtMs = invoice.reminderHeldAtMs))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
                 if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
             }
@@ -924,7 +946,12 @@ private fun InvoiceDetailBody(
             paymentsState   = paymentsState,
             linkedPayments  = linkedPayments,
             clientPayments  = clientPayments,
-            onRecordPayment = { showRecordPayment = true },
+            onRecordPayment = {
+                // #2297: a payment that got its answer already let its key go;
+                // a key from a press that failed stays held (PaymentSubmissionKeys).
+                paymentKeys.open()
+                showRecordPayment = true
+            },
             // The read is one-shot, so a failed one stays failed until asked
             // again. The shimmer shows while it runs.
             onRetryPayments = {
@@ -996,6 +1023,12 @@ internal fun InvoicePaymentsPanel(
                     color = c.textDim,
                 )
             }
+            // #2470: paid before the invoice was brought over. It has no row,
+            // and it counts toward what has been paid.
+            val broughtOver = invoiceBroughtOverCentsOf(invoice)
+            if (broughtOver > 0L) {
+                DetailRow(BROUGHT_OVER_LINE, formatEditCents(broughtOver), valueMono = true)
+            }
 
             when {
                 paymentsState is FirestoreResult.Loading ->
@@ -1036,7 +1069,7 @@ internal fun InvoicePaymentsPanel(
                         LedgerCaveatBanner(clientPayments)
                     }
                 }
-                invoice.paymentsHistory.isBlank() ->
+                invoice.paymentsHistory.isBlank() && broughtOver == 0L ->
                     EmptyHint(invoicePaymentsEmptyCopy(actions))
             }
         }
@@ -1297,6 +1330,11 @@ private fun RecordPaymentDialog(
     // auto-apply tick: a leftover is tip unless she enters a credit here.
     var credit    by remember(invoice._id, visible) { mutableStateOf("") }
     var sendConfirmation by remember(invoice._id, visible) { mutableStateOf(false) }
+    // #1975: the tip she ticked as right when it is larger than the invoice's total.
+    var bigTipConfirmedCents by remember(invoice._id, visible) { mutableStateOf<Long?>(null) }
+    val liveSplit = recordPaymentSplit(amount, apply, tip, credit, invoiceBalanceCents(invoice))
+    val totalCents = invoiceTotalCents(invoice)
+    val bigTipCents = (liveSplit as? RecordPaymentSplit.Ok)?.tipCents?.takeIf { tipNeedsConfirming(it, totalCents) }
     val canSave = amount.isNotBlank() && apply.isNotBlank() && method.isNotBlank()
     AuntieDialog(
         visible   = visible,
@@ -1313,6 +1351,7 @@ private fun RecordPaymentDialog(
                 onClick = {
                     when (val form = parseRecordPaymentForm(
                         invoice, amount, apply, tip, fee, method, reference, date, notes, credit, sendConfirmation,
+                        bigTipConfirmedCents,
                     )) {
                         is RecordPaymentForm.Invalid -> onInvalid(form.message)
                         is RecordPaymentForm.Ready   -> onSubmit(form.entry)
@@ -1340,10 +1379,18 @@ private fun RecordPaymentDialog(
             BottomBorderField(credit, { credit = it }, label = "Leave as account credit", placeholder = "0.00", keyboardType = KeyboardType.Decimal, enabled = on, modifier = Modifier.fillMaxWidth())
             // #988: where the money goes, before Save.
             Text(
-                recordPaymentSplitLine(recordPaymentSplit(amount, apply, tip, credit, invoiceBalanceCents(invoice)), fee),
+                recordPaymentSplitLine(liveSplit, fee),
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )
+            if (bigTipCents != null && totalCents != null) {
+                AuntieCheckbox(
+                    checked = bigTipConfirmedCents == bigTipCents,
+                    onCheckedChange = { bigTipConfirmedCents = if (it) bigTipCents else null },
+                    label = bigTipConfirmLabel(bigTipCents, totalCents),
+                    enabled = on,
+                )
+            }
             BottomBorderField(method, { method = it }, label = "Method *", placeholder = "Venmo, PayPal, cash...", enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(reference, { reference = it }, label = "Reference #", enabled = on, modifier = Modifier.fillMaxWidth())
             BottomBorderField(date, { date = it }, label = "Date (YYYY-MM-DD)", enabled = on, modifier = Modifier.fillMaxWidth())

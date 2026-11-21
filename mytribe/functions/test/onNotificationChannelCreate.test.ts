@@ -146,6 +146,40 @@ describe('onNotificationChannelCreate hands the push what a tap opens (#2259, #2
     await run('email', parent);
     expect(mocks.emailSender.mock.calls[0]![0].open).toBeUndefined();
   });
+  it("#2487: a household's email carries {{link}} to the visit in MyTribe", async () => {
+    await run('email', {
+      key: 'kincare.auntie.arrived',
+      recipientUid: 'cli1',
+      stream: 'kinfolk',
+      data: { kinfolkId: 'fam1', visitId: 'v1', batchId: 'b1' },
+      targetType: 'booking',
+      targetId: 'v1',
+      notificationId: 'n1',
+    });
+    expect(mocks.emailSender.mock.calls[0]![0].data.link).toBe('https://kinfolk.tribetails.com/schedule/v1');
+  });
+  it("#2487: the office's copy carries {{link}} to the item in AuntieOS", async () => {
+    await run('sms', {
+      key: 'invoice.payment.applied',
+      recipientUid: 'owner1',
+      stream: 'business',
+      data: { kinfolkId: 'fam1', invoiceId: 'i1' },
+      targetType: 'invoice',
+      targetId: 'i1',
+      notificationId: 'n2',
+    });
+    expect(mocks.smsSender.mock.calls[0]![0].data.link).toBe('https://auntie.tribetails.com/invoices?invoiceId=i1');
+  });
+  it("#2487: an emitter's own link (the password reset) is kept", async () => {
+    await run('email', {
+      key: 'auth.password.reset',
+      recipientUid: 'cli1',
+      stream: 'kinfolk',
+      data: { link: 'https://kinfolk.tribetails.com/account/secure-reset?oobCode=x' },
+      notificationId: 'n3',
+    });
+    expect(mocks.emailSender.mock.calls[0]![0].data.link).toBe('https://kinfolk.tribetails.com/account/secure-reset?oobCode=x');
+  });
   it('#2371: a household text message is handed its own entry on the notifications list', async () => {
     await run('sms', {
       key: 'kincare.auntie.arrived',

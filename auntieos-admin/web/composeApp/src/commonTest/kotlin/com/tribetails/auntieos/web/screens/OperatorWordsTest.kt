@@ -27,6 +27,16 @@ class OperatorWordsTest {
     }
 
     @Test
+    fun metaLineNamesWhoCausedItThenTheCategory() {
+        // #2277: the office note notice names its writer on the row.
+        assertEquals("Mia Torres · Visits", notificationMetaLine("Mia Torres", "visit"))
+        assertEquals("Mia Torres · Visits", notificationMetaLine("  Mia Torres ", "visit"))
+        assertEquals("Visits", notificationMetaLine(null, "visit"))
+        assertEquals("Visits", notificationMetaLine("  ", "visit"))
+        assertEquals("Billing", notificationMetaLine("catch@hanasamku.com", "invoice"))
+        assertEquals("An Auntie · Other", notificationMetaLine("An Auntie", ""))
+    }
+    @Test
     fun appliesToAndSchemaCountReadAsPlainPhrases() {
         assertEquals("Nothing yet", appliesToLabel("NONE"))
         assertEquals("KinTales", appliesToLabel("KINTALE"))

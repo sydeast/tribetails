@@ -157,6 +157,16 @@ describe('the stamp is a fixpoint (what makes the backfill idempotent)', () => {
   it("a doc hand-labelled 'redeemed' with no redemption stamp honestly reads credit", () => {
     expect(invoiceStateStampOf({ status: 'redeemed', amountDue: 5, total: 5 }, 0).status).toBe('credit');
   });
+
+  it('#2471: an invoice cancelled only in the legacy field stamps cancelled/none, and stays so', () => {
+    // Part paid before it was cancelled: by its money alone it read open/all.
+    const legacy: InvoiceStampDoc = { invoiceStatus: 'cancelled', amountDue: 30, total: 40, totalCents: 4000 };
+    const first = invoiceStateStampOf(legacy, 1000);
+    expect(first).toEqual({ status: 'cancelled', editScope: 'none' });
+    expect(invoiceStateStampOf({ ...legacy, ...first }, 1000)).toEqual(first);
+    // Fully paid by its rows: still cancelled, never re-stamped paid.
+    expect(invoiceStateStampOf({ ...legacy, amountDue: 0 }, 4000)).toEqual({ status: 'cancelled', editScope: 'none' });
+  });
 });
 
 /**

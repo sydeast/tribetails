@@ -68,7 +68,7 @@ import {
 } from './invoiceCheckoutDedupe';
 import { invoiceStateOf } from './invoiceEditPolicy';
 import { PAID_INVOICE_REFUSAL } from './invoicePaidGate';
-import { invoiceTotalCentsOf, paidCentsFromPayments, settleInvoice, type PaymentAmount } from './invoiceMath';
+import { paidCentsFromPayments, settleInvoiceDoc, type PaymentAmount } from './invoiceMath';
 import { planApply, type ApplyStep } from './paymentApply';
 
 /** The `method` on a card payment's invoice row. The root ledger row has always said the same. */
@@ -183,7 +183,8 @@ export function decideCardApply(input: {
   // What the payment rows leave owing: the figure every admin payment settles
   // against. And what the invoice states it is owed: the figure `payInvoice`
   // charged (`amountDueCentsOf` is the rule it reads the balance by).
-  const recordedDueCents = settleInvoice(invoiceTotalCentsOf(doc), existingPaidCents).amountDueCents;
+  // #2470: the rows plus anything brought over paid.
+  const recordedDueCents = settleInvoiceDoc(doc, existingPaidCents).amountDueCents;
   const statedDueCents = Math.max(0, amountDueCentsOf(doc, existingPaidCents));
 
   const fallback = (reason: string): CardApplyDecision => {
@@ -286,7 +287,7 @@ export function cardHoldReason(input: {
   // A payment with no figure has no landing to read, so the total is asked
   // here by the fallback's own rule (`no_recorded_balance`): nothing owed on
   // it is held with or without an amount.
-  if (input.landing?.kind === 'no-amount' && settleInvoice(invoiceTotalCentsOf(doc), paidCents).amountDueCents <= 0) {
+  if (input.landing?.kind === 'no-amount' && settleInvoiceDoc(doc, paidCents).amountDueCents <= 0) {
     return 'invoice-no-balance';
   }
   return null;

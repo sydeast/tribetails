@@ -71,15 +71,14 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import type { StagedWriter } from './moneyIdempotency';
 
 import {
-  isDraftOrQuote,
   refusedLifecycle,
   alreadySettledRefusal,
   type InvoiceDoc,
 } from '../admin/markInvoicePaid';
+import { invoiceStateOf } from './invoiceEditPolicy';
 import {
   paidCentsFromPayments,
-  invoiceTotalCentsOf,
-  settleInvoice,
+  settleInvoiceDoc,
   centsToDollars,
   type PaymentAmount,
 } from './invoiceMath';
@@ -181,6 +180,18 @@ export function planCreditDraw(input: {
 }
 
 /**
+ * #2510: a draft or a quote by the state classifier, which reads `status` and
+ * falls back to the older `invoiceStatus` only when `status` is absent (#2471).
+ * Reading `status` alone let a draft or quote marked only in the older field
+ * take account credit, a bill the household was never sent. `status` wins when
+ * both are stored: they are never OR-ed.
+ */
+function unsentStateOf(doc: InvoiceDoc): 'draft' | 'quote' | null {
+  const state = invoiceStateOf(doc);
+  return state === 'draft' || state === 'quote' ? state : null;
+}
+
+/**
  * Can this invoice take credit at all?
  *
  * The SAME refusals `markInvoicePaid` applies to a manual payment, imported
@@ -192,12 +203,10 @@ export function invoiceAcceptsCredit(
   doc: InvoiceDoc,
   existingPayments: readonly PaymentAmount[],
 ): boolean {
-  if (isDraftOrQuote(doc)) return false;
+  if (unsentStateOf(doc) !== null) return false;
   if (refusedLifecycle(doc) !== null) return false;
-  const settlement = settleInvoice(
-    invoiceTotalCentsOf(doc),
-    paidCentsFromPayments(existingPayments),
-  );
+  // #2470: the rows plus anything brought over paid.
+  const settlement = settleInvoiceDoc(doc, paidCentsFromPayments(existingPayments));
   if (alreadySettledRefusal(doc, existingPayments.length, settlement.state) !== null) return false;
   return settlement.amountDueCents > 0;
 }
@@ -244,9 +253,9 @@ export function creditInvoiceRefusal(
   doc: InvoiceDoc,
   existingPayments: readonly PaymentAmount[],
 ): CreditDrawRefusal | null {
-  const status = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
-  if (status === 'draft') return 'invoice_draft';
-  if (status === 'quote') return 'invoice_quote';
+  const unsent = unsentStateOf(doc);
+  if (unsent === 'draft') return 'invoice_draft';
+  if (unsent === 'quote') return 'invoice_quote';
   // #2358: a cancelled invoice takes no payment of any kind, credit included,
   // and says so by name (legacy `invoiceStatus` spelling too).
   if (invoiceCancelled(doc as InvoicePaidDoc)) return 'invoice_cancelled';
@@ -428,7 +437,8 @@ export async function drawAccountCredit(
       );
     }
     const heldCents = readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]);
-    const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(existingPayments));
+    // #2470: measured against the rows plus what was brought over paid.
+    const before = settleInvoiceDoc(doc, paidCentsFromPayments(existingPayments));
     const found = { invoiceNumber, kinfolkId, accountBalanceCents: heldCents, amountDueCents: before.amountDueCents };
     const invoiceRefusal = creditInvoiceRefusal(doc, existingPayments);
     if (invoiceRefusal !== null) return { result: refusedWith(invoiceRefusal, found), applied: null };
@@ -443,7 +453,7 @@ export async function drawAccountCredit(
     // Throws rather than writes if this would ever be negative, which aborts
     // the whole transaction: no payment row, no invoice update, no decrement.
     const remainingCents = balanceAfterDraw(heldCents, drawCents);
-    const after = settleInvoice(before.totalCents, before.paidCents + drawCents);
+    const after = settleInvoiceDoc(doc, before.rowsPaidCents + drawCents);
     const settling = after.state === 'settled' || after.state === 'overpaid';
     // `create`, never `set`: two attempts that race past the replay read cannot
     // both land a row at this key.
@@ -528,7 +538,8 @@ export async function drawAccountCredit(
       status: settling ? 'paid' : 'open',
       paymentStatus: settling ? 'PAID' : 'PARTIAL',
       totalCents: after.totalCents,
-      paidCents: after.paidCents,
+      // #2470: the rows only; a brought-over amount stays in its own field.
+      paidCents: after.rowsPaidCents,
       amountDueCents: after.amountDueCents,
       overpaidCents: after.overpaidCents,
       amountDue: centsToDollars(after.amountDueCents),
@@ -555,7 +566,7 @@ export async function drawAccountCredit(
     };
     tx.set(
       invRef,
-      { ...invoiceUpdate, ...invoiceStateStampOf({ ...doc, ...invoiceUpdate }, after.paidCents) },
+      { ...invoiceUpdate, ...invoiceStateStampOf({ ...doc, ...invoiceUpdate }, after.rowsPaidCents) },
       { merge: true },
     );
     return {

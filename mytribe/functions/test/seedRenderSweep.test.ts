@@ -66,8 +66,8 @@ describe('every seed renders for real, end to end', () => {
     });
   }
 
-  // 58 since #1874 (`message.reply`).
-  it('there are 58 seeds, all covered above', () => {
-    expect(SEED_CORPUS.length).toBe(58);
+  // 64 since #2487 (the four portal invites and the two recovery emails).
+  it('there are 64 seeds, all covered above', () => {
+    expect(SEED_CORPUS.length).toBe(64);
   });
 });

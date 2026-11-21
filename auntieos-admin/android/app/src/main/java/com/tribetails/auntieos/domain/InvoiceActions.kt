@@ -355,13 +355,25 @@ data class InvoicePartPayment(
     val paidCents: Long,
     val remainingCents: Long,
 )
+/**
+ * #2470: WHAT HAS BEEN APPLIED TO AN INVOICE, in integer cents: the stored
+ * [Invoice.paidCents] (the payment rows' sum) plus
+ * [Invoice.broughtOverPaidCents], what was paid before the invoice was brought
+ * over from the old system, which has no row. The server's
+ * `invoiceMath.ts#appliedCentsOf`, and the web's `invoiceAppliedCents`.
+ */
+fun invoiceAppliedCents(invoice: Invoice): Long =
+    invoice.paidCents.coerceAtLeast(0L) + invoice.broughtOverPaidCents.coerceAtLeast(0L)
+/** #2470: the line the Payments panel shows for [Invoice.broughtOverPaidCents]. */
+const val BROUGHT_OVER_LINE: String = "Paid in the old system"
 fun invoicePartPaid(invoice: Invoice): InvoicePartPayment? {
     if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return null
-    if (invoice.paidCents <= 0L) return null
+    val paidCents = invoiceAppliedCents(invoice)
+    if (paidCents <= 0L) return null
     val amountDue = invoice.amountDue.finiteOrZero()
     val remainingCents = Math.round(amountDue * 100.0)
     if (remainingCents <= 0L) return null
-    return InvoicePartPayment(paidCents = invoice.paidCents, remainingCents = remainingCents)
+    return InvoicePartPayment(paidCents = paidCents, remainingCents = remainingCents)
 }
 /** "$20.00" from an integer count of cents. */
 fun formatCentsUsd(cents: Long): String = formatUsdCents(cents)

@@ -124,7 +124,7 @@ internal fun InvoiceEditDialog(
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 AuntieField(
                     value = draft.dueDate,
-                    onValueChange = { onChange(draft.copy(dueDate = it)) },
+                    onValueChange = { onChange(draft.withTypedDueDate(it)) },
                     label = "Due date",
                     // #1609: picked terms other than custom set the due date on save.
                     placeholder = if (termsSetDueDate) "set by the terms" else "YYYY-MM-DD",
@@ -140,7 +140,7 @@ internal fun InvoiceEditDialog(
         AuntieDropdownField<InvoiceTermsCode?>(
             value = draft.termsCode,
             options = (if (storedTermsCode == null) listOf<InvoiceTermsCode?>(null) else emptyList()) + invoiceTermsDefs(),
-            onSelect = { onChange(draft.copy(termsCode = it)) },
+            onSelect = { onChange(draft.withPickedTerms(it)) },
             displayText = { code ->
                 code?.label ?: if (storedTerms.isBlank()) "Not set" else "As stored: ${storedTerms.trim()}"
             },

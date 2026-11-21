@@ -36,6 +36,7 @@ data class InvoiceLineItemDto(
     val amountCents: Long?,
     val qty: Double?,
     val unitCents: Long?,
+    val discountCents: Long?,
 )
 
 /**
@@ -53,6 +54,7 @@ internal fun decodeInvoiceLineItemDto(raw: Map<String, Any?>?): InvoiceLineItemD
         amountCents = (raw?.get("amountCents") as? Number)?.toLong(),
         qty = (raw?.get("qty") as? Number)?.toDouble(),
         unitCents = (raw?.get("unitCents") as? Number)?.toLong(),
+        discountCents = (raw?.get("discountCents") as? Number)?.toLong(),
     )
 
 /** `InvoiceDtoPayMethod`, shared across callables. */
@@ -78,6 +80,27 @@ internal fun decodeInvoiceDtoPayMethod(raw: Map<String, Any?>?): InvoiceDtoPayMe
         kind = (raw?.get("kind") as? String).orEmpty(),
         url = raw?.get("url") as? String,
         instructions = raw?.get("instructions") as? String,
+    )
+
+/** `InvoiceDtoPayment`, shared across callables. */
+data class InvoiceDtoPayment(
+    val paymentId: String,
+    val methodLabel: String,
+    val paidDay: String?,
+    val amountCents: Long,
+)
+
+/**
+ * Fail-soft decode of `InvoiceDtoPayment` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeInvoiceDtoPayment(raw: Map<String, Any?>?): InvoiceDtoPayment =
+    InvoiceDtoPayment(
+        paymentId = (raw?.get("paymentId") as? String).orEmpty(),
+        methodLabel = (raw?.get("methodLabel") as? String).orEmpty(),
+        paidDay = raw?.get("paidDay") as? String,
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
     )
 
 /** `InvoiceDto`, shared across callables. */
@@ -115,8 +138,11 @@ data class InvoiceDto(
     val writtenOffCents: Long?,
     /** Null when the payload omits the key. */
     val lineItems: List<InvoiceLineItemDto>? = null,
+    val subtotalCents: Long?,
+    val invoiceDiscountCents: Long?,
     val payMethods: List<InvoiceDtoPayMethod>,
     val payBlockedReason: String?,
+    val payments: List<InvoiceDtoPayment>,
 )
 
 /**
@@ -154,8 +180,11 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         creditRedeemedAtMs = (raw?.get("creditRedeemedAtMs") as? Number)?.toDouble(),
         writtenOffCents = (raw?.get("writtenOffCents") as? Number)?.toLong(),
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
+        subtotalCents = (raw?.get("subtotalCents") as? Number)?.toLong(),
+        invoiceDiscountCents = (raw?.get("invoiceDiscountCents") as? Number)?.toLong(),
         payMethods = (raw?.get("payMethods") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayMethod(nested) } },
         payBlockedReason = raw?.get("payBlockedReason") as? String,
+        payments = (raw?.get("payments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayment(nested) } },
     )
 
 // ---------- acceptQuote ----------
@@ -579,6 +608,7 @@ data class GetInvoiceLedgerResultPayment(
     val paidAt: String?,
     val recordedBy: String?,
     val sourcePaymentId: String?,
+    val methodLabel: String,
 )
 
 /**
@@ -595,6 +625,7 @@ internal fun decodeGetInvoiceLedgerResultPayment(raw: Map<String, Any?>?): GetIn
         paidAt = raw?.get("paidAt") as? String,
         recordedBy = raw?.get("recordedBy") as? String,
         sourcePaymentId = raw?.get("sourcePaymentId") as? String,
+        methodLabel = (raw?.get("methodLabel") as? String).orEmpty(),
     )
 
 /** Nested in the `getInvoiceLedger` contract. */
@@ -635,6 +666,7 @@ data class GetInvoiceLedgerResultLedgerPayment(
     val appliedInvoiceId: String,
     val appliedInvoiceNumber: String,
     val method: String,
+    val methodLabel: String,
     val reference: String,
     val date: String,
     val notes: String,
@@ -662,6 +694,7 @@ internal fun decodeGetInvoiceLedgerResultLedgerPayment(raw: Map<String, Any?>?):
         appliedInvoiceId = (raw?.get("appliedInvoiceId") as? String).orEmpty(),
         appliedInvoiceNumber = (raw?.get("appliedInvoiceNumber") as? String).orEmpty(),
         method = (raw?.get("method") as? String).orEmpty(),
+        methodLabel = (raw?.get("methodLabel") as? String).orEmpty(),
         reference = (raw?.get("reference") as? String).orEmpty(),
         date = (raw?.get("date") as? String).orEmpty(),
         notes = (raw?.get("notes") as? String).orEmpty(),
@@ -700,6 +733,7 @@ data class GetInvoiceLedgerResult(
     val invoiceId: String,
     val payments: List<GetInvoiceLedgerResultPayment>,
     val paidCents: Long,
+    val broughtOverPaidCents: Long,
     val totalCents: Long,
     val amountDueCents: Long,
     val writeOffs: List<GetInvoiceLedgerResultWriteOff>,
@@ -723,6 +757,7 @@ internal fun decodeGetInvoiceLedgerResult(raw: Map<String, Any?>?): GetInvoiceLe
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
         payments = (raw?.get("payments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultPayment(nested) } },
         paidCents = (raw?.get("paidCents") as? Number)?.toLong() ?: 0L,
+        broughtOverPaidCents = (raw?.get("broughtOverPaidCents") as? Number)?.toLong() ?: 0L,
         totalCents = (raw?.get("totalCents") as? Number)?.toLong() ?: 0L,
         amountDueCents = (raw?.get("amountDueCents") as? Number)?.toLong() ?: 0L,
         writeOffs = (raw?.get("writeOffs") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultWriteOff(nested) } },
@@ -887,6 +922,7 @@ data class ListPaymentsResultPayment(
     val appliedInvoiceId: String,
     val appliedInvoiceNumber: String,
     val method: String,
+    val methodLabel: String,
     val reference: String,
     val date: String,
     val notes: String,
@@ -918,6 +954,7 @@ internal fun decodeListPaymentsResultPayment(raw: Map<String, Any?>?): ListPayme
         appliedInvoiceId = (raw?.get("appliedInvoiceId") as? String).orEmpty(),
         appliedInvoiceNumber = (raw?.get("appliedInvoiceNumber") as? String).orEmpty(),
         method = (raw?.get("method") as? String).orEmpty(),
+        methodLabel = (raw?.get("methodLabel") as? String).orEmpty(),
         reference = (raw?.get("reference") as? String).orEmpty(),
         date = (raw?.get("date") as? String).orEmpty(),
         notes = (raw?.get("notes") as? String).orEmpty(),
@@ -1427,6 +1464,8 @@ data class RecordPaymentResult(
     val confirmationAppOnly: Boolean? = null,
     val householdNoPortalAccount: Boolean,
     val officeNoticePending: Boolean,
+    /** Null when the payload omits the key. */
+    val replayed: Boolean? = null,
 )
 
 /**
@@ -1454,6 +1493,7 @@ internal fun decodeRecordPaymentResult(raw: Map<String, Any?>?): RecordPaymentRe
         confirmationAppOnly = raw?.get("confirmationAppOnly") as? Boolean,
         householdNoPortalAccount = raw?.get("householdNoPortalAccount") as? Boolean ?: false,
         officeNoticePending = raw?.get("officeNoticePending") as? Boolean ?: false,
+        replayed = raw?.get("replayed") as? Boolean,
     )
 
 // ---------- redeemCredit ----------
@@ -1818,6 +1858,23 @@ internal fun decodeGetAccountCreditHistoryResultUse(raw: Map<String, Any?>?): Ge
         invoiceNumber = raw?.get("invoiceNumber") as? String,
     )
 
+/** Nested in the `getAccountCreditHistory` contract. */
+data class GetAccountCreditHistoryResultEarlierCredit(
+    val amountCents: Long,
+    val remainingCents: Long,
+)
+
+/**
+ * Fail-soft decode of `GetAccountCreditHistoryResultEarlierCredit` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetAccountCreditHistoryResultEarlierCredit(raw: Map<String, Any?>?): GetAccountCreditHistoryResultEarlierCredit =
+    GetAccountCreditHistoryResultEarlierCredit(
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        remainingCents = (raw?.get("remainingCents") as? Number)?.toLong() ?: 0L,
+    )
+
 /** Response from the `getAccountCreditHistory` callable. */
 data class GetAccountCreditHistoryResult(
     val ok: Boolean,
@@ -1825,6 +1882,7 @@ data class GetAccountCreditHistoryResult(
     val accountBalanceCents: Long,
     val credits: List<GetAccountCreditHistoryResultCredit>,
     val uses: List<GetAccountCreditHistoryResultUse>,
+    val earlierCredit: GetAccountCreditHistoryResultEarlierCredit?,
 )
 
 /**
@@ -1839,6 +1897,7 @@ internal fun decodeGetAccountCreditHistoryResult(raw: Map<String, Any?>?): GetAc
         accountBalanceCents = (raw?.get("accountBalanceCents") as? Number)?.toLong() ?: 0L,
         credits = (raw?.get("credits") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultCredit(nested) } },
         uses = (raw?.get("uses") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultUse(nested) } },
+        earlierCredit = contractRawMap(raw?.get("earlierCredit"))?.let { nested -> decodeGetAccountCreditHistoryResultEarlierCredit(nested) },
     )
 
 // ---------- listUnappliedPayments ----------

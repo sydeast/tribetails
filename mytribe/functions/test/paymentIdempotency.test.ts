@@ -149,6 +149,26 @@ describe('#825 recordPayment: one key, one payment, one credit', () => {
     expect(second.amountCents).toBe(10_000);
   });
 
+  it('#2297 review: marks the answer to a same-key retry as replayed, and records nothing for a changed figure', async () => {
+    const ctx = buildDbMock({ writeThrough: true, docs: {} });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const first = await recordPaymentHandler(req(args({ idempotencyKey: PAY_A })));
+    // The screen held its key after a lost reply and the amount was then
+    // changed. The row under the key is the payment on record, and the answer
+    // says so, so the screen does not report the new figure as recorded.
+    const changed = await recordPaymentHandler(
+      req(args({ idempotencyKey: PAY_A, amount: 150, creditToAccountCents: 15_000 })),
+    );
+
+    expect(first.replayed).toBeUndefined();
+    expect(changed.replayed).toBe(true);
+    expect(changed.amountCents).toBe(10_000);
+    expect(changed.creditedToAccountCents).toBe(10_000);
+    expect(paymentRows(ctx)).toEqual([`payments/${PAY_A}`]);
+    expect(balanceMoves(ctx)).toHaveLength(1);
+  });
+
   it('records TWO payment rows and moves the balance TWICE for two different keys', async () => {
     const ctx = buildDbMock({ writeThrough: true, docs: {} });
     mocks.dbFn.mockReturnValue(ctx.db);

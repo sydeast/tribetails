@@ -76,6 +76,12 @@ vi.mock('../api/kinRemovalRequests', () => ({
   resolveKinRemovalRequest: vi.fn(),
 }));
 vi.mock('../lib/access', () => ({ useAdminAccess: () => ({ status: 'admin' }) }));
+// #1822: the owner's "Add <Kin> to the N upcoming visits".
+const { addKinToUpcomingVisits } = vi.hoisted(() => ({ addKinToUpcomingVisits: vi.fn() }));
+vi.mock('../api/addKinToUpcomingVisits', () => ({
+  addKinToUpcomingVisits: (kinfolkId: string, kinId: string, apply: boolean) =>
+    addKinToUpcomingVisits(kinfolkId, kinId, apply),
+}));
 // #1908 kin-vet: the household's vet, read once from household_data.
 const { getHouseholdData } = vi.hoisted(() => ({ getHouseholdData: vi.fn() }));
 vi.mock('../api/householdData', async (orig) => ({
@@ -123,6 +129,8 @@ beforeEach(() => {
   listKinRemovalRequests.mockResolvedValue({ requests: [] });
   getHouseholdData.mockReset();
   getHouseholdData.mockResolvedValue(null);
+  addKinToUpcomingVisits.mockReset();
+  addKinToUpcomingVisits.mockResolvedValue({ kinId: 'p1', kinName: 'Willow', upcoming: 0, added: 0 });
 });
 /** A tag under the name: a resolved chip (#2015), or the plain pill while the tag list loads. */
 function isTagPill(el: HTMLElement): boolean {
@@ -133,6 +141,20 @@ function withClinics(clinics: Array<Record<string, unknown>>) {
   useCollection.mockImplementation((spec: { path?: string }) => (spec?.path === 'vet_clinics' ? ready(clinics) : ready([])));
 }
 
+describe('KinView: adding a new Kin to visits already booked (#1822)', () => {
+  it('asks for this Kin of this household, and offers the step when upcoming visits lack the Kin', async () => {
+    addKinToUpcomingVisits.mockResolvedValue({ kinId: 'p1', kinName: 'Willow', upcoming: 3, added: 0 });
+    mount();
+    expect(await screen.findByRole('button', { name: 'Add Willow to the 3 upcoming visits' })).toBeTruthy();
+    expect(addKinToUpcomingVisits).toHaveBeenCalledWith('kf-1', 'p1', false);
+  });
+  it('draws nothing when every upcoming visit already has the Kin', async () => {
+    mount();
+    await screen.findByText('Care checklist');
+    await waitFor(() => expect(addKinToUpcomingVisits).toHaveBeenCalled());
+    expect(screen.queryByTestId('add-kin-to-visits')).toBeNull();
+  });
+});
 describe('KinView: the household removal request band (#1408)', () => {
   it('shows a pending request near the top, with Archive and Decline', async () => {
     listKinRemovalRequests.mockResolvedValue({

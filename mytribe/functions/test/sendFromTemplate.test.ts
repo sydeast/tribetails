@@ -36,6 +36,60 @@ describe('sendFromTemplate', () => {
     });
   });
 
+  it('#2487: fills {{Business}} on a direct send, and keeps a caller value', async () => {
+    tplGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ subject: 'Welcome from {{Business}}', body: 'Hi', html: null }),
+    });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.primary', 'a@b.com', { name: 'Alice' });
+    const sent = sendMock.mock.calls[0][0].data as Record<string, unknown>;
+    // The settings read fails in this mock, so the neutral wording, never a blank.
+    expect(typeof sent.Business).toBe('string');
+    expect(String(sent.Business).trim()).not.toBe('');
+    expect(sent.name).toBe('Alice');
+
+    sendMock.mockClear();
+    await sendFromTemplate('invite.primary', 'a@b.com', { Business: 'Given', business: 'given' });
+    expect(sendMock.mock.calls[0][0].data).toEqual({ Business: 'Given', business: 'given' });
+  });
+
+  it('#2487: fills {{link}} on a direct send with the send\'s own link, and keeps a caller value', async () => {
+    tplGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ subject: 'Your invite', body: 'Accept it: {{link}}', html: null }),
+    });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.primary', 'a@b.com', { claimUrl: 'https://kinfolk.tribetails.com/claim?invite=i1' });
+    expect(sendMock.mock.calls[0][0].data.link).toBe('https://kinfolk.tribetails.com/claim?invite=i1');
+
+    sendMock.mockClear();
+    await sendFromTemplate('invite.primary', 'a@b.com', { link: 'https://given', claimUrl: 'https://other' });
+    expect(sendMock.mock.calls[0][0].data.link).toBe('https://given');
+  });
+
+  it('#2487: the confirm email links {{link}} to the address to confirm, not to the claim', async () => {
+    tplGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ subject: 'Confirm', body: 'Confirm it: {{link}}', html: null }),
+    });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.verify-email', 'catch@hanasamku.com', {
+      claimUrl: 'https://kinfolk.tribetails.com/claim?invite=i1',
+      verifyUrl: 'https://kinfolk.tribetails.com/account/action?mode=verifyEmail&oobCode=abc',
+    });
+    expect(sendMock.mock.calls[0][0].data.link).toBe(
+      'https://kinfolk.tribetails.com/account/action?mode=verifyEmail&oobCode=abc',
+    );
+  });
+
+  it('#2487: leaves the data alone when the template prints no link', async () => {
+    tplGet.mockResolvedValue({ exists: true, data: () => ({ subject: 'Hi', body: 'Plain', html: null }) });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.primary', 'a@b.com', { claimUrl: 'https://x' });
+    expect(sendMock.mock.calls[0][0].data).toEqual({ claimUrl: 'https://x' });
+  });
+
   it('throws fail-loud when template missing', async () => {
     tplGet.mockResolvedValue({ exists: false });
     const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');

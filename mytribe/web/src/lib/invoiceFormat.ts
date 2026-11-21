@@ -186,6 +186,41 @@ export function paidDollarsOf(inv: Pick<InvoiceDto, 'status' | 'paidCents' | 'to
   if (inv.status === 'written_off') return inv.paidCents > 0 ? inv.paidCents / 100 : 0;
   return inv.paidCents > 0 ? inv.paidCents / 100 : Math.max(0, inv.total - inv.amountDue);
 }
+/** #2334: one line of an invoice's Payment History. */
+export type HouseholdPayment = InvoiceDto['payments'][number];
+
+/**
+ * #2334: an invoice's Payment History, newest first as the server sends it.
+ * A server older than the field sends no key, which reads as no rows.
+ */
+export function paymentHistoryOf(inv: { payments?: HouseholdPayment[] | null }): HouseholdPayment[] {
+  return Array.isArray(inv.payments) ? inv.payments : [];
+}
+
+/** #2334: the words for a row whose method was never stored. Never a stored key. */
+export const ONLINE_PAYMENT_LABEL = 'Online payment';
+
+/**
+ * #2334: how a Payment History row names its method. The server's plain words
+ * (Card, Klarna, Affirm, Account credit, the method the office recorded); a
+ * stored "stripe" that slipped through reads "Online payment", and a blank
+ * reads "Payment".
+ */
+export function paymentRowMethodLabel(p: Pick<HouseholdPayment, 'methodLabel'>): string {
+  const label = (p.methodLabel ?? '').trim();
+  if (label.toLowerCase() === 'stripe') return ONLINE_PAYMENT_LABEL;
+  return label === '' ? 'Payment' : label;
+}
+
+/** #2334: the day under a Payment History row, "Nov 20, 2026", or null when the row has none. */
+export function paymentRowDayLabel(p: Pick<HouseholdPayment, 'paidDay'>): string | null {
+  return p.paidDay ? longDateLabel(p.paidDay) : null;
+}
+
+/** #2334: account credit put against the bill gets the gift tile, as in the mock; every payment the card tile. */
+export function paymentRowIsCredit(p: Pick<HouseholdPayment, 'methodLabel'>): boolean {
+  return (p.methodLabel ?? '').trim().toLowerCase() === 'account credit';
+}
 /**
  * "Saved to Account Balance" / "Redeemed", per InvoicesScreen.kt's targetLabel.
  * The old "Returned to Original Payment Method" case is gone: credits are NOT
@@ -317,4 +352,39 @@ export function declinedRowLabel(
 ): string {
   const actor = quoteActorLabel(invoice, viewerUid);
   return actor ? `${actor} declined this` : 'Declined';
+}
+
+/**
+ * #1974: "includes $50.00 off" under a line whose amount already has a
+ * discount taken out, the wording the admin and the PDF use. Null when there
+ * is none, and on a row rebuilt from a visit (no figure) or from an older
+ * server (no key).
+ */
+export function lineDiscountLine(discountCents: number | null | undefined): string | null {
+  return typeof discountCents === 'number' && discountCents > 0 ? `includes ${formatCentsUsd(discountCents)} off` : null;
+}
+
+/**
+ * #1974: the subtotal and invoice discount an invoice built from lines shows
+ * under them. Null for an invoice with no stored lines, and for an older
+ * server that sends neither key: that invoice keeps the free-text discount row.
+ */
+export function invoiceDiscountFigures(
+  inv: Partial<Pick<InvoiceDto, 'subtotalCents' | 'invoiceDiscountCents'>>,
+): { subtotalCents: number; invoiceDiscountCents: number } | null {
+  const subtotal = inv.subtotalCents;
+  if (typeof subtotal !== 'number') return null;
+  const discount = inv.invoiceDiscountCents;
+  return { subtotalCents: subtotal, invoiceDiscountCents: typeof discount === 'number' && discount > 0 ? discount : 0 };
+}
+
+/** "(10.00)", the invoice mock's notation for an amount taken off. */
+export function discountAmountText(cents: number): string {
+  return `(${formatCentsUsd(cents).replace('$', '')})`;
+}
+
+/** The office's note on the invoice discount, or null when it says nothing. */
+export function discountNoteOf(discount: string | null | undefined): string | null {
+  const note = (discount ?? '').trim();
+  return note === '' ? null : note;
 }

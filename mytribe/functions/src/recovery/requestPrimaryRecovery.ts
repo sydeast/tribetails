@@ -62,7 +62,8 @@ export async function requestPrimaryRecoveryHandler(req: CallableRequest<unknown
   });
   if (process.env.AUNTIE_NOTIFY_EMAIL) {
     await sendFromTemplate('recovery.requested', process.env.AUNTIE_NOTIFY_EMAIL, {
-      tribeName: args.familyId,
+      // #2487: the household's name, never its record id.
+      tribeName: (await (await import('../lib/inviteNames.js')).inviteNamesFor(args.familyId, { caller: 'requestPrimaryRecovery' })).tribeName,
       method: args.contactMethod,
     });
   }

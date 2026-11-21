@@ -13,7 +13,7 @@ import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
 import { INVOICE_STATES } from '../lib/invoiceEditPolicy';
 import { refuseIfArchived } from '../lib/invoiceArchive';
-import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { appliedCentsOf, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { QUOTE_DRAFT_FIELD, isQuoteDraft, isSentQuote, quoteDecisionOf } from '../lib/quoteDecision';
 import {
   quoteWithdrawn,
@@ -29,6 +29,7 @@ import {
   resolveStructuredTerms,
   type InvoiceTermsSettings,
 } from '../lib/invoiceCreateFields';
+import { parseInvoiceTermsCode, type InvoiceTermsCode } from '../lib/invoiceTerms';
 
 /**
  * #2088: WHAT THE OFFICE CAN DO WITH A QUOTE ONCE IT EXISTS, besides sending it
@@ -122,12 +123,19 @@ export const CANCEL_PAID_REFUSAL = 'A payment is recorded on this quote, so it c
  * #2365 path) is not applied and writes no row, so it does not count. A doc
  * brought over from the old system with a stored paid figure and no rows
  * counts by that figure (`paidCents`, else the dollar `amountPaid`), so a
- * migrated part-paid bill is held the same way. PURE.
+ * migrated part-paid bill is held the same way. #2470: and what the reload
+ * stamped as brought over paid (`broughtOverPaidCents`) is added to it, through
+ * the shared `appliedCentsOf`. PURE.
  */
 export function appliedPaymentCentsOf(
   doc: Record<string, unknown>,
   rows: readonly PaymentAmount[],
 ): number {
+  return appliedCentsOf(doc, recordedCentsOf(doc, rows));
+}
+
+/** The rows, else the stored paid figures. Rows only: no brought-over amount. */
+function recordedCentsOf(doc: Record<string, unknown>, rows: readonly PaymentAmount[]): number {
   const fromRows = paidCentsFromPayments(rows);
   if (fromRows > 0) return fromRows;
   const stored = doc['paidCents'];
@@ -232,14 +240,43 @@ async function audit(entry: Parameters<typeof writeAuditEntry>[0], fn: string, u
 }
 
 /**
- * #1966: the terms fields a quote turned into an invoice is written with.
+ * #2258: which terms a quote turned into an invoice carries. PURE, and the
+ * rule the Turn into invoice confirm on every admin client repeats.
  *
- * The business's Payment terms setting decides the due date, counted on the
- * business's clock from the visits the invoice holds (due on receipt when it
- * holds none). A due date the office picked by hand is kept: `custom` terms, or
- * a typed date with no code at all. So is a quote the setting cannot date (no
- * invoice date), rather than refusing the change. Reads only, so it runs inside
- * the transaction before any write.
+ *   keep     `custom` terms, or a due date typed with no terms code: the date
+ *            the office picked stays as it is.
+ *   quote    the quote's own terms code, chosen on purpose (any code the
+ *            composer offers, the invoice-date `net_*` ones included).
+ *   setting  no terms of its own: the business's Payment terms setting.
+ */
+export type ConvertedQuoteTermsSource =
+  | { kind: 'keep' }
+  | { kind: 'quote'; code: InvoiceTermsCode }
+  | { kind: 'setting'; code: InvoiceTermsCode };
+
+export function convertedQuoteTermsSource(
+  data: Record<string, unknown>,
+  settingCode: InvoiceTermsCode,
+): ConvertedQuoteTermsSource {
+  const code = parseInvoiceTermsCode(data['termsCode']);
+  const typedDue = typeof data['dueDate'] === 'string' ? data['dueDate'].trim() : '';
+  if (code === 'custom' || (code === null && typedDue !== '')) return { kind: 'keep' };
+  if (code !== null) return { kind: 'quote', code };
+  return { kind: 'setting', code: settingCode };
+}
+
+/**
+ * #1966, #2258: the terms fields a quote turned into an invoice is written with.
+ *
+ * The quote's own terms decide the due date (#2258: the business setting used
+ * to replace them), and a quote with none takes the business's Payment terms
+ * setting. Either way the due date is counted again, on the business's clock,
+ * from the visits the invoice now holds (due on receipt when it holds none),
+ * and never falls before the invoice date (the #1966 floor). A due date the
+ * office picked by hand is kept: `custom` terms, or a typed date with no code
+ * at all. So is a quote the terms cannot date (no invoice date), rather than
+ * refusing the change. Reads only, so it runs inside the transaction before
+ * any write.
  */
 export async function convertedQuoteTerms(
   tx: Transaction,
@@ -248,9 +285,8 @@ export async function convertedQuoteTerms(
   held: readonly string[],
   settings: InvoiceTermsSettings,
 ): Promise<Record<string, unknown>> {
-  const code = typeof data['termsCode'] === 'string' ? data['termsCode'].trim() : '';
-  const typedDue = typeof data['dueDate'] === 'string' ? data['dueDate'].trim() : '';
-  if (code === 'custom' || (code === '' && typedDue !== '')) return {};
+  const source = convertedQuoteTermsSource(data, settings.paymentTerms);
+  if (source.kind === 'keep') return {};
   const ids = Array.from(new Set(held.filter((id) => id.trim() !== ''))).slice(0, MAX_TERMS_SESSIONS);
   const snaps = await Promise.all(ids.map((id) => tx.get(firestore.collection('kin_care_sessions').doc(id))));
   const serviceDates: string[] = [];
@@ -259,7 +295,7 @@ export async function convertedQuoteTerms(
     if (typeof startTime === 'string' && startTime.trim() !== '') serviceDates.push(startTime);
   }
   const outcome = resolveStructuredTerms({
-    termsCode: settings.paymentTerms,
+    termsCode: source.code,
     date: typeof data['date'] === 'string' ? data['date'] : '',
     dueDate: '',
     serviceDates,
@@ -295,9 +331,9 @@ export async function convertQuoteToInvoiceHandler(
     // the change by its day, with nothing written. A declined quote let its
     // visits go, and takes the free ones back here.
     const visits = await readQuoteReopen(tx, firestore, args.invoiceId, data, 'convert');
-    // #1966: the invoice it becomes is due by the business's Payment terms,
-    // counted from the visits it now holds, unless the quote's due date was
-    // picked by hand.
+    // #1966, #2258: the invoice it becomes keeps the quote's own terms (the
+    // business's Payment terms when it has none), counted again from the
+    // visits it now holds, unless the quote's due date was picked by hand.
     const due = await convertedQuoteTerms(tx, firestore, data, visits.held ?? [], termsSettings);
     const update: Record<string, unknown> = {
       ...visits.fields,

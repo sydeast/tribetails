@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ledgerCoversBalance,
+  ledgerRowCameOffABalance,
   ledgerRowAppliedLabel,
   ledgerRowBalanceCents,
   ledgerRowCaveat,
@@ -8,6 +9,8 @@ import {
   ledgerRowTowardBillCents,
   paymentDayLabel,
   paymentMethodLabel,
+  BROUGHT_OVER_LINE,
+  broughtOverCents,
   paymentsPanelIsEmpty,
   paymentsTotalCents,
   sessionDayLabel,
@@ -56,6 +59,24 @@ describe('paymentMethodLabel', () => {
     // A payment recorded in a hurry is still a payment.
     expect(paymentMethodLabel(null)).toBe('no method recorded');
     expect(paymentMethodLabel('   ')).toBe('no method recorded');
+  });
+
+  // #2334: a checkout payment reads as what it was paid with.
+  it("uses the server's plain words for a checkout payment", () => {
+    expect(paymentMethodLabel('stripe', 'Klarna')).toBe('Klarna');
+    expect(paymentMethodLabel('stripe', 'Card')).toBe('Card');
+    expect(paymentMethodLabel('stripe', 'Online payment')).toBe('Online payment');
+  });
+
+  it('never shows the stored word "stripe", even from a server older than the label', () => {
+    expect(paymentMethodLabel('stripe')).toBe('Online payment');
+    expect(paymentMethodLabel('stripe', '')).toBe('Online payment');
+    expect(paymentMethodLabel('Stripe', null)).toBe('Online payment');
+  });
+
+  it('a blank label leaves a hand-recorded method and a blank one as they were', () => {
+    expect(paymentMethodLabel('Venmo', '')).toBe('Venmo');
+    expect(paymentMethodLabel(null, '')).toBe('no method recorded');
   });
 });
 
@@ -118,6 +139,25 @@ describe('paymentsTotalCents', () => {
 
   it('is 0 for no payments, which is a real answer and not a missing one', () => {
     expect(paymentsTotalCents([])).toBe(0);
+  });
+  it('#2470 adds what was paid before the invoice was brought over', () => {
+    expect(paymentsTotalCents([{ amountCents: 1000 }], 1500)).toBe(2500);
+    expect(paymentsTotalCents([], 1500)).toBe(1500);
+  });
+});
+describe('#2470 the brought-over line', () => {
+  it('reads only a positive whole number of cents', () => {
+    expect(broughtOverCents({ broughtOverPaidCents: 1500 })).toBe(1500);
+    expect(broughtOverCents({})).toBe(0);
+    expect(broughtOverCents({ broughtOverPaidCents: -1 })).toBe(0);
+    expect(broughtOverCents({ broughtOverPaidCents: 1.5 })).toBe(0);
+  });
+  it('keeps the panel from reading empty', () => {
+    expect(paymentsPanelIsEmpty({ payments: [], ledgerPayments: [], broughtOverPaidCents: 1500 })).toBe(false);
+    expect(paymentsPanelIsEmpty({ payments: [], ledgerPayments: [], broughtOverPaidCents: 0 })).toBe(true);
+  });
+  it('is named in plain words', () => {
+    expect(BROUGHT_OVER_LINE).toBe('Paid in the old system');
   });
 });
 
@@ -228,6 +268,36 @@ describe('ledgerCoversBalance', () => {
 
   it('stays quiet when there is no ledger row at all', () => {
     expect(ledgerCoversBalance({ amountDueCents: 4000, ledgerPayments: [] })).toBe(false);
+  });
+  // #2467: a row that already came off a balance is not money the balance has not seen.
+  it('#2467 leaves out a part payment that was applied to this invoice', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 4000,
+        ledgerPayments: [{ amountCents: 6000, tipCents: 0, appliedCents: 6000 }],
+      }),
+    ).toBe(false);
+  });
+  it('#2467 leaves out a row whose leftover went to account credit', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 11700,
+        ledgerPayments: [{ amountCents: 60000, tipCents: 0, appliedCents: 10000 }],
+      }),
+    ).toBe(false);
+  });
+  it('#2467 still flags a card row that applied nothing, beside one that did', () => {
+    const rows = [
+      { amountCents: 6000, tipCents: 0, appliedCents: 6000 },
+      { amountCents: 4000, tipCents: 0, appliedCents: 0 },
+    ];
+    expect(ledgerCoversBalance({ amountDueCents: 4000, ledgerPayments: rows })).toBe(true);
+    expect(ledgerCoversBalance({ amountDueCents: 4001, ledgerPayments: rows })).toBe(false);
+  });
+  it('#2467 a row that applied money came off a balance; one that applied none did not', () => {
+    expect(ledgerRowCameOffABalance({ appliedCents: 1 })).toBe(true);
+    expect(ledgerRowCameOffABalance({ appliedCents: 0 })).toBe(false);
+    expect(ledgerRowCameOffABalance({})).toBe(false);
   });
 });
 /**

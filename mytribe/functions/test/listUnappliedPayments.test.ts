@@ -141,6 +141,14 @@ describe('invoiceTakesDecision', () => {
     expect(invoiceTakesDecision({ status: 'open', archived: true, totalCents: 100, amountDueCents: 100 })).toBe(false);
   });
 
+  it('#2517: never a draft or a quote marked only in the older field; a stored status wins', () => {
+    expect(invoiceTakesDecision({ invoiceStatus: 'draft', totalCents: 100, amountDueCents: 100 })).toBe(false);
+    expect(invoiceTakesDecision({ invoiceStatus: 'quote', totalCents: 100, amountDueCents: 100 })).toBe(false);
+    expect(invoiceTakesDecision({ status: 'open', invoiceStatus: 'draft', totalCents: 100, amountDueCents: 100 })).toBe(true);
+    expect(invoiceTakesDecision({ status: 'draft', invoiceStatus: 'open', totalCents: 100, amountDueCents: 100 })).toBe(false);
+    expect(invoiceTakesDecision({ invoiceStatus: 'open', totalCents: 100, amountDueCents: 100 })).toBe(true);
+  });
+
   it('#2358: never a cancelled invoice, by `status` or by the legacy field alone', () => {
     expect(invoiceTakesDecision({ status: 'cancelled', totalCents: 100, amountDueCents: 100 })).toBe(false);
     expect(invoiceTakesDecision({ status: ' Cancelled ', totalCents: 100, amountDueCents: 100 })).toBe(false);

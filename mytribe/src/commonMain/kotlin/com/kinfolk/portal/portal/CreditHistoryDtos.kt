@@ -16,6 +16,18 @@ data class CreditHistoryResult(
     val accountBalanceCents: Long,
     val credits: List<GivenCredit>,
     val uses: List<CreditUse>,
+    /** #1969: null when there is none, and when an older server sends no key. */
+    val earlierCredit: EarlierCredit? = null,
+)
+
+/**
+ * #1969: credit in the balance that no listed credit accounts for. Listed
+ * credits plus this, less every use, is the balance.
+ */
+data class EarlierCredit(
+    val amountCents: Long,
+    /** What is still unspent of it. */
+    val remainingCents: Long,
 )
 
 /** One credit the office gave, with what has been spent of it. */
@@ -82,5 +94,10 @@ internal fun decodeCreditHistory(raw: JsonObject): CreditHistoryResult = CreditH
             invoiceId = o.str("invoiceId").orEmpty(),
             invoiceNumber = o.str("invoiceNumber"),
         )
+    },
+    earlierCredit = (raw["earlierCredit"] as? JsonObject)?.let { e ->
+        val amount = e.long("amountCents")
+        val remaining = e.long("remainingCents")
+        if (amount == null || remaining == null) null else EarlierCredit(amount, remaining)
     },
 )

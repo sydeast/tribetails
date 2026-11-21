@@ -137,6 +137,7 @@ import {
   BLANK_AMOUNT_BALANCE_UNKNOWN,
   InvoiceDetail,
   archiveNoticeText,
+  convertQuoteTermsLine,
   paymentSplit,
   archivedQuoteBannerText,
   parseOptionalMoney,
@@ -226,6 +227,7 @@ function ledgerResult(over: Partial<GetInvoiceLedgerResult> = {}): GetInvoiceLed
     invoiceId: 'inv1',
     payments: [],
     paidCents: 0,
+    broughtOverPaidCents: 0,
     totalCents: 4000,
     amountDueCents: 4000,
     writeOffs: [],
@@ -260,6 +262,7 @@ function subPayment(
     paidAt: '2026-07-20T10:00:00Z',
     recordedBy: 'admin1',
     sourcePaymentId: null,
+    methodLabel: 'check',
     ...over,
   };
 }
@@ -288,6 +291,7 @@ function ledgerPayment(
     appliedInvoiceId: '',
     appliedInvoiceNumber: '',
     method: 'card',
+    methodLabel: 'card',
     reference: 'ch_1',
     date: '2026-07-20',
     notes: '',
@@ -704,6 +708,21 @@ describe('InvoiceDetail', () => {
     expect(factValue('Last reminder')).toBe(formatReminderTime(reminderSent().lastReminderAtMs!));
   });
 
+  it('#2515: a reminder held at its send time reads "held, not sent" on open, and a later send reads as sent', async () => {
+    const at = Date.UTC(2026, 8, 13, 14, 0, 0);
+    render(
+      <InvoiceDetail
+        invoice={entry({ reminderNotifiedAtMs: at, reminderNotifiedAppOnly: false, reminderHeldAtMs: at + 5 * 60 * 1000 })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(factValue('Last reminder')).toBe(`${formatReminderTime(at)}, held, not sent`);
+    sendInvoiceReminder.mockResolvedValue(reminderSent(false));
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send reminder$/i }));
+    expect(await screen.findByText('Reminder sent.')).toBeInTheDocument();
+    expect(factValue('Last reminder')).toBe(formatReminderTime(reminderSent().lastReminderAtMs!));
+  });
   it('#832: shows when the last reminder went out, and "none sent" when there is none', () => {
     const { unmount } = render(<InvoiceDetail invoice={entry({})} onClose={vi.fn()} />);
     expect(factValue('Last reminder')).toBe('none sent');
@@ -1520,6 +1539,24 @@ describe('the payments panel', () => {
     expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$20.00');
     expect(screen.getByText('Still owed').closest('tr')).toHaveTextContent('$20.00');
   });
+  it('#2470 an invoice brought over part paid shows what was paid before the move, counted in Collected', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({ payments: [subPayment({ amountCents: 1000 })], paidCents: 2500, broughtOverPaidCents: 1500, amountDueCents: 1500 }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    const line = await screen.findByTestId('invoice-ledger-brought-over');
+    expect(line).toHaveTextContent('Paid in the old system');
+    expect(line).toHaveTextContent('$15.00');
+    expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$25.00');
+    expect(screen.getByText('Still owed').closest('tr')).toHaveTextContent('$15.00');
+  });
+  it('#2470 with no rows at all, the brought-over line is the table, not the empty sentence', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ paidCents: 1500, broughtOverPaidCents: 1500, amountDueCents: 2500 }));
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByTestId('invoice-ledger-brought-over')).toHaveTextContent('$15.00');
+    expect(screen.queryByText(/No payment has been recorded against this invoice/i)).toBeNull();
+    expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$15.00');
+  });
   it('says nothing has been recorded rather than rendering an empty table', async () => {
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
     expect(
@@ -1547,7 +1584,7 @@ describe('the payments panel', () => {
     getInvoiceLedger.mockResolvedValue(
       ledgerResult({
         payments: [
-          subPayment({ amountCents: 500, method: null, reference: null, paidAt: null, recordedBy: null }),
+          subPayment({ amountCents: 500, method: null, methodLabel: '', reference: null, paidAt: null, recordedBy: null }),
         ],
         paidCents: 500,
       }),
@@ -1599,6 +1636,46 @@ describe('the payments panel', () => {
     expect(
       await screen.findByText(/The ledger shows money this balance does not/i),
     ).toBeInTheDocument();
+  });
+  it('#2467: a part payment recorded properly raises no ledger warning', async () => {
+    // $100.00 invoice, $60.00 recorded and applied: $40.00 owed beside a $60.00 row.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 10000,
+        paidCents: 6000,
+        amountDueCents: 4000,
+        payments: [subPayment({ amountCents: 6000 })],
+        ledgerPayments: [
+          ledgerPayment({
+            amountCents: 6000,
+            appliedCents: 6000,
+            unappliedCents: 0,
+            appliedInvoiceId: 'inv1',
+            appliedInvoiceNumber: '1042',
+          }),
+        ],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 100, amountDue: 40 })} onClose={vi.fn()} />);
+    expect(await screen.findByRole('table', { name: 'Payment history' })).toBeInTheDocument();
+    expect(screen.queryByText(/The ledger shows money this balance does not/i)).not.toBeInTheDocument();
+  });
+  it('#2467: a row with account credit beside what it applied raises no ledger warning', async () => {
+    // $100.00 applied and $500.00 left as credit; $117.00 still owed.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 21700,
+        paidCents: 10000,
+        amountDueCents: 11700,
+        payments: [subPayment({ amountCents: 10000 })],
+        ledgerPayments: [
+          ledgerPayment({ amountCents: 60000, appliedCents: 10000, unappliedCents: 50000, appliedInvoiceId: 'inv1' }),
+        ],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 217, amountDue: 117 })} onClose={vi.fn()} />);
+    expect(await screen.findByRole('table', { name: 'Payment history' })).toBeInTheDocument();
+    expect(screen.queryByText(/The ledger shows money this balance does not/i)).not.toBeInTheDocument();
   });
   it('#1568: says nothing about "no payment" when the payment exists only in history (invoice #1018)', async () => {
     // $10.29 card payment in the root ledger, nothing in the settlement rows.
@@ -1740,7 +1817,7 @@ describe('recording a payment is one call that writes the settlement and the led
    * row the first press may already have written, and a fresh key per press
    * puts the duplicate straight back in the one case an operator produces one.
    */
-  it('holds ONE key across a re-press, and mints a NEW one when a figure changes', async () => {
+  it('holds ONE key across a re-press, and keeps it when a figure changes before any answer (#2297)', async () => {
     // Two failures, so the dialog is still open for the third press. That is
     // the real shape of this defect: the operator only presses again because
     // the first press reported something.
@@ -1764,14 +1841,15 @@ describe('recording a payment is one call that writes the settlement and the led
     const secondKey = recordPayment.mock.calls[1]![0].idempotencyKey;
     expect(firstKey).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
     expect(secondKey).toBe(firstKey);
-    // A CHANGED FIGURE IS A DIFFERENT PAYMENT, so the held key is dropped.
+    // #2297: A CHANGED FIGURE KEEPS THE KEY while no press has been answered.
+    // Either earlier press may still commit, and a new key would let it land
+    // beside this one. The server's answer says which payment is on record.
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
     await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(3));
     const thirdKey = recordPayment.mock.calls[2]![0].idempotencyKey;
-    expect(thirdKey).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
-    expect(thirdKey).not.toBe(firstKey);
+    expect(thirdKey).toBe(firstKey);
     expect(recordPayment.mock.calls[2]![0].apply).toMatchObject({ amount: 25 });
     expect(markInvoicePaid).not.toHaveBeenCalled();
   });
@@ -2314,6 +2392,79 @@ describe('#988 where the payment goes, shown before Save', () => {
     await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2.71');
     await waitFor(() => expect(line()).toHaveTextContent('$72.50 tip (the $2.71 fee comes out of it)'));
   });
+  it('#1975 says a credit typed with Payment amount blank is on top of the amount collected', async () => {
+    await openForm();
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '100');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '500');
+    await waitFor(() => expect(line()).toHaveTextContent('$600.00 paid'));
+    expect(line()).toHaveTextContent(
+      'The $500.00 credit is on top of the $100.00 collected. If the household paid less, enter what they paid under Payment amount.',
+    );
+  });
+  it('#1975 says nothing about on top when the payment amount is typed', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
+    await waitFor(() => expect(line()).toHaveTextContent('$20.00 account credit.'));
+    expect(line()).not.toHaveTextContent(/on top/);
+  });
+  it('#1975 refuses a fee larger than the payment, on the line and on Record', async () => {
+    await openForm();
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '100');
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '500');
+    await waitFor(() =>
+      expect(line()).toHaveTextContent('A fee of $500.00 is more than the $100.00 payment it came out of. Check the fee.'),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/Action failed/i)).toBeInTheDocument();
+    expect(recordPayment).not.toHaveBeenCalled();
+  });
+  it('#1975 a fee larger than the tip comes out of the payment, and is recorded', async () => {
+    await openForm();
+    await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '3');
+    await waitFor(() => expect(line()).toHaveTextContent('$0.00 tip (the $3.00 fee comes out of the payment)'));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]![0]).toMatchObject({ fee: 3 });
+  });
+  it('#1975 asks about a tip larger than the invoice, and records only once it is ticked', async () => {
+    await openForm();
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '9999999');
+    await waitFor(() => expect(line()).toHaveTextContent('$9,999,871.50 tip'));
+    const tick = screen.getByRole('checkbox', { name: /the \$9,999,871\.50 tip is right/i });
+    expect(tick).toHaveAccessibleName(
+      "The $9,999,871.50 tip is right. It is more than this invoice's $127.50 total.",
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(
+      await screen.findByText("The tip is more than this invoice's total. Check the amounts, or tick the box to say the tip is right."),
+    ).toBeInTheDocument();
+    expect(recordPayment).not.toHaveBeenCalled();
+    await userEvent.click(tick);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]![0]).toMatchObject({ amount: 9999999, tip: 9999871.5 });
+  });
+  it('#1975 a tick for one tip does not carry to a different one', async () => {
+    await openForm();
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '1000');
+    await userEvent.click(await screen.findByRole('checkbox', { name: /tip is right/i }));
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '2000');
+    expect(await screen.findByRole('checkbox', { name: /\$1,872\.50 tip is right/i })).not.toBeChecked();
+    // A tip no larger than the invoice asks nothing.
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '200');
+    expect(screen.queryByRole('checkbox', { name: /tip is right/i })).not.toBeInTheDocument();
+  });
   it('shows the refusal while the figures do not add up', async () => {
     await openForm();
     await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
@@ -2508,6 +2659,11 @@ describe('#1566 the record-payment dialog on a $78.50 balance', () => {
   });
 });
 describe('what the operator is told after the payment lands', () => {
+  // #1975: the ledger agrees with the $127.50 invoice these cases open, so a
+  // payment over the balance is not read as a tip larger than the invoice.
+  beforeEach(() => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ totalCents: 12750, amountDueCents: 12750 }));
+  });
   it('says where the leftover went when it became account credit', async () => {
     recordPayment.mockResolvedValue({
       ok: true,
@@ -2743,6 +2899,31 @@ describe('payment history columns', () => {
     for (const name of [/^method$/i, /reference #/i, /^amount$/i, /applied to/i, /^tip$/i, /^fee$/i, /^balance$/i]) {
       expect(screen.getByRole('columnheader', { name })).toBeInTheDocument();
     }
+  });
+  // #2334: a checkout payment's row reads as what it was paid with, and has its day.
+  it('a checkout payment says Klarna and its day, never "stripe" or "no date recorded"', async () => {
+    renderWithRow({ method: 'stripe', methodLabel: 'Klarna', date: '2026-11-20', reference: 'pi_1' });
+    expect(await ledgerCellText(6)).toBe('Klarna');
+    expect(await ledgerCellText(0)).toBe('2026-11-20');
+    expect(screen.queryByText('stripe')).toBeNull();
+    expect(screen.queryByText('no date recorded')).toBeNull();
+  });
+  it('an old checkout payment reads "Online payment", even from a server older than the label', async () => {
+    renderWithRow({ method: 'stripe', methodLabel: '' });
+    expect(await ledgerCellText(6)).toBe('Online payment');
+  });
+  it('the settlement table says the method in the same words', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        amountDueCents: 0,
+        paidCents: 4000,
+        payments: [subPayment({ paymentId: 'stripe_pi_1', method: 'stripe', methodLabel: 'Card', amountCents: 4000 })],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    const table = await screen.findByRole('table', { name: /What settled this invoice/i });
+    const bodyRow = within(table).getAllByRole('row')[1]!;
+    expect(within(bodyRow).getAllByRole('cell')[0]!.textContent).toBe('Card');
   });
   it('reads invoice #1029 across, and the row adds up', async () => {
     // amount(137.50) = applied(127.50) + tipGross(10.00) + balance(0.00)
@@ -3928,6 +4109,10 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
     render(<InvoiceDetail invoice={{ ...sentQuote(), paidCents: 900 }} onClose={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Withdraw quote' })).toHaveAttribute('aria-disabled', 'true');
   });
+  it('#2470 what was paid before a quote was brought over holds Withdraw quote too', () => {
+    expect(quoteWithdrawHeldReason({ ...sentQuote(), broughtOverPaidCents: 1500 }, null)).toBe(WITHDRAW_PAID_REASON);
+    expect(quoteWithdrawHeldReason({ ...sentQuote(), broughtOverPaidCents: 0 }, null)).toBeNull();
+  });
   it('#2358 quoteWithdrawHeldReason: a payment from either source holds it, none does not', () => {
     expect(quoteWithdrawHeldReason(sentQuote(), null)).toBeNull();
     expect(quoteWithdrawHeldReason(sentQuote(), 0)).toBeNull();
@@ -3967,6 +4152,36 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
     ).toBeInTheDocument();
   });
 
+  it('#2258 the Turn into invoice confirm names the payment terms the invoice will carry', async () => {
+    const user = userEvent.setup();
+    render(<InvoiceDetail invoice={entry({ status: 'quote', editScope: 'all', termsCode: 'net_30' })} onClose={vi.fn()} />);
+    expect(screen.queryByTestId('convert-quote-terms')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Turn into invoice' }));
+    expect(screen.getByTestId('convert-quote-terms')).toHaveTextContent(
+      "It keeps the quote's payment terms: Due 30 days after the invoice date.",
+    );
+    // Withdraw has no terms line.
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Withdraw quote' }));
+    expect(screen.queryByTestId('convert-quote-terms')).toBeNull();
+  });
+  it('#2258 convertQuoteTermsLine follows the server rule', () => {
+    expect(convertQuoteTermsLine({ termsCode: 'net_7_after_last_visit', dueDate: '2026-06-10' })).toBe(
+      "It keeps the quote's payment terms: Due 7 days after the last visit.",
+    );
+    expect(convertQuoteTermsLine({ termsCode: 'custom', dueDate: '2026-07-04' })).toBe(
+      'It keeps the due date picked on the quote.',
+    );
+    expect(convertQuoteTermsLine({ termsCode: '', dueDate: '2026-07-04' })).toBe(
+      'It keeps the due date picked on the quote.',
+    );
+    expect(convertQuoteTermsLine({ dueDate: '' })).toBe(
+      'The quote has no payment terms, so it takes your Payment terms setting.',
+    );
+    expect(convertQuoteTermsLine({ termsCode: 'Net 9', dueDate: '' })).toBe(
+      'The quote has no payment terms, so it takes your Payment terms setting.',
+    );
+  });
   it('#2088 Withdraw quote confirms first, then names how many visits went back on the list', async () => {
     const user = userEvent.setup();
     render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);
@@ -4057,5 +4272,260 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
       'Quote archived. The household no longer sees it. Its visit is back on the un-invoiced list.',
     );
     expect(archiveNoticeText(0)).toBe('Invoice archived.');
+  });
+});
+
+/**
+ * #2297: after a lost reply, the next press must neither record the payment a
+ * second time nor swallow a real second payment.
+ */
+describe('Record payment after a lost reply (#2297)', () => {
+  const lost = () => new Error('internal');
+  const keyOf = (call: number): string => recordPayment.mock.calls[call]![0].idempotencyKey as string;
+  async function openAndType(amountText = '20') {
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, amountText);
+  }
+  const press = () => userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+
+  it('finds a payment that landed, asks again with the same key, and closes the form', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
+    await openAndType();
+    // The ledger read after the failure lists the row the first press wrote.
+    getInvoiceLedger.mockImplementation(() =>
+      Promise.resolve(
+        ledgerResult({
+          ledgerPayments: [ledgerPayment({ paymentId: keyOf(0), amountCents: 2000, appliedCents: 2000 })],
+        }),
+      ),
+    );
+    await press();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(2);
+    expect(keyOf(1)).toBe(keyOf(0));
+    // The form is closed, so nothing is left to press a third time.
+    expect(screen.queryByLabelText(/amount collected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/action failed/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the form and the key when the payment did not land, and a fixed note is still the same payment', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText(/amount collected/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/staff-only notes/i), 'paid at the door');
+    await userEvent.click(screen.getByRole('checkbox', { name: /send a confirmation email/i }));
+    await userEvent.type(screen.getByLabelText(/payment method/i), 'cash');
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(recordPayment.mock.calls[1]![0]).toMatchObject({ notes: 'paid at the door', sendConfirmationEmail: true });
+  });
+
+  it('holds the key when the payments cannot be read, even when a figure changes', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    await openAndType();
+    getInvoiceLedger.mockRejectedValue(new Error('offline'));
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2));
+    // Nobody knows whether the first press landed, so the same key goes:
+    // if it did, the server answers with it instead of recording a second one.
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('holds the key after the check finds nothing, even when a figure changes: the first press may still be committing', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult({ appliedCents: 2500, state: 'partial', paidCents: 2500, amountDueCents: 1500 }),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await press();
+    // A new key here would let a late first press and this one both write.
+    // Under the same key the server's create lets only one of them.
+    expect(await screen.findByText(/\$15\.00 is still owed/i)).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(recordPayment.mock.calls[1]![0]).toMatchObject({ amount: 25 });
+  });
+
+  it('says the earlier payment is on record when a changed figure is answered from the first press', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await press();
+    expect(
+      await screen.findByText(/an earlier press of record went through, and that payment is the one on record/i),
+    ).toBeInTheDocument();
+    // Not the ordinary outcome, which would read as the $25.00 just typed.
+    expect(screen.queryByText(/is still owed/i)).not.toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(screen.queryByLabelText(/amount collected/i)).not.toBeInTheDocument();
+  });
+
+  it('a refused press, then a corrected one that landed with its answer lost, reports the corrected payment', async () => {
+    // The first press is refused (nothing recorded). The corrected $25.00
+    // press lands and its answer is lost; the row under the key is the $25.00
+    // one, so the replayed answer is this entry's, not an earlier press's.
+    recordPayment.mockRejectedValueOnce(
+      Object.assign(new Error('The invoice balance changed.'), { code: 'functions/failed-precondition' }),
+    );
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2500, state: 'partial', paidCents: 2500, amountDueCents: 1500 },
+        { amountCents: 2500, replayed: true },
+      ),
+    );
+    await openAndType();
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    getInvoiceLedger.mockImplementation(() =>
+      Promise.resolve(
+        ledgerResult({
+          ledgerPayments: [ledgerPayment({ paymentId: keyOf(0), amountCents: 2500, appliedCents: 2500 })],
+        }),
+      ),
+    );
+    await press();
+    expect(await screen.findByText(/\$15\.00 is still owed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/an earlier press of record went through/i)).not.toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(3);
+    expect(keyOf(2)).toBe(keyOf(0));
+  });
+
+  it('the same money typed two ways is the same entry: a replayed answer to it is this payment', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
+    await openAndType('20');
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '20.00');
+    await press();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/an earlier press of record went through/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps a failed press\'s key across Cancel, and a replay in the next opening is said to be the earlier payment', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await press();
+    expect(
+      await screen.findByText(/an earlier press of record went through, and that payment is the one on record/i),
+    ).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('after Cancel, a held key the server had never seen records the new entry as usual', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await press();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('starts a new key for the next payment after one went through', async () => {
+    recordPayment.mockResolvedValue(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
+    await openAndType();
+    await press();
+    await screen.findByText(/\$20\.00 is still owed/i);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it('says the payment was recorded when it landed and its answer still does not come back', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockRejectedValueOnce(lost());
+    await openAndType();
+    getInvoiceLedger.mockImplementation(() =>
+      Promise.resolve(ledgerResult({ ledgerPayments: [ledgerPayment({ paymentId: keyOf(0) })] })),
+    );
+    await press();
+    expect(
+      await screen.findByText(/the payment was recorded, but this screen did not get its details back/i),
+    ).toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(2);
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(screen.queryByLabelText(/amount collected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/action failed/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the button busy until the payments have been read', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    await openAndType();
+    let finishRead: (r: GetInvoiceLedgerResult) => void = () => {};
+    getInvoiceLedger.mockImplementation(
+      () => new Promise<GetInvoiceLedgerResult>((resolve) => (finishRead = resolve)),
+    );
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    // Still checking: no error yet, and the button cannot be pressed.
+    expect(screen.queryByText(/action failed/i)).not.toBeInTheDocument();
+    const busyButton = screen.getAllByRole('button').find((b) => /recording/i.test(b.textContent ?? ''));
+    expect(busyButton).toBeDefined();
+    expect(busyButton).toBeDisabled();
+    await act(async () => finishRead(ledgerResult()));
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
   });
 });

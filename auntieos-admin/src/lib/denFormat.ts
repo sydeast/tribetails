@@ -92,7 +92,7 @@ export function serviceTone(serviceType: string): AuntieStatusTone {
  * is still one the auntie is expected to show up for.
  */
 export function statusLabel(status: string): string {
-  switch (status.toUpperCase()) {
+  switch (status.trim().toUpperCase()) {
     case 'COMPLETED':
       return 'done';
     case 'ON_MY_WAY':
@@ -101,7 +101,9 @@ export function statusLabel(status: string): string {
       return 'arrived';
     case 'DEPARTED':
       return 'departed';
+    // #2268: the one-L spelling is cancelled too, never "scheduled".
     case 'CANCELLED':
+    case 'CANCELED':
       return 'cancelled';
     default:
       return 'scheduled';

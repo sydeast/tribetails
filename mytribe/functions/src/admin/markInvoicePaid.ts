@@ -10,14 +10,14 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import {
   paidCentsFromPayments,
-  invoiceTotalCentsOf,
-  settleInvoice,
+  settleInvoiceDoc,
   centsToDollars,
   formatUsdCents,
   type PaymentAmount,
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { invoiceStateOf } from '../lib/invoiceEditPolicy';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
 import { invoiceCancelled, paidByCardFallback, type InvoicePaidDoc } from '../lib/invoicePaidGate';
 import {
@@ -274,9 +274,17 @@ export function overBalanceRefusal(
   };
 }
 
+/**
+ * #2517: a draft or a quote by the state classifier, which reads `status` and
+ * falls back to the older `invoiceStatus` only when `status` is absent (#2471).
+ * Reading `status` alone let a draft or quote marked only in the older field
+ * take a recorded payment, a Mark paid or a held payment, on a bill the
+ * household was never sent. `status` wins when both are stored: the two are
+ * never OR-ed.
+ */
 export function isDraftOrQuote(d: InvoiceDoc): boolean {
-  const s = normalizedStatus(d);
-  return s === 'draft' || s === 'quote';
+  const state = invoiceStateOf(d);
+  return state === 'draft' || state === 'quote';
 }
 
 /**
@@ -491,8 +499,9 @@ export async function markInvoicePaidHandler(
 
     const existingPayments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
     const existingPaidCents = paidCentsFromPayments(existingPayments);
-    const totalCents = invoiceTotalCentsOf(data);
-    const before = settleInvoice(totalCents, existingPaidCents);
+    // #2470: settled on the rows plus what was brought over paid, so "settle
+    // the rest" and the new balance both measure what is really still owed.
+    const before = settleInvoiceDoc(data, existingPaidCents);
 
     const settledRefusal = alreadySettledRefusal(data, existingPayments.length, before.state);
     if (settledRefusal) {
@@ -510,7 +519,7 @@ export async function markInvoicePaidHandler(
       throw new HttpsError('failed-precondition', overBalance.message, { code: overBalance.code });
     }
     const paidAmount = centsToDollars(paidCents);
-    const after = settleInvoice(totalCents, existingPaidCents + paidCents);
+    const after = settleInvoiceDoc(data, existingPaidCents + paidCents);
     const settling = after.state === 'settled' || after.state === 'overpaid';
 
     const paymentRow = {
@@ -552,7 +561,8 @@ export async function markInvoicePaidHandler(
       // `totalCents` is projected from the dollar `total`, so every downstream
       // reader has an exact figure instead of re-deriving one from a float.
       totalCents: after.totalCents,
-      paidCents: after.paidCents,
+      // #2470: the rows only; a brought-over amount stays in its own field.
+      paidCents: after.rowsPaidCents,
       amountDueCents: after.amountDueCents,
       overpaidCents: after.overpaidCents,
       // The legacy dollar scalar, projected from the SAME cents figure in the
@@ -605,7 +615,7 @@ export async function markInvoicePaidHandler(
         // payment included in paidCents: a settling payment stamps paid/none, a
         // partial stamps open/all (part-paid stays fully editable), and an
         // overpayment stamps paid off the CLAMPED zero balance, never credit.
-        ...invoiceStateStampOf({ ...data, ...invoiceUpdate }, after.paidCents),
+        ...invoiceStateStampOf({ ...data, ...invoiceUpdate }, after.rowsPaidCents),
       },
       { merge: true },
     );

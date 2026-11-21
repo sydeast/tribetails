@@ -5,6 +5,7 @@ import { getAccountCreditHistory } from '../api/invoicesApi';
 import { accountCreditHistoryKey } from '../lib/portalQueryKeys';
 import type {
   GetAccountCreditHistoryResultCredit,
+  GetAccountCreditHistoryResultEarlierCredit,
   GetAccountCreditHistoryResultUse,
 } from '../contracts/invoiceContracts.generated';
 import { formatCentsUsd, invoiceNumberOrWords } from '../lib/invoiceFormat';
@@ -47,6 +48,21 @@ export function creditUseLine(u: GetAccountCreditHistoryResultUse): string {
   return `${formatCentsUsd(u.amountCents)} on ${invoiceNumberOrWords(u.invoiceNumber)}, ${creditDate(u.usedAtMs)}`;
 }
 
+/**
+ * #1969: credit in the balance that no listed credit accounts for, so the
+ * credits listed, less the credit used, are the balance. Same words as the
+ * admin clients and the MyTribe app.
+ */
+export const EARLIER_CREDIT_LABEL = 'Earlier credit';
+
+/** "Not used yet", "$1,058.00 of $2,015.00 applied", or "All applied". */
+export function earlierCreditStatusLine(e: GetAccountCreditHistoryResultEarlierCredit): string {
+  if (e.remainingCents <= 0) return 'All applied';
+  const used = e.amountCents - e.remainingCents;
+  if (used > 0) return `${formatCentsUsd(used)} of ${formatCentsUsd(e.amountCents)} applied`;
+  return 'Not used yet';
+}
+
 function isPermissionDenied(err: unknown): boolean {
   return err instanceof FirebaseError && err.code === 'functions/permission-denied';
 }
@@ -73,12 +89,14 @@ export function CreditHistorySection({ kinfolkId }: { kinfolkId: string | undefi
   }
 
   const { credits, uses } = history.data;
-  if (credits.length === 0 && uses.length === 0) return null;
+  // #1969: an older server sends no `earlierCredit` key, read as none.
+  const earlier = history.data.earlierCredit ?? null;
+  if (credits.length === 0 && uses.length === 0 && earlier === null) return null;
 
   return (
     <section className="glass card credithistory">
       <div className="sectlabel">Account credit history</div>
-      {credits.length > 0 && (
+      {(credits.length > 0 || earlier !== null) && (
         <>
           <h3 className="chhead">Credits given</h3>
           <ul className="chlist">
@@ -97,6 +115,15 @@ export function CreditHistorySection({ kinfolkId }: { kinfolkId: string | undefi
                 ))}
               </li>
             ))}
+            {earlier !== null && (
+              <li className="chrow" data-testid="ch-earlier">
+                <div className="chline">
+                  <b>{formatCentsUsd(earlier.amountCents)}</b>
+                  <small>{EARLIER_CREDIT_LABEL}</small>
+                </div>
+                <small className="chstatus">{earlierCreditStatusLine(earlier)}</small>
+              </li>
+            )}
           </ul>
         </>
       )}

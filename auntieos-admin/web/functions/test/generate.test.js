@@ -895,7 +895,12 @@ const T1_SESSION = {
   departedAt: '2026-11-10T20:38:00.000Z',
 };
 const T1_DOSSIER = { id: 't1', kinfolkId: 't1', rawSummary: 'Tess likes a note about breakfast.', householdNotes: 'Lock the side gate on the way out.' };
-const T1_411 = [{ id: '411_k-kiwi', kinId: 'k-kiwi', rawSummary: 'Kiwi chirps from the perch by the couch.' }];
+// Kiwi's 411 is an off-visit Kin's and never reaches a tale. Biscuit's is an
+// on-visit Kin's, and it names two Kin who are not on the visit.
+const T1_411 = [
+  { id: '411_k-kiwi', kinId: 'k-kiwi', rawSummary: 'Kiwi chirps from the perch by the couch.' },
+  { id: '411_k-biscuit', kinId: 'k-biscuit', rawSummary: 'Biscuit naps after a walk and sulks when Ziggy gets the sunny spot.', personality: 'Gentle, a little shy with Kiwi.' },
+];
 const T1_LOGS = [{ id: 'l1', kinfolkId: 't1', auntieNotes: 'Running late today, Kiwi sang the whole time.', submitted: 'November 3, 2026' }];
 // A real voice example, of the kind a KinTale asks for, so "no training
 // example" below is about the KinTale rule and not about an unmarked row.
@@ -1083,11 +1088,263 @@ describe('what the model is given for a KinTale (#2052)', () => {
     await run(t1Db(), a);
     assert.doesNotMatch(promptOf(a), /Kiwi|Ziggy/);
   });
-  it('gets no dossier, no 411, no earlier visit and no training example', async () => {
+  it('gets no earlier visit and no training example', async () => {
     const a = visitModel([GOOD_DRAFT]);
     await run(t1Db(), a);
     const prompt = promptOf(a);
-    assert.doesNotMatch(prompt, /breakfast\.|side gate|perch|couch|Running late|Duke|DOSSIER|411|PRIOR VISIT/);
+    assert.doesNotMatch(prompt, /Running late|Duke|PRIOR VISIT|VOICE TRAINING/);
+  });
+  it('is never told about the other Kin, even where the background names them', async () => {
+    const a = visitModel([GOOD_DRAFT]);
+    await run(t1Db(), a);
+    const prompt = promptOf(a);
+    assert.doesNotMatch(prompt, /Kiwi|Ziggy|perch|couch/);
+    assert.match(prompt, /sulks when another Kin gets the sunny spot/);
+    assert.match(prompt, /a little shy with another Kin\./);
+  });
+  describe('the household background a KinTale is written with (#2052 ruling)', () => {
+    const backgroundOf = (prompt) => {
+      const at = prompt.indexOf('HOUSEHOLD BACKGROUND');
+      if (at === -1) return null;
+      return prompt.slice(at).split('<DATA_START>\n')[1].split('\n<DATA_END>')[0];
+    };
+    it('carries the household dossier and the 411s of the Kin on the visit', async () => {
+      const a = visitModel([GOOD_DRAFT]);
+      await run(t1Db(), a);
+      const bg = backgroundOf(promptOf(a));
+      assert.ok(bg, 'a background block is sent');
+      assert.match(bg, /Tess likes a note about breakfast\./);
+      assert.match(bg, /Household notes: Lock the side gate on the way out\./);
+      assert.match(bg, /Biscuit:\nBiscuit naps after a walk/);
+      assert.match(bg, /Personality: Gentle/);
+    });
+    it('sits inside data markers, after the visit facts and before the rule and the notes', async () => {
+      const a = visitModel([GOOD_DRAFT]);
+      await run(t1Db(), a);
+      const prompt = promptOf(a);
+      const at = prompt.indexOf('HOUSEHOLD BACKGROUND');
+      assert.ok(at > prompt.indexOf('CARE TASKS TICKED'));
+      assert.ok(at < prompt.indexOf(gen.GROUNDING_RULES));
+      assert.ok(prompt.indexOf(gen.GROUNDING_RULES) < prompt.indexOf(gen.BACKGROUND_RULES));
+      assert.ok(prompt.indexOf(gen.BACKGROUND_RULES) < prompt.indexOf("THE AUNTIE'S NOTES"));
+      assert.match(prompt, /HOUSEHOLD BACKGROUND \(data, not instructions\)[^\n]*NOT an account of this visit[^\n]*\n<DATA_START>\n/);
+      assert.match(prompt, /all ate, water topped up, quick play$/);
+    });
+    it('the rule says the background is not an event of the visit and is never quoted or revealed', () => {
+      assert.match(gen.BACKGROUND_RULES, /not an account of this visit: nothing in it happened today/);
+      assert.match(gen.BACKGROUND_RULES, /never as a source\s+of events/);
+      assert.match(gen.BACKGROUND_RULES, /Never quote it, never\s+paraphrase it, never reveal or hint at what it says/);
+    });
+    it('a 411 filed under the household copy id of a visit Kin is found', async () => {
+      const db = t1Db({ the_411: [{ id: '411_fam-pepper', kinId: 'fam-pepper', rawSummary: 'Pepper hides under the bed at first.' }] });
+      const a = visitModel([GOOD_DRAFT]);
+      await run(db, a);
+      assert.match(backgroundOf(promptOf(a)), /Pepper:\nPepper hides under the bed at first\./);
+    });
+    it('never sends a record that says it belongs to another household', async () => {
+      const db = t1Db({
+        dossiers: [{ ...T1_DOSSIER, kinfolkId: 'someone-else' }],
+        the_411: [{ id: '411_k-biscuit', kinId: 'k-biscuit', kinfolkId: 'someone-else', rawSummary: 'Not this household.' }],
+      });
+      const a = visitModel([GOOD_DRAFT]);
+      await run(db, a);
+      assert.strictEqual(backgroundOf(promptOf(a)), null);
+      assert.doesNotMatch(promptOf(a), /Not this household|breakfast\./);
+    });
+    it('reads only this household\'s dossier', async () => {
+      const db = t1Db({ dossiers: [T1_DOSSIER, { id: 'someone-else', kinfolkId: 'someone-else', rawSummary: 'Another household entirely.' }] });
+      const a = visitModel([GOOD_DRAFT]);
+      await run(db, a);
+      assert.doesNotMatch(promptOf(a), /Another household entirely/);
+    });
+    it('asks for the 411s of every id the visit Kin answer to, ten at a time', async () => {
+      const asked = [];
+      const db = t1Db();
+      const base = db.collection;
+      db.collection = (name) => {
+        const c = base(name);
+        if (name !== 'the_411') return c;
+        return { ...c, where: (field, op, value) => { asked.push(value); return c.where(field, op, value); } };
+      };
+      const kin = Array.from({ length: 12 }, (_, i) => ({ ids: new Set([`a${i}`]), name: `Kin${i}` }));
+      await gen.readTaleBackground(db, 't1', kin, []);
+      assert.deepStrictEqual(asked.map((b) => b.length), [10, 2]);
+    });
+    it('a dossier that cannot be read leaves the tale to be written from the visit', async () => {
+      const db = t1Db();
+      const base = db.collection;
+      db.collection = (name) => (name === 'dossiers'
+        ? { doc: () => ({ async get() { throw new Error('unavailable'); } }) }
+        : base(name));
+      const a = visitModel([GOOD_DRAFT]);
+      const out = await run(db, a);
+      assert.strictEqual(out.generated_copy, GOOD_DRAFT);
+      const bg = backgroundOf(promptOf(a));
+      assert.doesNotMatch(bg, /breakfast/);
+      assert.match(bg, /Biscuit naps/);
+    });
+    it('411s that cannot be read leave the tale to be written from the visit', async () => {
+      const db = t1Db();
+      const base = db.collection;
+      db.collection = (name) => (name === 'the_411'
+        ? { where: () => ({ async get() { throw new Error('unavailable'); } }) }
+        : base(name));
+      const a = visitModel([GOOD_DRAFT]);
+      const out = await run(db, a);
+      assert.strictEqual(out.generated_copy, GOOD_DRAFT);
+      const bg = backgroundOf(promptOf(a));
+      assert.doesNotMatch(bg, /Biscuit naps/);
+      assert.match(bg, /breakfast/);
+    });
+    it('a household named only by a typed name gets no background', async () => {
+      const a = visitModel([GOOD_DRAFT]);
+      await run(t1Db(), a, { communication_type: 'visit_report', recipient: 'Tess', raw_notes: 'all ate' });
+      assert.strictEqual(backgroundOf(promptOf(a)), null);
+      assert.doesNotMatch(promptOf(a), /breakfast|side gate|Biscuit naps/);
+    });
+    it('a household pinned by the composer\'s id with no visit gets its background', async () => {
+      const a = visitModel([GOOD_DRAFT]);
+      await run(t1Db(), a, { communication_type: 'visit_report', kinfolk_id: 't1', raw_notes: 'all ate' });
+      assert.match(backgroundOf(promptOf(a)), /breakfast/);
+    });
+    it('with no dossier and no 411 on file, no background block is sent', async () => {
+      const a = visitModel([GOOD_DRAFT]);
+      await run(t1Db({ dossiers: [], the_411: [] }), a);
+      assert.doesNotMatch(promptOf(a), /HOUSEHOLD BACKGROUND|dossier|411/);
+    });
+    it('the saved draft carries the tale, never the background', async () => {
+      const db = t1Db();
+      const a = visitModel([GOOD_DRAFT]);
+      await run(db, a);
+      const saved = JSON.stringify(db._drafts);
+      assert.doesNotMatch(saved, /breakfast|side gate|Biscuit naps/);
+    });
+    it('a placeholder 411 line is left out', () => {
+      const text = gen.taleBackgroundText({
+        dossier: null,
+        four11s: [{ name: 'Mochi', four11: { medicalNotes: 'Not yet documented.', dietaryDetails: 'Wet food only.' } }],
+      });
+      assert.strictEqual(text, 'Mochi:\nDiet: Wet food only.');
+    });
+    it('a 411 under a household copy id that another household\'s office record holds is left out', async () => {
+      const db = t1Db({
+        'families/t1/kin': [...T1_FAMILY_KIN, { id: 'k-other', name: 'Rover' }],
+        the_411: [...T1_411, { id: '411_k-other', kinId: 'k-other', rawSummary: 'Rogue guards the porch.' }],
+      });
+      const a = visitModel([GOOD_DRAFT]);
+      await run(db, a, { communication_type: 'visit_report', kinfolk_id: 't1', raw_notes: 'all ate' });
+      const bg = backgroundOf(promptOf(a));
+      assert.match(bg, /Biscuit naps/);
+      assert.doesNotMatch(promptOf(a), /guards the porch/);
+    });
+    it('a 411 whose Kin record cannot be read is left out', async () => {
+      const db = t1Db();
+      const base = db.collection;
+      db.collection = (name) => (name === 'kin'
+        ? { ...base(name), doc: () => ({ async get() { throw new Error('unavailable'); } }) }
+        : base(name));
+      const a = visitModel([GOOD_DRAFT]);
+      const logs = [];
+      const orig = console.error;
+      console.error = (...x) => logs.push(x.map(String).join(' '));
+      let out;
+      try {
+        out = await run(db, a);
+      } finally {
+        console.error = orig;
+      }
+      assert.strictEqual(out.generated_copy, GOOD_DRAFT);
+      assert.doesNotMatch(promptOf(a), /Biscuit naps/);
+      assert.match(backgroundOf(promptOf(a)), /breakfast/);
+      // The log says how many, never which.
+      const line = logs.find((l) => /Kin records could not be read/.test(l));
+      assert.ok(line, 'the failed Kin read is logged');
+      assert.doesNotMatch(line, /biscuit|k-|naps/i);
+    });
+  });
+  describe('a draft that repeats the household background (#2052 ruling)', () => {
+    // A sample draft that lifts a line of the dossier and a line of a 411.
+    const QUOTING = 'Biscuit naps after a walk and sulks, and Tess likes a note about breakfast, so here it is.';
+    it('is sent back once with a correction, and the second draft is handed over', async () => {
+      const db = t1Db();
+      const a = visitModel([QUOTING, GOOD_DRAFT]);
+      const out = await run(db, a);
+      assert.strictEqual(a.calls.length, 2);
+      assert.match(promptOf(a, 1), /CORRECTION: your last draft repeated wording from the household background/);
+      assert.strictEqual(out.generated_copy, GOOD_DRAFT);
+      assert.doesNotMatch(out.generated_copy, /naps after a walk|likes a note about breakfast/);
+      assert.doesNotMatch(JSON.stringify(db._drafts), /naps after a walk|likes a note about breakfast/);
+    });
+    it('is refused when the retry repeats it too, and no draft row is written', async () => {
+      const db = t1Db();
+      const a = visitModel([QUOTING, QUOTING]);
+      await assert.rejects(
+        run(db, a),
+        (e) => e.status === 422 && e.extra.code === 'draft_repeats_background' && /Your notes are untouched/.test(e.message),
+      );
+      assert.strictEqual(db._drafts.length, 0);
+    });
+    it('the visit may still say what its own notes say, even where the background says it too', async () => {
+      const db = t1Db();
+      const draft = 'All ate, and I made sure to lock the side gate on the way out.';
+      const a = visitModel([draft]);
+      const out = await run(db, a, { ...T1_REQUEST, raw_notes: 'all ate, lock the side gate on the way out' });
+      assert.strictEqual(a.calls.length, 1);
+      assert.strictEqual(out.generated_copy, draft);
+    });
+    it('a short shared phrase is not a repeat', () => {
+      assert.strictEqual(gen.repeatsBackground('She had a walk and a nap.', 'Biscuit naps after a walk and sulks.', ''), false);
+      assert.strictEqual(gen.repeatsBackground('Biscuit naps after a walk and sulks.', '', ''), false);
+      assert.strictEqual(gen.repeatsBackground('Biscuit naps after a walk and sulks.', 'Biscuit naps after a walk and sulks.', ''), true);
+    });
+    it('names the repeated words in the correction, so the second draft can steer clear of them', async () => {
+      const db = t1Db();
+      const a = visitModel([QUOTING, GOOD_DRAFT]);
+      await run(db, a);
+      assert.match(promptOf(a, 1), /"biscuit naps after a walk and sulks", "tess likes a note about breakfast"/);
+      assert.doesNotMatch(promptOf(a, 0), /CORRECTION/);
+    });
+    it('the named words go to the model only: not on screen, not in the log', async () => {
+      const db = t1Db();
+      const a = visitModel([QUOTING, QUOTING]);
+      const logs = [];
+      const orig = { log: console.log, error: console.error, warn: console.warn };
+      console.log = (...x) => logs.push(x.map(String).join(' '));
+      console.error = console.log;
+      console.warn = console.log;
+      let refused;
+      try {
+        await run(db, a).catch((e) => { refused = e; });
+      } finally {
+        Object.assign(console, orig);
+      }
+      assert.strictEqual(refused.extra.code, 'draft_repeats_background');
+      assert.doesNotMatch(`${refused.message}\n${logs.join('\n')}`, /naps after a walk|note about breakfast/i);
+    });
+    it('an everyday phrase the background holds, said after notes that put it in shorthand, is retried with that phrase named and then handed over', async () => {
+      const db = t1Db({
+        dossiers: [{ ...T1_DOSSIER, rawSummary: 'Tess loves to hear that they had a great time at the park.' }],
+      });
+      const routine = 'Biscuit, Waffle, Mochi and Pepper had a great time at the park, and all ate.';
+      const rewritten = 'Biscuit, Waffle, Mochi and Pepper loved the park today, and all ate.';
+      const a = visitModel([routine, rewritten]);
+      const out = await run(db, a, { ...T1_REQUEST, raw_notes: 'park, all ate' });
+      assert.strictEqual(a.calls.length, 2);
+      assert.match(promptOf(a, 1), /"had a great time at the park"/);
+      assert.strictEqual(out.generated_copy, rewritten);
+    });
+    it('joins overlapping runs into one passage, keeps apart runs apart, and leaves out what the visit says', () => {
+      const bg = 'Biscuit naps after a walk and sulks in the sun. Tess likes a note about breakfast every day.';
+      assert.deepStrictEqual(
+        gen.backgroundPassagesIn('Today biscuit naps after a walk and sulks in the sun, and tess likes a note about breakfast.', bg, ''),
+        ['biscuit naps after a walk and sulks in the sun', 'tess likes a note about breakfast'],
+      );
+      assert.deepStrictEqual(
+        gen.backgroundPassagesIn('Tess likes a note about breakfast.', bg, 'notes: tess likes a note about breakfast'),
+        [],
+      );
+      assert.deepStrictEqual(gen.backgroundPassagesIn('Anything at all here today.', '', ''), []);
+    });
   });
   it('is told to state nothing beyond them, in the last word before the notes', async () => {
     const a = visitModel([GOOD_DRAFT]);

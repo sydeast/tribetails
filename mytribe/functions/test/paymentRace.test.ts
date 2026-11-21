@@ -352,6 +352,19 @@ describe('#2299: a blank Amount pays what the invoice owes as the server reads i
     expect(docs[INVOICE]).toMatchObject({ status: 'paid', paidCents: 4000, amountDueCents: 0 });
     expectBalanceMatchesPayments();
   });
+  it('#1975 a blank Amount with a fee is checked against the resolved amount: under it records, over it refuses', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    // $40 owed. A $3 fee fits inside the $40 the transaction resolves.
+    const ok = await settle({ fee: 3 });
+    expect(ok).toMatchObject({ amountCents: 4000, feeCents: 300 });
+  });
+  it('#1975 a blank Amount with a fee larger than what is owed is refused, and nothing is recorded', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const refused = await refusalOf(settle({ fee: 41 }));
+    expect(refused).toMatchObject({ status: 'invalid-argument', code: 'fee_exceeds_amount' });
+    expect(String(refused?.message)).toContain('A fee of $41.00 is more than the $40.00 payment');
+    nothingRecorded(0);
+  });
   it('a typed tip and fee ride on top of the balance: gross tip stored, fee out of the proceeds', async () => {
     installOptimisticTransactions(ctx.db, docs);
     const res = await settle({ tip: 5, fee: 1.5 });
@@ -366,7 +379,7 @@ describe('#2299: a blank Amount pays what the invoice owes as the server reads i
     // The mock stores the increment itself: one credit of exactly $3.00.
     expect(docs['families/fam1']!.accountBalanceCents).toEqual({ __increment: 300 });
     // A same-key retry is answered from the row: no second credit, no second payment.
-    expect(await settle({ amount: 50, autoApply: true, creditToAccountCents: 300 })).toEqual(res);
+    expect(await settle({ amount: 50, autoApply: true, creditToAccountCents: 300 })).toEqual({ ...res, replayed: true });
     expect(tx.committed().filter((p) => p === 'families/fam1')).toHaveLength(1);
     expect(subcollectionRows()).toBe(1);
   });
@@ -763,7 +776,7 @@ describe('#2281 review: a second call that arrives after the sweep', () => {
     expect(subcollectionRows()).toBe(1);
     expect(docs['families/fam1']!.accountBalanceCents).toBe(12000);
     // A second retry by the same key is answered from the row, and emails nothing more.
-    expect(await step2(settled.paymentId)).toEqual(first);
+    expect(await step2(settled.paymentId)).toEqual({ ...first, replayed: true });
     expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
     expect(hooks.enqueue).toHaveBeenCalledTimes(1);
     expect(hooks.deliver).toHaveBeenCalledTimes(1);
@@ -1155,7 +1168,7 @@ describe('#2296: a second call naming a settlement that already has its ledger r
     expect(docs[`${INVOICE}/payments/${settled.paymentId}`]).toMatchObject({ ledgerPaymentId: pay(1) });
     const sent = hooks.enqueue.mock.calls.length;
     const second = await step2(settled.paymentId, { amount: 55, creditToAccountCents: 1000, idempotencyKey: pay(2) });
-    expect(second).toEqual(first);
+    expect(second).toEqual({ ...first, replayed: true });
     expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
     expect(docs['families/fam1']!.accountBalanceCents).toEqual({ __increment: 1000 });
     // One write to the balance across both calls: the first one's.
@@ -1172,7 +1185,7 @@ describe('#2296: a second call naming a settlement that already has its ledger r
     const { ledgerPaymentId: _dropped, ...unstamped } = docs[`${INVOICE}/payments/${settled.paymentId}`]!;
     docs[`${INVOICE}/payments/${settled.paymentId}`] = unstamped;
     const second = await step2(settled.paymentId, { amount: 55, creditToAccountCents: 1000, idempotencyKey: pay(2) });
-    expect(second).toEqual(first);
+    expect(second).toEqual({ ...first, replayed: true });
     expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
     expect(tx.committed().filter((p) => p === 'families/fam1')).toHaveLength(0);
     expect(subcollectionRows()).toBe(1);

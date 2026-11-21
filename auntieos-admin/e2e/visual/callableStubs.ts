@@ -121,6 +121,7 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
         paymentId: 'vis-payment-001',
         amountCents: 4000,
         method: 'Check',
+        methodLabel: 'Check',
         reference: '2041',
         paidAt: isoAt(-3, '15:20:00'),
         recordedBy: 'e2e-admin',
@@ -136,6 +137,7 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
         paymentId: 'vis-payment-002',
         amountCents: 2000,
         method: 'Cash',
+        methodLabel: 'Cash',
         reference: null,
         paidAt: isoAt(-1, '18:05:00'),
         recordedBy: 'e2e-admin',
@@ -143,6 +145,8 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
       },
     ],
     paidCents: 6000,
+    // #2470: not brought over from the old system.
+    broughtOverPaidCents: 0,
     totalCents: 24000,
     amountDueCents: 18000,
     // #2090: nothing written off on this invoice.

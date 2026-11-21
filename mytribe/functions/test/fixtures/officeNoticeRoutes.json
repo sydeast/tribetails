@@ -1,0 +1,19 @@
+{
+  "about": "#2487: where an office or Auntie notice opens in auntieOS. Read by mytribe/functions/test/noticeLink.test.ts (the email and text link) and auntieos-admin/src/lib/officeNoticeRoutes.test.ts (Open on the notifications list), so the two cannot drift. A null route is the notifications list.",
+  "cases": [
+    { "name": "an invoice", "entry": { "key": "invoice.payment.applied", "targetType": "invoice", "targetId": "inv1", "data": { "kinfolkId": "fam1", "invoiceId": "inv1" } }, "auntie": false, "path": "/invoices?invoiceId=inv1" },
+    { "name": "an invoice, for an Auntie", "entry": { "key": "invoice.payment.applied", "targetType": "invoice", "targetId": "inv1", "data": { "kinfolkId": "fam1", "invoiceId": "inv1" } }, "auntie": true, "path": null },
+    { "name": "a KinTale", "entry": { "key": "kintale.comment.added", "targetType": "kintale", "targetId": "tale1", "data": { "kinfolkId": "fam1", "taleId": "tale1" } }, "auntie": false, "path": "/kintales?kinTaleId=tale1" },
+    { "name": "a household", "entry": { "key": "message.received", "targetType": "kinfolk", "targetId": "fam1", "data": { "kinfolkId": "fam1" } }, "auntie": false, "path": "/directory/fam1" },
+    { "name": "one visit", "entry": { "key": "kincare.cancel.requested", "targetType": "booking", "targetId": "vis1", "data": { "kinfolkId": "fam1", "batchId": "bat1", "visitId": "vis1" } }, "auntie": false, "path": "/bookings?bookingId=vis_vis1" },
+    { "name": "one visit, for an Auntie", "entry": { "key": "assignment.changed", "targetType": "booking", "targetId": "vis1", "data": { "kinfolkId": "fam1", "batchId": "bat1", "visitId": "vis1" } }, "auntie": true, "path": "/bookings?bookingId=vis_vis1" },
+    { "name": "a whole request", "entry": { "key": "assignment.assigned", "targetType": "booking", "targetId": "bat1", "data": { "kinfolkId": "fam1", "batchId": "bat1" } }, "auntie": true, "path": "/bookings?requestId=bat1&requestKinfolkId=fam1" },
+    { "name": "a fresh request", "entry": { "key": "kincare.requested", "targetType": "booking", "targetId": "bat1", "data": { "kinfolkId": "fam1", "batchId": "bat1" } }, "auntie": false, "path": "/bookings?requestId=bat1&requestKinfolkId=fam1" },
+    { "name": "a whole request that names no household", "entry": { "key": "kincare.booking.confirm", "targetType": "booking", "targetId": "bat1", "data": { "batchId": "bat1" } }, "auntie": false, "path": null },
+    { "name": "a Kin removal request", "entry": { "key": "kin.removal.requested", "targetType": "kinfolk", "targetId": "fam1", "data": { "kinfolkId": "fam1", "requestId": "req1" } }, "auntie": false, "path": "/bookings?kinRemoval=req1" },
+    { "name": "an unapplied payment", "entry": { "key": "invoice.payment.unapplied", "targetType": "invoice", "targetId": "inv1", "data": { "kinfolkId": "fam1", "invoiceId": "inv1", "stripeEventId": "evt1" } }, "auntie": false, "path": "/directory/fam1?section=unapplied-payments&paymentId=evt1" },
+    { "name": "an unapplied payment, for an Auntie", "entry": { "key": "invoice.payment.unapplied", "targetType": "invoice", "targetId": "inv1", "data": { "kinfolkId": "fam1", "invoiceId": "inv1", "stripeEventId": "evt1" } }, "auntie": true, "path": null },
+    { "name": "nothing to open", "entry": { "key": "security.account.locked.spike.operator", "targetType": "", "targetId": "", "data": {} }, "auntie": false, "path": null },
+    { "name": "an id that is not a plain record id", "entry": { "key": "invoice.payment.applied", "targetType": "invoice", "targetId": "inv1/../x?y=1", "data": {} }, "auntie": false, "path": null }
+  ]
+}

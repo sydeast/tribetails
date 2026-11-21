@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.data.model.visitStatusCode
 import com.tribetails.auntieos.data.repository.parseVisitInstant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -121,7 +122,7 @@ internal fun isVisibleOnAuntieTime(
     today: String,
     zone: ZoneId = businessZone(null),
 ): Boolean {
-    val status = session.status.uppercase()
+    val status = visitStatusCode(session.status)
     if (isBookingQueueStatus(status)) return false
     if (status in ACTIVE_STATUSES) return true
 
@@ -154,7 +155,7 @@ internal fun isOverdueScheduled(
     today: String,
     zone: ZoneId = businessZone(null),
 ): Boolean {
-    val status = session.status.uppercase()
+    val status = visitStatusCode(session.status)
     if (isBookingQueueStatus(status) || status in ACTIVE_STATUSES || status in WRAPPED_STATUSES) {
         return false
     }

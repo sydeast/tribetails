@@ -4,7 +4,7 @@ vi.mock('../src/lib/firestoreAdmin', () => ({ db: vi.fn(), auth: vi.fn(), getAdm
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 
-import { planApply, type InvoiceForApply } from '../src/lib/paymentApply';
+import { balanceToSettle, planApply, type InvoiceForApply } from '../src/lib/paymentApply';
 
 /**
  * The "Apply: $" decision, as a pure function.
@@ -161,6 +161,38 @@ describe('planApply: the refusals imported from markInvoicePaid', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.refusal.code).toBe('apply_invoice_not_sent');
+  });
+
+  it('#2517: refuses a draft or a quote marked only in the older invoiceStatus field', () => {
+    for (const invoiceStatus of ['draft', 'quote']) {
+      const result = plan({ invoice: invoice({ status: undefined, invoiceStatus }) });
+      expect(result.ok, invoiceStatus).toBe(false);
+      if (result.ok) return;
+      expect(result.refusal.code).toBe('apply_invoice_not_sent');
+      expect(result.refusal.message).toBe('Invoice 1029 is a draft or quote; send it before applying a payment to it.');
+    }
+  });
+
+  it('#2517: a stored status wins over the older field, both ways', () => {
+    expect(plan({ invoice: invoice({ status: 'open', invoiceStatus: 'draft' }) }).ok).toBe(true);
+    const draft = plan({ invoice: invoice({ status: 'draft', invoiceStatus: 'open' }) });
+    expect(draft.ok).toBe(false);
+    if (draft.ok) return;
+    expect(draft.refusal.code).toBe('apply_invoice_not_sent');
+    expect(plan({ invoice: invoice({ status: undefined, invoiceStatus: 'open' }) }).ok).toBe(true);
+  });
+
+  it('#2517: "settle the balance" refuses a legacy-field draft or quote the same way', () => {
+    for (const invoiceStatus of ['draft', 'quote']) {
+      const result = balanceToSettle(invoice({ status: undefined, invoiceStatus }), 'fam1');
+      expect(result.ok, invoiceStatus).toBe(false);
+      if (result.ok) return;
+      expect(result.refusal.code).toBe('apply_invoice_not_sent');
+    }
+    expect(balanceToSettle(invoice({ status: 'open', invoiceStatus: 'quote' }), 'fam1')).toEqual({
+      ok: true,
+      amountDueCents: 12750,
+    });
   });
 
   it('refuses a cancelled invoice', () => {

@@ -12,7 +12,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateOf } from '../lib/invoiceEditPolicy';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
-import { centsToDollars, formatUsdCents, invoiceTotalCentsOf, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { appliedCentsOf, centsToDollars, formatUsdCents, invoiceTotalCentsOf, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import {
   INVOICE_STILL_OWING_CODE,
   WRITE_OFFS_SUBCOLLECTION,
@@ -344,7 +344,9 @@ export async function writeOffInvoiceHandler(
       kinfolkId: typeof data.kinfolkId === 'string' ? data.kinfolkId : null,
       amountCents: owedCents,
       totalCents,
-      paidCents,
+      // #2470: what had been applied, brought-over amount included, so the
+      // entry's total is its paid figure plus what was written off.
+      paidCents: appliedCentsOf(data, paidCents),
       writtenOffAt: FieldValue.serverTimestamp(),
       writtenOffBy: uid,
     });

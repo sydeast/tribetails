@@ -1,1 +1,1 @@
-{{Business}}: an Auntie added a note on {{kinName}}'s visit.
+{{Business}}: {{actorName}} added a note on {{kinName}}'s visit.

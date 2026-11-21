@@ -362,6 +362,10 @@ export const AUDIT_EVENTS = {
   // (updateKinCareSession callable): serviceType, notes, duration, the Kin
   // roster. Records the field NAMES written, never their values.
   UPDATE_KINCARE_SESSION: 'UPDATE_KINCARE_SESSION',
+  // #1822: the owner put a Kin adopted after a booking on the household's
+  // upcoming visits (addKinToUpcomingVisits callable). Written only when at
+  // least one visit changed; the payload names the Kin and the visit count.
+  ADD_KIN_TO_UPCOMING_VISITS: 'ADD_KIN_TO_UPCOMING_VISITS',
   // #582: `verifyVisitArrival` measured a recorded arrival against the
   // household's stored coordinate. Written on EVERY outcome, including the ones
   // that verify nothing (no household coordinate, a fix too imprecise to be
@@ -739,6 +743,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.DELETE_BLOCKED_TIME_SLOT,
   AUDIT_EVENTS.CREATE_KINCARE_SESSION,
   AUDIT_EVENTS.UPDATE_KINCARE_SESSION,
+  AUDIT_EVENTS.ADD_KIN_TO_UPCOMING_VISITS,
   AUDIT_EVENTS.RESCHEDULE_BOOKING,
   AUDIT_EVENTS.VISIT_ARRIVAL_LOCATION_CHECK,
   AUDIT_EVENTS.VISIT_LIFECYCLE_REFUSED,

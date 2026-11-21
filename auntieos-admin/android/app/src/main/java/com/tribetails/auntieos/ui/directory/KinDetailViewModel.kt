@@ -83,6 +83,20 @@ data class KinDetailUiState(
      * the read fails: each tag still shows by name.
      */
     val tagVocab: List<TagDef> = emptyList(),
+    /**
+     * #1822: upcoming visits of this household that do not carry this Kin
+     * (`addKinToUpcomingVisits`), or null while unread. Its own read, loading
+     * and error, like every panel.
+     */
+    val missingVisits: Int? = null,
+    val missingLoading: Boolean = false,
+    val missingError: String? = null,
+    /** True while the owner's "Add <Kin>" is in flight; the button locks meanwhile. */
+    val addingToVisits: Boolean = false,
+    /** The server's refusal of the last add, shown on the card. */
+    val addToVisitsError: String? = null,
+    /** What the last add did, for the success banner. */
+    val addToVisitsMessage: String? = null,
     val isLoading: Boolean = true,
     val error: String? = null,
 )
@@ -194,6 +208,8 @@ class KinDetailViewModel(
 
             // #1408: the household's removal request, after the page is drawable.
             loadRemovalRequests(kinId)
+            // #1822: upcoming visits booked before this Kin joined.
+            if (kinfolkId.isNotBlank()) loadMissingVisits(kinfolkId, kinId)
 
             // The KIN form_schemas behind the structured care checklist. Loaded
             // after the page is already drawable, and fail-loud via schemaError
@@ -253,6 +269,47 @@ class KinDetailViewModel(
         }
     }
 
+    /** #1822. How many upcoming visits of [kinfolkId] do not carry [kinId]; fail-loud via missingError. */
+    fun loadMissingVisits(kinfolkId: String, kinId: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(missingLoading = true, missingError = null)
+            val result = kinCareRepository.addKinToUpcomingVisits(kinfolkId, kinId, apply = false)
+            _uiState.value = _uiState.value.copy(
+                missingLoading = false,
+                missingVisits = result.getOrNull()?.upcoming,
+                missingError = result.exceptionOrNull()?.let { it.message ?: "Couldn't check upcoming visits" },
+            )
+        }
+    }
+    /**
+     * #1822. The owner confirmed "Add <Kin> to the N upcoming visits". One tap
+     * at a time; a refusal stays on the card, and the count is read again after
+     * a success so the card goes away once every visit has the Kin.
+     */
+    fun addToUpcomingVisits(kinfolkId: String, kinId: String, kinName: String) {
+        if (_uiState.value.addingToVisits) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(addingToVisits = true, addToVisitsError = null, addToVisitsMessage = null)
+            kinCareRepository.addKinToUpcomingVisits(kinfolkId, kinId, apply = true)
+                .onSuccess { res ->
+                    _uiState.value = _uiState.value.copy(
+                        addingToVisits = false,
+                        missingVisits = (_uiState.value.missingVisits ?: res.upcoming).minus(res.added).coerceAtLeast(0),
+                        addToVisitsMessage = com.tribetails.auntieos.domain.addedKinToVisitsLine(kinName, res.added),
+                    )
+                    loadMissingVisits(kinfolkId, kinId)
+                }
+                .onFailure { err ->
+                    _uiState.value = _uiState.value.copy(
+                        addingToVisits = false,
+                        addToVisitsError = err.message ?: "That did not go through. Try again.",
+                    )
+                }
+        }
+    }
+    fun clearAddToVisitsMessage() {
+        _uiState.value = _uiState.value.copy(addToVisitsMessage = null)
+    }
     fun clearRemovalMessage() {
         _uiState.value = _uiState.value.copy(removalMessage = null)
     }

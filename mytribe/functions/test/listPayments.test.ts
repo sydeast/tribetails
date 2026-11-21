@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Timestamp } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
@@ -328,6 +329,7 @@ describe('listPayments — what a row carries', () => {
         appliedInvoiceId: 'inv1',
         appliedInvoiceNumber: '1029',
         method: 'venmo',
+        methodLabel: 'venmo',
         reference: '#881',
         date: 'February 17, 2026',
         notes: 'left on the porch',
@@ -386,5 +388,41 @@ describe('listPayments — the read log', () => {
       event: 'admin.payments.listRead',
       extra: { returned: 1, truncated: true, testMode: false },
     });
+  });
+});
+
+describe('#2334: a card payment row reads as its method and has a date', () => {
+  // 8:30 PM on Nov 20 in Chicago.
+  const lateEvening = Timestamp.fromMillis(Date.parse('2026-11-21T02:30:00Z'));
+  const rows = [
+    {
+      id: 'evt_cs_1',
+      data: { kinfolkId: 'fam1', amountCents: 2500, amountSource: 'stripe-event', paymentMethod: 'stripe', onlineMethod: 'affirm', date: lateEvening },
+    },
+    {
+      id: 'evt_cs_0',
+      data: { kinfolkId: 'fam1', amountCents: 1500, amountSource: 'stripe-event', paymentMethod: 'stripe', date: lateEvening },
+    },
+    { id: 'p-hand', data: { kinfolkId: 'fam1', amount: 10, paymentMethod: 'cash', date: 'February 17, 2026' } },
+  ];
+
+  it('says Affirm, "Online payment" for an old card row, and the hand-recorded method as typed', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { payments: rows } }).db);
+    const res = await run();
+    expect(rowById(res, 'evt_cs_1')).toMatchObject({ method: 'stripe', methodLabel: 'Affirm' });
+    expect(rowById(res, 'evt_cs_0')).toMatchObject({ method: 'stripe', methodLabel: 'Online payment' });
+    expect(rowById(res, 'p-hand')).toMatchObject({ method: 'cash', methodLabel: 'cash' });
+  });
+
+  it("a card row's Timestamp reads as its business day, and free text stays as typed", async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: { 'business_settings/business_settings': { timeZone: 'America/Chicago' } },
+        queryDocs: { payments: rows },
+      }).db,
+    );
+    const res = await run();
+    expect(rowById(res, 'evt_cs_1').date).toBe('2026-11-20');
+    expect(rowById(res, 'p-hand').date).toBe('February 17, 2026');
   });
 });

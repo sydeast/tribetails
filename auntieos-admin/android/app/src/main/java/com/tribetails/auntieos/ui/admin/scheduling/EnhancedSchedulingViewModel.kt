@@ -3301,7 +3301,7 @@ class EnhancedSchedulingViewModel(
         kinCareRepository.getKinCareSessionsBySourceBookingId(sourceBookingId)
             .map { sessions ->
                 sessions
-                    .filter { it.status.uppercase() != VisitStatus.CANCELLED.name }
+                    .filter { visitStatusCode(it.status) != VisitStatus.CANCELLED.name }
                     .map { it.id }
             }
 

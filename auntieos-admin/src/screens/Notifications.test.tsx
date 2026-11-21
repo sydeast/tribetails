@@ -205,6 +205,27 @@ describe('Notifications screen', () => {
     expect(screen.getByRole('checkbox', { name: 'Select Account welcome kinfolk' })).toBeInTheDocument();
   });
 
+  it('#2277: the visit note row names who wrote the note, before the category', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({
+          key: 'kincare.note.auntie',
+          title: 'Note added to a KinCare',
+          category: 'visit',
+          actorUid: 'auntie1',
+          actorName: 'Mia Torres',
+          targetType: 'booking',
+          targetId: 'vis1',
+        }),
+      ],
+    });
+    render(<Notifications />);
+    const row = screen.getByRole('listitem');
+    expect(within(row).getByText('Note added to a KinCare')).toBeInTheDocument();
+    expect(within(row).getByText((_, el) => el?.textContent === 'Mia Torres · Visits')).toBeInTheDocument();
+  });
+
   /**
    * THE R5 REGRESSION GUARD, and the reason it is an assertion rather than a
    * deletion. Operator ruling, verbatim: "there are many Activity Log records

@@ -109,6 +109,13 @@ describe('backfillCardInvoicePayments planInvoiceBackfill', () => {
     expect(plan.action === 'write' && plan.rows.map((r) => [r.rowId, r.amountCents])).toEqual([['stripe_pi_evt_1', 4000]]);
   });
 
+  it('#2334: the actual method rides from the ledger row, and an old row adds none', () => {
+    const withMethod = planInvoiceBackfill('inv1', PAID, [], [card('evt_1', 4000, { onlineMethod: 'klarna' })]);
+    expect(withMethod.action === 'write' && withMethod.rows[0]!.row).toMatchObject({ method: 'stripe', onlineMethod: 'klarna' });
+    const old = planInvoiceBackfill('inv1', PAID, [], [card('evt_1', 4000)]);
+    expect(old.action === 'write' && old.rows[0]!.row).not.toHaveProperty('onlineMethod');
+  });
+
   it('two card payments on one invoice are written together when they close it', () => {
     const invoice = { ...PAID, total: 187.5, totalCents: 18750 };
     const plan = planInvoiceBackfill('inv1', invoice, [], [card('evt_1', 13750), card('evt_2', 5000)]);
@@ -137,6 +144,15 @@ describe('backfillCardInvoicePayments planInvoiceBackfill', () => {
     // The card-paid part was since recorded again by hand, or the card paid a tip.
     const plan = planInvoiceBackfill('inv1', PAID, [hand('h1', 1500), hand('h2', 2500)], [card('evt_1', 2500)]);
     expect(plan).toMatchObject({ action: 'report', reason: 'would_overpay', totalCents: 4000, rowsCents: 4000, cardCents: 2500 });
+  });
+
+  it('#2470 counts what was paid before the invoice was brought over, and stores the rows alone', () => {
+    // $40, $15 brought over, the card paid the $25 left.
+    const plan = planInvoiceBackfill('inv1', { ...PAID, broughtOverPaidCents: 1500 }, [], [card('evt_1', 2500)]);
+    expect(plan).toMatchObject({
+      action: 'write',
+      invoiceUpdate: { paymentStatus: 'PAID', totalCents: 4000, paidCents: 2500, overpaidCents: 0, status: 'paid' },
+    });
   });
 
   it('reports when they would still fall short: a paid invoice is not turned into a part-paid one', () => {

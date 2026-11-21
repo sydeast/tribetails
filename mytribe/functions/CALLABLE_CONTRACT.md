@@ -497,6 +497,8 @@ fails ships null and `payInvoice` still refuses. Both portals offer no way to
 pay and print the sentence when it is set, and read an absent key (an older
 server) as null.
 
+**getMyInvoices ships each invoice's Payment History (#2334, 2026-11-21).** `payments: Array<{ paymentId: string, methodLabel: string, paidDay: string|null /* YYYY-MM-DD on the business clock */, amountCents: number }>`, newest first, read off the invoice's own `payments` rows (the ones its balance is settled from). The household's view only: how it was paid (Card, Klarna, Affirm, a wallet, 'Online payment' for an old checkout row, 'Account credit', or the method the office recorded, capitalised and named as its pay option when it is one: 'venmo' and 'CASH' read 'Venmo' and 'Cash'), the day and the amount. Never the reference, fee, notes or who recorded it, and `paymentId` is the line's key (`p1`, `p2` in the order shown), never the stored row id, which for a card row is the Stripe reference. A bill brought over part paid (#2470) ends with one line `{ paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: broughtOverPaidCents }`, so the lines add up to `paidCents`; the admin ledger calls it 'Paid in the old system'. `[]` when there are no rows or they could not be read. Every visible invoice's rows are read for it, not only the open ones. The Stripe webhook stores the actual method beside the stored `stripe` as `onlineMethod`, off the charge it already reads for the fee.
+
 **No second checkout while a finished payment is being recorded (#2437).**
 After a household pays at Stripe, the invoice reads owed until the card webhook
 records the payment. In that gap `payInvoice` opens nothing. It reads the
@@ -930,7 +932,7 @@ prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
 
 ### recordPayment
 - req `{ amount: number /* DOLLARS, float, the legacy shape of this collection. THE WHOLE TRANSACTION, gross tip included */, kinfolkId?: string /* <=120, default '' */, kinfolkName?: string, client?: string, address?: string, date?: string /* free text */, paymentMethod?: string, referenceNumber?: string, email?: string, tip?: number /* default 0. GROSS: what the client tipped, BEFORE the processor fee */, fee?: number /* default 0. The processor's cut, off the business's proceeds. NOT part of amount */, notes?: string /* STAFF ONLY */, invoiceId?: string /* '' = standalone payment. A DISPLAY LINK, never an apply */, invoiceNumber?: string, apply?: { invoiceId: string, invoiceNumber?: string, amount: number, settleBalance?: boolean /* #2299: the Amount box was left blank. The server applies the balance its transaction reads; `amount` here must be 0. The top-level `amount` may be 0 (the server makes it balance + tip + credit) and `tip` may be 0 (the server makes it the rest of a typed amount); both typed must add up or the call is refused with details.amountDueCents */ } /* the "Apply: $" box. ONE invoice; omitted = no balance is touched */, autoApply?: boolean /* default false. #988: recorded only, moves no money */, creditToAccountCents?: number /* #988: integer CENTS, the account credit the admin chose; refused above amount - applied - tip, with no household, or when the applied part cannot be read. Omitted = no credit */, sendConfirmationEmail?: boolean /* default false */, idempotencyKey?: string /* #825, `pay_<millis>_<suffix>`; becomes the `payments/{key}` row id, so a retry records neither a second payment nor a second account credit */, settledByInvoicePaymentId?: string /* #866: the paymentId markInvoicePaid returned to this submission; only with it (or, from an older client, within 5 minutes of the settlement) may this call claim that settlement and tell the office "paid" */ }` (every `?` defaults to `''`/`0`/`false`; `apply` and `idempotencyKey` are omitted, not defaulted)
-- res `{ ok: true, paymentId: string, kinfolkId: string /* what was actually stored; the sandbox id for a test admin */, amountCents: number, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, tipNetCents: number /* SIGNED */, autoApply: boolean /* #988: creditedToAccountCents > 0, stored the same way on the row */, application: { invoiceId, invoiceNumber, paymentId, appliedCents, state, totalCents, paidCents, amountDueCents, overpaidCents }|null, creditedToAccountCents: number /* #988: exactly creditToAccountCents */, confirmationEmailSent: boolean, householdNoPortalAccount: boolean /* #866: ticked, and the household has no portal account */, officeNoticePending: boolean /* #866: the office copy did not go out (the admin roster could not be read); a same-key retry sends it */ }`
+- res `{ ok: true, paymentId: string, kinfolkId: string /* what was actually stored; the sandbox id for a test admin */, amountCents: number, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, tipNetCents: number /* SIGNED */, autoApply: boolean /* #988: creditedToAccountCents > 0, stored the same way on the row */, application: { invoiceId, invoiceNumber, paymentId, appliedCents, state, totalCents, paidCents, amountDueCents, overpaidCents }|null, creditedToAccountCents: number /* #988: exactly creditToAccountCents */, confirmationEmailSent: boolean, householdNoPortalAccount: boolean /* #866: ticked, and the household has no portal account */, officeNoticePending: boolean /* #866: the office copy did not go out (the admin roster could not be read); a same-key retry sends it */, replayed?: true /* #2297 review: the answer came from the row an earlier call with this idempotencyKey wrote; this call recorded nothing. Absent when this call recorded the payment */ }`
 - W2-1 (ADR-0002): replaces `AuntieRepository.createPayment`, the direct create
   on the ROOT `payments` collection. This is the DISPLAY LEDGER the payment
   screens read (`getPayments`, `getPaymentsForKinfolk`, the invoice detail's
@@ -1008,6 +1010,10 @@ prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
     throw here would offer a retry that collects again.
   - Refuses `tip_exceeds_amount` (`invalid-argument`) and every `apply_*` code
     (`failed-precondition`) BEFORE writing anything.
+  - #1975: refuses `fee_exceeds_amount` (`invalid-argument`) BEFORE writing
+    anything when the fee is larger than the payment. With
+    `apply.settleBalance` it is checked against the amount the transaction
+    resolves.
   - Refuses `link_wrong_household` (`failed-precondition`) BEFORE writing
     anything when `invoiceId` names an invoice of a different household than
     `kinfolkId`. A payment with no household and an invoice that carries none
@@ -1215,7 +1221,7 @@ prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
 
 ### getInvoiceLedger
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
-- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */ }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, amountResolved: boolean /* false = the units could not be read; the 0 is a floor, not a figure */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, reference: string, date: string /* FREE TEXT */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, unlinkedKinfolkPayments: Array<{ /* same row shape as ledgerPayments */ }>, unresolvedAmountCount: number /* rows with amountResolved: false, across BOTH root lists */, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
+- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */, methodLabel: string /* #2334 plain words: Card, Klarna, Affirm, a wallet, 'Online payment' for an old checkout row; '' when no method */ }>, paidCents: number /* rows + broughtOverPaidCents */, broughtOverPaidCents: number /* #2470, 0 unless brought over part paid */, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, amountResolved: boolean /* false = the units could not be read; the 0 is a floor, not a figure */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, methodLabel: string /* #2334, as above */, reference: string, date: string /* FREE TEXT; #2334 a checkout row's Timestamp reads as its business day YYYY-MM-DD */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, unlinkedKinfolkPayments: Array<{ /* same row shape as ledgerPayments */ }>, unresolvedAmountCount: number /* rows with amountResolved: false, across BOTH root lists */, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
 - Read only. Writes nothing, stamps no classifier state, repairs nothing. No `ok`
   field, same as `listUninvoicedSessions`: a pure read answers with data or
   throws, and has no partial success to report.
@@ -1232,8 +1238,10 @@ prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
   - `payments` is the `invoices/{id}/payments` SUBCOLLECTION, THE AUTHORITY.
     `paidCents` is their sum, computed with `invoiceMath.ts#paidCentsFromPayments`
     (stored `amountCents` first, the legacy float `amount` rounded once when a
-    pre-2026-07-25 row carries only dollars), and `amountDueCents` is
-    `settleInvoice` over it, clamped at 0.
+    pre-2026-07-25 row carries only dollars), plus `broughtOverPaidCents`
+    (#2470: what was paid before the invoice was brought over from the old
+    system, which has no row), and `amountDueCents` is `settleInvoiceDoc` over
+    it, clamped at 0.
   - `ledgerPayments` is ROOT `payments` rows whose `invoiceId` names this
     invoice: the DISPLAY ledger written by `recordPayment`, `stripeWebhook.ts`
     and the historical `match_payments_to_invoices.py`. Counted in NOTHING here.
@@ -1305,7 +1313,7 @@ prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
 
 ### listPayments
 - req `{ limit?: number /* int 1..500, default 100 */, startAfterId?: string /* 1..200, the previous page's nextCursor */ }` (`.strict()`)
-- res `{ payments: Array<{ paymentId: string, kinfolkId: string, kinfolkName: string, amountCents: number /* gross tip INCLUDED, units RESOLVED server-side */, amountResolved: boolean /* false = the units could not be read; the 0 is a floor, not a figure */, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, invoiceId: string, invoiceNumber: string, appliedInvoiceId: string, appliedInvoiceNumber: string, method: string, reference: string, date: string /* FREE TEXT, '' on a Stripe row */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, truncated: boolean, nextCursor: string|null, unresolvedAmountCount: number }`
+- res `{ payments: Array<{ paymentId: string, kinfolkId: string, kinfolkName: string, amountCents: number /* gross tip INCLUDED, units RESOLVED server-side */, amountResolved: boolean /* false = the units could not be read; the 0 is a floor, not a figure */, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, invoiceId: string, invoiceNumber: string, appliedInvoiceId: string, appliedInvoiceNumber: string, method: string, methodLabel: string /* #2334 plain words, never 'stripe' */, reference: string, date: string /* FREE TEXT; #2334 a Stripe row's Timestamp reads as its business day YYYY-MM-DD */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, truncated: boolean, nextCursor: string|null, unresolvedAmountCount: number }`
 - Read only. No `ok` field, same as `getInvoiceLedger` and
   `listUninvoicedSessions`.
 - **THE ROOT `payments` COLLECTION, ACROSS HOUSEHOLDS.** `getInvoiceLedger`
@@ -2613,14 +2621,64 @@ registry.
   of a Kin's two ids is read as that Kin; none on the roster means all of
   them), and a client shows a Kin picker with every Kin chosen to begin with.
 - The roster is frozen on the booking when it is written. A Kin added later is
-  on the next visit made, never on an existing one, and an approval keeps the
-  Kin the request was stored with.
+  on the next visit made, and an approval keeps the Kin the request was stored
+  with. The owner can put a Kin on visits already booked with
+  `addKinToUpcomingVisits` (#1822).
 - GATE: `resolveKinfolkAccess`. A household reads its own; the owner reads the
   household it names; an Auntie is admitted by `lib/auntieAccess.ts` for the
   visit's Kin editor.
+- An admin Android draft approved through `createKinCareSession` with
+  `enhancedBookingId` (#2347): the Kin come from the stored `enhanced_bookings`
+  draft, never from the caller. A draft stamped `kinChosenWithFlagOn: true`
+  (saved by an app that offered the picker only with choosing switched on)
+  keeps its Kin still in care, whatever the flag says now. A draft without the
+  stamp (saved by an Android build from before 2026-11-14, whose picker was not
+  gated) is booked for every Kin in care, as the 2026-11-12 ruling has it.
 - Callers: admin web, admin Android, the desktop console, the kinfolk portal
   web app and the kinfolk portal Android app.
 
+### addKinToUpcomingVisits
+`src/admin/addKinToUpcomingVisits.ts`. Added 2026-11-20 (#1822, operator
+ruling 2026-11-20). Hand-typed on admin web, admin Android and the desktop
+console; not in the contracts registry.
+- req `{ kinfolkId: string, kinId: string, apply?: boolean }`. `kinId` may be
+  either of the Kin's ids (admin record or household card).
+- res `{ ok: true, kinId: string, kinName: string | null, upcoming: number, added: number }`.
+  `kinId` is the id visits store for the Kin. `upcoming` is how many of the
+  household's upcoming visits do not carry the Kin yet; `added` is how many
+  this call changed (0 unless `apply: true`).
+- Upcoming means not started: an office visit still DRAFT, PENDING or
+  SCHEDULED with no On my way or Arrived stamp and a start still ahead, and a
+  household copy still requested, confirmed or approved with a start (or, for
+  a night awaiting its time, a night) still ahead. Only rows under
+  `families/{kinfolkId}/bookings` and `kin_care_sessions` with that
+  `kinfolkId`. Past, started, cancelled and completed visits are never written.
+- `apply: true` adds the Kin's id and name to `kinIds` / `kinNames` on the
+  office row, the household copy and the booking envelope, only where missing.
+  A doc stored with no Kin (every Kin, R1) gets the whole active roster. Each
+  visit is written in its own transaction that checks again that it has not
+  started; one started meanwhile is left alone and not counted in `added`.
+  Idempotent: a visit already carrying the Kin by either id is neither counted
+  nor written. One Activity Log line (`ADD_KIN_TO_UPCOMING_VISITS`, "Added
+  <Kin> to N upcoming visits") when at least one visit changed.
+- Every apply also puts right the envelope of an upcoming visit that already
+  carries the Kin while its envelope does not (an envelope write that failed
+  on an earlier call); such a visit is not counted in `upcoming`, and counts in
+  `added` only on an apply where no visit lacked the Kin (the retry).
+- Notices: ONE per recipient for the whole change (#532/#536 shape), never one
+  per visit. Each household copy written carries a fresh `kinAddedStamp`, and
+  `onBookingsWrite` sends neither `kincare.changed` nor `assignment.changed`
+  ('updated') for that write. The callable then sends one `kincare.changed`
+  naming every confirmed visit it changed (the office copy, and the
+  household's behind the household send gate) and one `assignment.changed` per
+  assigned Auntie naming her days, with `kinAdded`, `addedKinName` and the
+  structured `visits` / `visitCount` / `nextVisit` dates; target `kinfolk`. A
+  request awaiting approval tells nobody. A call that fails part way tells
+  about the visits it changed, then throws; the retry tells about the rest.
+- GATE: owner only (`wrapAdminCallable`, not on the Auntie allowlist, and an
+  explicit Auntie refusal). A Kin that is not an active Kin of the household
+  counts 0 on a preview (its page draws nothing) and is `not-found`
+  (`kin_not_in_household`) on `apply: true`.
 ### getMyBookings
 - req `{ kinfolkId?: string }` (no zod schema; read raw off `req.data`, same
   precedent as `getMyInvoicesRequest`)
