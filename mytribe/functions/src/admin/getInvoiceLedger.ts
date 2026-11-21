@@ -13,6 +13,8 @@ import {
   type PaymentAmount,
 } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
+import { FALLBACK_BUSINESS_TIME_ZONE } from '../lib/businessHours';
+import { anyTimestamp, ledgerDateText, ONLINE_METHOD_FIELD, paymentMethodLabelOf } from '../lib/onlinePaymentMethod';
 import { WRITE_OFFS_SUBCOLLECTION } from '../lib/invoiceArchive';
 import { CentsSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
@@ -125,6 +127,14 @@ const InvoicePaymentSchema = z
      * put next to the settlement they belong to.
      */
     sourcePaymentId: z.string().nullable(),
+    /**
+     * #2334: the Method cell in plain words. A card payment's actual method
+     * (Card, Klarna, Affirm, a wallet), "Online payment" for one stored before
+     * the method was, and the recorded method otherwise. `''` when none was
+     * recorded, so each client keeps its own words for that. `method` stays
+     * the stored value.
+     */
+    methodLabel: z.string(),
   })
   .strict();
 
@@ -208,8 +218,14 @@ const LedgerPaymentSchema = z
     /** The human-facing number behind `appliedInvoiceId`. `''` when unknown. */
     appliedInvoiceNumber: z.string(),
     method: z.string(),
+    /** #2334: the Method cell in plain words, the same rule as the settlement row's. */
+    methodLabel: z.string(),
     reference: z.string(),
-    /** FREE TEXT on this collection, like every legacy billing date. Not parsed. */
+    /**
+     * FREE TEXT on this collection, like every legacy billing date. Not parsed.
+     * #2334: a card payment's row stores a Timestamp, which reads here as its
+     * business day (`YYYY-MM-DD`) rather than as nothing.
+     */
     date: z.string(),
     /**
      * STAFF ONLY, and it stays that way. This callable is admin-gated
@@ -443,6 +459,7 @@ export async function getInvoiceLedgerHandler(
         // paidCentsFromPayments' rule, per row, so the list and its sum agree.
         amountCents: paidCentsFromPayments([data]),
         method: strOrNull(raw['method']),
+        methodLabel: paymentMethodLabelOf(raw['method'], raw[ONLINE_METHOD_FIELD]),
         reference: strOrNull(raw['reference']),
         paidAt: strOrNull(raw['paidAt']),
         recordedBy: strOrNull(raw['recordedBy']),
@@ -467,6 +484,22 @@ export async function getInvoiceLedgerHandler(
   // an `amount` for (see `resolveLedgerAmountCents`). Counted across the
   // whole page so ONE warn log reports the invoice, not one log line per row.
   let unresolvedLedgerAmounts = 0;
+  // #2334: the business zone, read once and only when a row's `date` is a
+  // Timestamp (every card payment's), so it reads as that business day.
+  let zone: string = FALLBACK_BUSINESS_TIME_ZONE;
+  let zoneRead = false;
+  const zoneFor = async (docs: readonly FirebaseFirestore.QueryDocumentSnapshot[]): Promise<void> => {
+    if (zoneRead || !anyTimestamp(docs.map((d) => (d.data() as Record<string, unknown>)['date']))) return;
+    zoneRead = true;
+    try {
+      // Loaded on use, like every other caller: it is not in the eager graph.
+      const { businessTimeZoneReader } = await import('../lib/pastVisit.js');
+      zone = await businessTimeZoneReader()();
+    } catch {
+      // The settings read failing costs the day its zone, never the ledger.
+    }
+  };
+  await zoneFor(ledgerSnap.docs);
   /**
    * One ROOT `payments` document, read as money. Shared by both root-collection
    * lists below so they cannot come to different conclusions about the same
@@ -509,8 +542,9 @@ export async function getInvoiceLedgerHandler(
       appliedInvoiceId: str(raw['appliedInvoiceId']),
       appliedInvoiceNumber: str(raw['appliedInvoiceNumber']),
       method: str(raw['paymentMethod']),
+      methodLabel: paymentMethodLabelOf(raw['paymentMethod'], raw[ONLINE_METHOD_FIELD]),
       reference: str(raw['referenceNumber']),
-      date: str(raw['date']),
+      date: ledgerDateText(raw['date'], zone),
       notes: str(raw['notes']),
       recordedBy: strOrNull(raw['recordedBy']),
     };
@@ -538,6 +572,7 @@ export async function getInvoiceLedgerHandler(
         .limit(MAX_LEDGER_ROWS)
         .get()
     : null;
+  if (unlinkedSnap) await zoneFor(unlinkedSnap.docs);
   const unlinkedKinfolkPayments = (unlinkedSnap?.docs ?? [])
     .filter((d) => str((d.data() as Record<string, unknown>)['invoiceId']) === '')
     .map(ledgerRowOf)

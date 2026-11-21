@@ -101,6 +101,7 @@ class InvoiceDetailLedgerColumnsTest {
         appliedInvoiceId: String = "inv1",
         appliedInvoiceNumber: String = "1029",
         method: String = "Venmo",
+        methodLabel: String = method,
         date: String = "2026-07-20",
     ) = GetInvoiceLedgerResultLedgerPayment(
         paymentId = paymentId,
@@ -117,6 +118,7 @@ class InvoiceDetailLedgerColumnsTest {
         appliedInvoiceId = appliedInvoiceId,
         appliedInvoiceNumber = appliedInvoiceNumber,
         method = method,
+        methodLabel = methodLabel,
         reference = "",
         date = date,
         notes = "",
@@ -166,7 +168,7 @@ class InvoiceDetailLedgerColumnsTest {
         // see only the ledger's own words (a failed credit read has its own
         // "Try again", pinned in InvoiceApplyCreditControllerTest).
         coEvery { invoiceRepo.getAccountCreditHistory(any()) } returns
-            Result.success(GetAccountCreditHistoryResult(true, "fam1", 0L, emptyList(), emptyList()))
+            Result.success(GetAccountCreditHistoryResult(true, "fam1", 0L, emptyList(), emptyList(), null))
         return InvoiceDetailViewModel(
             repository = repo,
             invoiceRepository = invoiceRepo,
@@ -390,6 +392,27 @@ class InvoiceDetailLedgerColumnsTest {
         )
         rule.onAllNodesWithText("Jul 20, 2026").assertCountEquals(2)
         rule.onNodeWithText("2026-07-20T").assertDoesNotExist()
+    }
+
+    // #2334: a checkout payment's row says what it was paid with, and its day.
+    @Test
+    fun `a checkout payment shows Klarna and its day, never stripe or no date recorded`() {
+        mount(
+            Result.success(
+                ledger(ledgerPayments = listOf(row(method = "stripe", methodLabel = "Klarna", date = "2026-11-20"))),
+            ),
+        )
+        rule.onNodeWithText("Klarna", substring = true).assertExists()
+        rule.onNodeWithText("Nov 20, 2026", substring = true).assertExists()
+        rule.onNodeWithText("stripe", substring = true, ignoreCase = true).assertDoesNotExist()
+        rule.onNodeWithText("no date recorded").assertDoesNotExist()
+    }
+
+    @Test
+    fun `an old checkout payment shows Online payment`() {
+        mount(Result.success(ledger(ledgerPayments = listOf(row(method = "stripe", methodLabel = "")))))
+        rule.onNodeWithText("Online payment", substring = true).assertExists()
+        rule.onNodeWithText("stripe", substring = true, ignoreCase = true).assertDoesNotExist()
     }
 
     @Test

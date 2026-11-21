@@ -69,7 +69,12 @@ import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { HeldButton } from './HeldButton';
 import { Banner } from './Banner';
-import { invoiceTermsDefs, parseInvoiceTermsCode, type InvoiceTermsCode } from '../lib/invoiceTerms';
+import {
+  invoiceTermsDefs,
+  invoiceTermsWords,
+  parseInvoiceTermsCode,
+  type InvoiceTermsCode,
+} from '../lib/invoiceTerms';
 import { dueDateOrderProblem } from '../lib/invoiceDueOrder';
 import { noticePreviewSentence } from '../lib/invoiceNoticePreview';
 import { failedToLead } from '../lib/callableErrorText';
@@ -813,6 +818,21 @@ export function quoteWithdrawHeldReason(invoice: InvoiceEntry, ledgerPaidCents: 
   const paid = ledgerPaidCents !== null && Number.isFinite(ledgerPaidCents) ? Math.max(ledgerPaidCents, stored) : stored;
   return paid > 0 ? WITHDRAW_PAID_REASON : null;
 }
+/**
+ * #2258: which payment terms the invoice a quote turns into will carry, for the
+ * Turn into invoice confirm. The server's `convertedQuoteTermsSource`
+ * (functions `admin/quoteActions.ts`) decides; this repeats its rule: custom
+ * terms or a due date typed with no code are kept, the quote's own code is
+ * kept, and a quote with no terms takes the business's Payment terms setting.
+ */
+export function convertQuoteTermsLine(invoice: { termsCode?: unknown; dueDate?: unknown }): string {
+  const code = parseInvoiceTermsCode(invoice.termsCode);
+  const typedDue = typeof invoice.dueDate === 'string' ? invoice.dueDate.trim() : '';
+  if (code === 'custom' || (code === null && typedDue !== '')) return 'It keeps the due date picked on the quote.';
+  if (code !== null) return `It keeps the quote's payment terms: ${invoiceTermsWords(code)}.`;
+  return 'The quote has no payment terms, so it takes your Payment terms setting.';
+}
+
 /** The confirmation once a quote is withdrawn, naming how many visits went back on the list. */
 export function withdrawNoticeText(released: number): string {
   if (released === 0) return 'Quote withdrawn. The household no longer sees it.';
@@ -2355,6 +2375,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         ) : quotePrompt !== null ? (
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">{QUOTE_ACTION_COPY[quotePrompt].confirm}</p>
+            {quotePrompt === 'convert' ? (
+              <p className="invoice-detail__confirm-copy" data-testid="convert-quote-terms">
+                {convertQuoteTermsLine(invoice)}
+              </p>
+            ) : null}
             <div className="invoice-detail__confirm-actions">
               <GhostButton label="Cancel" onClick={() => !busy && setQuotePrompt(null)} disabled={busy} />
               <PrimaryButton

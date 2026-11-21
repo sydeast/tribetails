@@ -177,7 +177,8 @@ describe('whenTemplateMissing (#1586)', () => {
   });
 
   it('a direct send with no repo copy fails too', () => {
-    expect(row('invite.primary')).toMatchObject({ inRepoCorpus: false, whenTemplateMissing: 'fails' });
+    // #2487 gave the invites a repo copy; the daily digest still has none.
+    expect(row('error.daily-digest')).toMatchObject({ inRepoCorpus: false, whenTemplateMissing: 'fails' });
   });
 
   it('the external password reset row uses its repo copy', () => {

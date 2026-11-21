@@ -39,6 +39,16 @@ export interface InvoiceDtoPayMethod {
 }
 
 /**
+ * `InvoiceDtoPayment`, shared across callables.
+ */
+export interface InvoiceDtoPayment {
+  paymentId: string;
+  methodLabel: string;
+  paidDay: string | null;
+  amountCents: number;
+}
+
+/**
  * `InvoiceDto`, shared across callables.
  */
 export interface InvoiceDto {
@@ -72,6 +82,7 @@ export interface InvoiceDto {
   lineItems?: InvoiceLineItemDto[];
   payMethods: InvoiceDtoPayMethod[];
   payBlockedReason: string | null;
+  payments: InvoiceDtoPayment[];
 }
 
 // ---------- acceptQuote ----------
@@ -296,6 +307,7 @@ export interface GetInvoiceLedgerResultPayment {
   paidAt: string | null;
   recordedBy: string | null;
   sourcePaymentId: string | null;
+  methodLabel: string;
 }
 
 /**
@@ -326,6 +338,7 @@ export interface GetInvoiceLedgerResultLedgerPayment {
   appliedInvoiceId: string;
   appliedInvoiceNumber: string;
   method: string;
+  methodLabel: string;
   reference: string;
   date: string;
   notes: string;
@@ -456,6 +469,7 @@ export interface ListPaymentsResultPayment {
   appliedInvoiceId: string;
   appliedInvoiceNumber: string;
   method: string;
+  methodLabel: string;
   reference: string;
   date: string;
   notes: string;
@@ -906,6 +920,14 @@ export interface GetAccountCreditHistoryResultUse {
 }
 
 /**
+ * Nested in the `getAccountCreditHistory` contract.
+ */
+export interface GetAccountCreditHistoryResultEarlierCredit {
+  amountCents: number;
+  remainingCents: number;
+}
+
+/**
  * Response from the `getAccountCreditHistory` callable.
  */
 export interface GetAccountCreditHistoryResult {
@@ -914,6 +936,7 @@ export interface GetAccountCreditHistoryResult {
   accountBalanceCents: number;
   credits: GetAccountCreditHistoryResultCredit[];
   uses: GetAccountCreditHistoryResultUse[];
+  earlierCredit: GetAccountCreditHistoryResultEarlierCredit | null;
 }
 
 // ---------- listUnappliedPayments ----------

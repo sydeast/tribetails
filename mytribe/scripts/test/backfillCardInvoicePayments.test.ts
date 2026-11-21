@@ -109,6 +109,13 @@ describe('backfillCardInvoicePayments planInvoiceBackfill', () => {
     expect(plan.action === 'write' && plan.rows.map((r) => [r.rowId, r.amountCents])).toEqual([['stripe_pi_evt_1', 4000]]);
   });
 
+  it('#2334: the actual method rides from the ledger row, and an old row adds none', () => {
+    const withMethod = planInvoiceBackfill('inv1', PAID, [], [card('evt_1', 4000, { onlineMethod: 'klarna' })]);
+    expect(withMethod.action === 'write' && withMethod.rows[0]!.row).toMatchObject({ method: 'stripe', onlineMethod: 'klarna' });
+    const old = planInvoiceBackfill('inv1', PAID, [], [card('evt_1', 4000)]);
+    expect(old.action === 'write' && old.rows[0]!.row).not.toHaveProperty('onlineMethod');
+  });
+
   it('two card payments on one invoice are written together when they close it', () => {
     const invoice = { ...PAID, total: 187.5, totalCents: 18750 };
     const plan = planInvoiceBackfill('inv1', invoice, [], [card('evt_1', 13750), card('evt_2', 5000)]);

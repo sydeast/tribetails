@@ -3,6 +3,7 @@ package com.kinfolk.portal.screens.invoices
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.CreditApplication
 import com.kinfolk.portal.portal.CreditUse
+import com.kinfolk.portal.portal.EarlierCredit
 import com.kinfolk.portal.portal.GivenCredit
 import com.kinfolk.portal.portal.PortalApi
 import kotlinx.coroutines.test.runTest
@@ -175,6 +176,39 @@ class CreditHistoryTest {
     fun `an empty history hides the section`() {
         val empty = com.kinfolk.portal.portal.CreditHistoryResult("kin-1", 0, emptyList(), emptyList())
         assertEquals(CreditHistoryState.Hidden, creditHistoryStateOf(Result.success(empty)))
+    }
+
+    // ---- #1969: the history adds up to the balance ----
+
+    @Test
+    fun `decodes earlier credit, and an older server without the key reads none`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getAccountCreditHistory", buildJsonObject {
+            put("ok", true); put("kinfolkId", "kin-1"); put("accountBalanceCents", 95_700)
+            put("credits", buildJsonArray {}); put("uses", buildJsonArray {})
+            put("earlierCredit", buildJsonObject { put("amountCents", 201_500); put("remainingCents", 95_700) })
+        })
+        assertEquals(EarlierCredit(201_500, 95_700), PortalApi(fake).getAccountCreditHistory("kin-1").earlierCredit)
+        assertNull(PortalApi(FakeFunctionsClient().also { it.stub("getAccountCreditHistory", historyJson()) })
+            .getAccountCreditHistory("kin-1").earlierCredit)
+        val nulled = FakeFunctionsClient()
+        nulled.stub("getAccountCreditHistory", buildJsonObject { put("ok", true); put("earlierCredit", JsonNull) })
+        assertNull(PortalApi(nulled).getAccountCreditHistory("kin-1").earlierCredit)
+    }
+
+    @Test
+    fun `a balance with only earlier credit shows the section`() {
+        val h = com.kinfolk.portal.portal.CreditHistoryResult(
+            "kin-1", 4200, emptyList(), emptyList(), EarlierCredit(4200, 4200),
+        )
+        assertIs<CreditHistoryState.Ready>(creditHistoryStateOf(Result.success(h)))
+    }
+
+    @Test
+    fun `earlier credit reads Not used yet, part applied, or All applied`() {
+        assertEquals("Not used yet", earlierCreditStatusLine(EarlierCredit(4200, 4200)))
+        assertEquals("\$1,058.00 of \$2,015.00 applied", earlierCreditStatusLine(EarlierCredit(201_500, 95_700)))
+        assertEquals("All applied", earlierCreditStatusLine(EarlierCredit(4200, 0)))
     }
 
     // ---- Row text ----

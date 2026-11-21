@@ -174,6 +174,81 @@ export function stageGivenCredit(
   return { balanceAfterCents };
 }
 
+/**
+ * #1939, #1969: WHERE ELSE CREDIT COMES FROM. Two writers raise the balance
+ * without going through `stageGivenCredit`, and until these events existed
+ * neither left a trace in this log, so the history listed no credit beside a
+ * balance that plainly held some:
+ *
+ *   `payment`        `recordPayment` keeps part of a payment as credit, the
+ *                    amount the admin typed (#988). Its balance write is an
+ *                    `increment` beside the payment row (`creditAccount`), and
+ *                    that stays exactly as it is.
+ *   `creditInvoice`  `redeemCredit` turns a credit invoice into balance.
+ *
+ * Each stages ONE `given` event in the same transaction as its balance write,
+ * so the history lists the credit with the rest and the FIFO rule above spends
+ * it like any other. The event carries no balance figures (those writers do not
+ * read the balance; one increments it), and `readCreditLedgerEvent` never reads
+ * balance figures off a `given` event anyway.
+ *
+ * The id comes from the source, `payment_<payment row id>` or
+ * `redeem_<invoice id>`, so a second write for the same source lands on the
+ * same doc instead of listing the credit twice. Both callers already refuse a
+ * replay before they reach this, so that is a backstop, not the dedupe.
+ *
+ * The reason is written here, in the household's words, because both portals
+ * and all three admin clients print `reason` as it is stored.
+ */
+export type CreditInSource = 'payment' | 'creditInvoice';
+
+export function paymentCreditEventId(paymentId: string): string {
+  return `payment_${paymentId}`;
+}
+
+export function redeemedCreditEventId(invoiceId: string): string {
+  return `redeem_${invoiceId}`;
+}
+
+/** "From a payment on invoice 1020", "From the credit on invoice 1019". */
+export function creditInReason(source: CreditInSource, invoiceNumber: string): string {
+  const n = invoiceNumber.trim();
+  if (source === 'payment') return n === '' ? 'From a payment' : `From a payment on invoice ${n}`;
+  return n === '' ? 'From a credit' : `From the credit on invoice ${n}`;
+}
+
+export function stageCreditInEvent(
+  firestore: Firestore,
+  tx: StagedWriter,
+  input: {
+    kinfolkId: string;
+    source: CreditInSource;
+    /** The payment row id for `payment`, the credit invoice id for `creditInvoice`. */
+    sourceId: string;
+    invoiceId: string;
+    invoiceNumber: string;
+    amountCents: number;
+    actorUid: string;
+    atMs: number;
+  },
+): void {
+  if (input.kinfolkId === '' || input.sourceId === '' || !(input.amountCents > 0)) return;
+  const eventId =
+    input.source === 'payment' ? paymentCreditEventId(input.sourceId) : redeemedCreditEventId(input.sourceId);
+  tx.set(creditLedgerRef(firestore, input.kinfolkId, eventId), {
+    kind: 'given',
+    source: input.source,
+    amountCents: input.amountCents,
+    reason: creditInReason(input.source, input.invoiceNumber),
+    givenBy: input.actorUid,
+    invoiceId: input.invoiceId,
+    invoiceNumber: input.invoiceNumber,
+    ...(input.source === 'payment' ? { sourcePaymentId: input.sourceId } : {}),
+    atMs: input.atMs,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+}
+
 /** One stored event, as the history reads it. Anything unreadable is skipped, never guessed. */
 export type CreditLedgerEvent =
   | {
@@ -316,4 +391,47 @@ export function creditHistoryOf(events: readonly CreditLedgerEvent[]): CreditHis
   }
 
   return { credits: credits.reverse(), uses: uses.reverse() };
+}
+
+/**
+ * #1939, #1969: THE CREDIT THE LOG DOES NOT ITEMISE, so the history always adds
+ * up to the balance beside it.
+ *
+ * Balance that came in before the log listed every source has no event: credit
+ * redeemed or kept from a payment before those writers staged one, balances
+ * brought over from the old system, and the Stripe duplicate checkouts the
+ * webhook credited before docket Q5. A screen listing only the events then shows
+ * "$957.00 on account" over "No credit given yet." and three uses, and the
+ * household's page is $15.00 out.
+ *
+ * The balance is the authority, so the missing money is worked out from it:
+ *
+ *   earlier credit   = balance + every use - every listed credit
+ *   still unspent    = balance - what the listed credits still hold
+ *
+ * so listed credits + earlier credit - uses = balance, to the cent. The FIFO
+ * rule spends this pool first, which is why its unspent part is whatever the
+ * balance holds beyond the listed credits.
+ *
+ * `none` when there is nothing to itemise. `mismatch` when the figures cannot
+ * describe a pool at all (the balance is below what the listed credits still
+ * hold, or the log was cut at its read limit): the caller logs it and shows no
+ * row rather than a made-up one.
+ */
+export type EarlierCredit =
+  | { kind: 'none' }
+  | { kind: 'pool'; amountCents: number; remainingCents: number }
+  | { kind: 'mismatch'; amountCents: number; remainingCents: number };
+
+export function earlierCreditOf(history: CreditHistory, balanceCents: number): EarlierCredit {
+  const listedCents = history.credits.reduce((sum, c) => sum + c.amountCents, 0);
+  const listedLeftCents = history.credits.reduce((sum, c) => sum + c.remainingCents, 0);
+  const usedCents = history.uses.reduce((sum, u) => sum + u.amountCents, 0);
+  const amountCents = balanceCents + usedCents - listedCents;
+  const remainingCents = balanceCents - listedLeftCents;
+  if (amountCents === 0 && remainingCents === 0) return { kind: 'none' };
+  if (amountCents < 0 || remainingCents < 0 || remainingCents > amountCents) {
+    return { kind: 'mismatch', amountCents, remainingCents };
+  }
+  return { kind: 'pool', amountCents, remainingCents };
 }

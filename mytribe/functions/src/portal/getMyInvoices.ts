@@ -13,11 +13,25 @@ import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib
 import { validateResponse } from '../lib/callableResponse';
 import { hiddenFromHousehold, quoteDecisionOf } from '../lib/quoteDecision';
 import { amountDueCentsOf } from '../lib/amountDueRule';
-import { appliedCentsOf, centsToDollars, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import {
+  appliedCentsOf,
+  broughtOverPaidCentsOf,
+  centsToDollars,
+  paidCentsFromPayments,
+  type PaymentAmount,
+} from '../lib/invoiceMath';
 import { cardCheckoutRefusal, cardCheckoutRefusalSentence } from '../lib/cardPaymentApply';
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
 import { invoiceIsPaid } from '../lib/invoicePaidGate';
+import {
+  householdMethodLabelOf,
+  ONLINE_METHOD_FIELD,
+  PAID_BEFORE_KEY,
+  PAID_BEFORE_LABEL,
+  paymentDayOf,
+} from '../lib/onlinePaymentMethod';
+import { businessTimeZone } from '../lib/bookingTimeBlocks';
 import {
   EMPTY_SERVICE_NAME_CATALOG,
   looksLikeServiceCode,
@@ -119,6 +133,29 @@ export const InvoiceLineItemDtoSchema = z
   .strict();
 
 export type InvoiceLineItemDto = z.infer<typeof InvoiceLineItemDtoSchema>;
+
+/**
+ * #2334: one line of an invoice's Payment History as the household sees it.
+ *
+ * `methodLabel` is plain words: a card payment's actual method (Card, Klarna,
+ * Affirm, a wallet), "Online payment" for one taken before the method was
+ * stored, "Account credit", or the method the office recorded. Never a stored
+ * key such as `stripe`.
+ *
+ * `paidDay` is the business day it was paid, `YYYY-MM-DD`, or null when the
+ * row carries no readable date.
+ *
+ * `paymentId` is the line's key (`p1`, `p2`, ... in the order shown, and
+ * `paid-before` for the brought-over line), never a stored id.
+ */
+export const HouseholdPaymentDtoSchema = z
+  .object({
+    paymentId: z.string().min(1),
+    methodLabel: z.string().min(1),
+    paidDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+    amountCents: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export const InvoiceDtoSchema = z
   .object({
@@ -307,6 +344,26 @@ export const InvoiceDtoSchema = z
      * that as null.
      */
     payBlockedReason: z.string().min(1).nullable(),
+    /**
+     * #2334: the invoice's Payment History, newest first. One entry per
+     * payment row on the invoice (a card, a Venmo the office recorded, account
+     * credit put against it), read off the same rows the balance is settled
+     * from.
+     *
+     * The household's own view, so it carries only what they can see on their
+     * bill: how it was paid, the day, the amount. Never the reference, the
+     * fee, who recorded it or the office's notes.
+     *
+     * `[]` on an invoice with no rows, and when the rows could not be read: a
+     * read that fails costs the list, never the invoice. The legacy free-text
+     * `paymentsHistory` stays beside it for migrated bills.
+     *
+     * A bill brought over part paid (#2470, `broughtOverPaidCents`) ends with
+     * one undated line, "Paid before", for that amount, so the lines add up to
+     * `paidCents`. The admin ledger names the same money "Paid in the old
+     * system".
+     */
+    payments: z.array(HouseholdPaymentDtoSchema),
   })
   .strict();
 
@@ -431,6 +488,8 @@ export async function getMyInvoicesHandler(
   // is every invoice on the day this deploys. That fallback is why this ships
   // with no backfill and nothing changing under a household.
   const liveSettings = payMethodSettingsFrom(settingsSnap?.data() ?? {});
+  // #2334: the business's clock, for the day each payment is shown on.
+  const businessZone = businessTimeZone(settingsSnap?.data());
 
   const accountBalanceCents = numericFrom(familySnap.data()?.accountBalanceCents);
   // #1297: the operator's KinCare list, so a line drawn from a visit is named
@@ -462,17 +521,27 @@ export async function getMyInvoicesHandler(
   // the invoices this exists for are the ones whose fields and rows disagree.
   // A handful of small reads at most (open bills only), in parallel. One that
   // fails leaves that invoice with no reason, and `payInvoice` still refuses.
+  //
+  // #2334: every visible invoice's rows are read now, for its Payment
+  // History. `payRowsByInvoice` still holds only the open bills' rows, so
+  // `payBlockedReason` and `paidCents` read exactly what they read before.
   const payRowsByInvoice = new Map<string, PaymentAmount[]>();
+  const historyRowsByInvoice = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>();
   await Promise.all(
     visible
-      .filter((d) => offeredForPayment(d.data() as Record<string, unknown>))
       .map(async (d) => {
         try {
           const rows = await d.ref.collection('payments').get();
-          payRowsByInvoice.set(
+          historyRowsByInvoice.set(
             d.id,
-            rows.docs.map((r) => r.data() as PaymentAmount),
+            rows.docs.map((r) => ({ id: r.id, data: (r.data() ?? {}) as Record<string, unknown> })),
           );
+          if (offeredForPayment(d.data() as Record<string, unknown>)) {
+            payRowsByInvoice.set(
+              d.id,
+              rows.docs.map((r) => r.data() as PaymentAmount),
+            );
+          }
         } catch (err) {
           logEvent({
             severity: 'warn',
@@ -600,6 +669,7 @@ export async function getMyInvoicesHandler(
               amountDue: amountDueCents,
             }),
       payBlockedReason,
+      payments: householdPaymentsOf(historyRowsByInvoice.get(d.id) ?? [], businessZone, broughtOverPaidCentsOf(data)),
       // Set here when the invoice has its own lines. The session pass below then
       // skips this invoice entirely and cannot overwrite them.
       // Bound lines get their visit day filled in by the lookup pass below; a
@@ -737,6 +807,43 @@ export function statusFromStamp(data: Record<string, unknown>): { status: Status
   const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   if (isInvoiceState(s)) return { status: s, stamped: true };
   return { status: 'open', stamped: false };
+}
+
+/**
+ * #2334: an invoice's payment rows as its Payment History, newest first.
+ * PURE. Rows are sorted by their stored `paidAt` (every writer stores an ISO
+ * string), and one with none sorts last rather than being dropped.
+ *
+ * `paymentId` is a key for the line, `p1`, `p2` in the order shown, and NOT
+ * the row's stored id: a card row is stored under the Stripe payment's own
+ * reference, which the household's view never carries.
+ *
+ * `broughtOverPaidCents` (#2470), what was paid before the bill was brought
+ * over from the old system, is one more line, last and undated: "Paid before".
+ * With it the lines add up to what the bill shows as paid. It is passed in from
+ * the invoice itself, so it stands even when the rows could not be read.
+ */
+export function householdPaymentsOf(
+  rows: ReadonlyArray<{ id: string; data: Record<string, unknown> }>,
+  timeZone: string,
+  broughtOverPaidCents = 0,
+): Array<z.infer<typeof HouseholdPaymentDtoSchema>> {
+  const lines = rows
+    .map(({ data }) => ({
+      sortKey: typeof data['paidAt'] === 'string' ? (data['paidAt'] as string) : '',
+      dto: {
+        methodLabel: householdMethodLabelOf(data['method'], data[ONLINE_METHOD_FIELD]),
+        paidDay: paymentDayOf(data['paidAt'], timeZone),
+        amountCents: paidCentsFromPayments([data as PaymentAmount]),
+      },
+    }))
+    .filter((r) => r.dto.amountCents > 0)
+    .sort((a, b) => b.sortKey.localeCompare(a.sortKey))
+    .map((r, i) => ({ paymentId: `p${i + 1}`, ...r.dto }));
+  if (Number.isInteger(broughtOverPaidCents) && broughtOverPaidCents > 0) {
+    lines.push({ paymentId: PAID_BEFORE_KEY, methodLabel: PAID_BEFORE_LABEL, paidDay: null, amountCents: broughtOverPaidCents });
+  }
+  return lines;
 }
 
 /**

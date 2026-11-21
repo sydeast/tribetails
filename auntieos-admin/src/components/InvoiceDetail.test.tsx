@@ -137,6 +137,7 @@ import {
   BLANK_AMOUNT_BALANCE_UNKNOWN,
   InvoiceDetail,
   archiveNoticeText,
+  convertQuoteTermsLine,
   paymentSplit,
   archivedQuoteBannerText,
   parseOptionalMoney,
@@ -261,6 +262,7 @@ function subPayment(
     paidAt: '2026-07-20T10:00:00Z',
     recordedBy: 'admin1',
     sourcePaymentId: null,
+    methodLabel: 'check',
     ...over,
   };
 }
@@ -289,6 +291,7 @@ function ledgerPayment(
     appliedInvoiceId: '',
     appliedInvoiceNumber: '',
     method: 'card',
+    methodLabel: 'card',
     reference: 'ch_1',
     date: '2026-07-20',
     notes: '',
@@ -1566,7 +1569,7 @@ describe('the payments panel', () => {
     getInvoiceLedger.mockResolvedValue(
       ledgerResult({
         payments: [
-          subPayment({ amountCents: 500, method: null, reference: null, paidAt: null, recordedBy: null }),
+          subPayment({ amountCents: 500, method: null, methodLabel: '', reference: null, paidAt: null, recordedBy: null }),
         ],
         paidCents: 500,
       }),
@@ -2763,6 +2766,31 @@ describe('payment history columns', () => {
     for (const name of [/^method$/i, /reference #/i, /^amount$/i, /applied to/i, /^tip$/i, /^fee$/i, /^balance$/i]) {
       expect(screen.getByRole('columnheader', { name })).toBeInTheDocument();
     }
+  });
+  // #2334: a checkout payment's row reads as what it was paid with, and has its day.
+  it('a checkout payment says Klarna and its day, never "stripe" or "no date recorded"', async () => {
+    renderWithRow({ method: 'stripe', methodLabel: 'Klarna', date: '2026-11-20', reference: 'pi_1' });
+    expect(await ledgerCellText(6)).toBe('Klarna');
+    expect(await ledgerCellText(0)).toBe('2026-11-20');
+    expect(screen.queryByText('stripe')).toBeNull();
+    expect(screen.queryByText('no date recorded')).toBeNull();
+  });
+  it('an old checkout payment reads "Online payment", even from a server older than the label', async () => {
+    renderWithRow({ method: 'stripe', methodLabel: '' });
+    expect(await ledgerCellText(6)).toBe('Online payment');
+  });
+  it('the settlement table says the method in the same words', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        amountDueCents: 0,
+        paidCents: 4000,
+        payments: [subPayment({ paymentId: 'stripe_pi_1', method: 'stripe', methodLabel: 'Card', amountCents: 4000 })],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    const table = await screen.findByRole('table', { name: /What settled this invoice/i });
+    const bodyRow = within(table).getAllByRole('row')[1]!;
+    expect(within(bodyRow).getAllByRole('cell')[0]!.textContent).toBe('Card');
   });
   it('reads invoice #1029 across, and the row adds up', async () => {
     // amount(137.50) = applied(127.50) + tipGross(10.00) + balance(0.00)
@@ -3991,6 +4019,36 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
     ).toBeInTheDocument();
   });
 
+  it('#2258 the Turn into invoice confirm names the payment terms the invoice will carry', async () => {
+    const user = userEvent.setup();
+    render(<InvoiceDetail invoice={entry({ status: 'quote', editScope: 'all', termsCode: 'net_30' })} onClose={vi.fn()} />);
+    expect(screen.queryByTestId('convert-quote-terms')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Turn into invoice' }));
+    expect(screen.getByTestId('convert-quote-terms')).toHaveTextContent(
+      "It keeps the quote's payment terms: Due 30 days after the invoice date.",
+    );
+    // Withdraw has no terms line.
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Withdraw quote' }));
+    expect(screen.queryByTestId('convert-quote-terms')).toBeNull();
+  });
+  it('#2258 convertQuoteTermsLine follows the server rule', () => {
+    expect(convertQuoteTermsLine({ termsCode: 'net_7_after_last_visit', dueDate: '2026-06-10' })).toBe(
+      "It keeps the quote's payment terms: Due 7 days after the last visit.",
+    );
+    expect(convertQuoteTermsLine({ termsCode: 'custom', dueDate: '2026-07-04' })).toBe(
+      'It keeps the due date picked on the quote.',
+    );
+    expect(convertQuoteTermsLine({ termsCode: '', dueDate: '2026-07-04' })).toBe(
+      'It keeps the due date picked on the quote.',
+    );
+    expect(convertQuoteTermsLine({ dueDate: '' })).toBe(
+      'The quote has no payment terms, so it takes your Payment terms setting.',
+    );
+    expect(convertQuoteTermsLine({ termsCode: 'Net 9', dueDate: '' })).toBe(
+      'The quote has no payment terms, so it takes your Payment terms setting.',
+    );
+  });
   it('#2088 Withdraw quote confirms first, then names how many visits went back on the list', async () => {
     const user = userEvent.setup();
     render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);

@@ -59,6 +59,24 @@ describe('paymentMethodLabel', () => {
     expect(paymentMethodLabel(null)).toBe('no method recorded');
     expect(paymentMethodLabel('   ')).toBe('no method recorded');
   });
+
+  // #2334: a checkout payment reads as what it was paid with.
+  it("uses the server's plain words for a checkout payment", () => {
+    expect(paymentMethodLabel('stripe', 'Klarna')).toBe('Klarna');
+    expect(paymentMethodLabel('stripe', 'Card')).toBe('Card');
+    expect(paymentMethodLabel('stripe', 'Online payment')).toBe('Online payment');
+  });
+
+  it('never shows the stored word "stripe", even from a server older than the label', () => {
+    expect(paymentMethodLabel('stripe')).toBe('Online payment');
+    expect(paymentMethodLabel('stripe', '')).toBe('Online payment');
+    expect(paymentMethodLabel('Stripe', null)).toBe('Online payment');
+  });
+
+  it('a blank label leaves a hand-recorded method and a blank one as they were', () => {
+    expect(paymentMethodLabel('Venmo', '')).toBe('Venmo');
+    expect(paymentMethodLabel(null, '')).toBe('no method recorded');
+  });
 });
 
 describe('sessionDayLabel', () => {
