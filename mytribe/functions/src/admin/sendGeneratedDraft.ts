@@ -11,6 +11,12 @@ import {
   type DraftMessageChannel,
 } from '../lib/generatedDraftType';
 import { SMTP2GO_NO_VERDICT_MESSAGE } from '../lib/providerFailure';
+import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+import { loadBusinessName } from '../lib/businessName';
+import { getNotificationDef } from '../notifications/catalog';
+import { householdNoticeEntryRoute, householdPushShelfLine, householdSmsText } from '../notifications/templateParsers';
+import { HOUSEHOLD_TEXT_MESSAGE_FIELD } from '../notifications/senders/pushChannel';
+import { PORTAL_URL } from '../notifications/visitDates';
 import {
   Args as ExternalArgs,
   recordExternalSend,
@@ -82,6 +88,34 @@ import {
  * function). A Push draft still goes through `sendHouseholdPush`, which reads
  * the gate.
  *
+ * ── A TEXT IS SHORT AND LINKS TO THE WHOLE MESSAGE (#2408) ───────────────────
+ * Operator ruling 2026-11-14: a household's text message stays short, with a
+ * link to the full message in MyTribe. Email carries the whole message. So a
+ * Text draft is texted as the household short line (`householdSmsText`, the cut
+ * a notice and a blast use) followed by a link to this message's own entry on
+ * the household's notifications list, and the entry holds the words whole.
+ *
+ *   - The entry is written AFTER the claim and BEFORE the text, by the call
+ *     that holds the claim and by no other, so the link never opens nothing and
+ *     a refused second tap writes nothing. Its id comes from the draft.
+ *   - It goes to the household's own sign-in (`resolveKinfolkUid`, the
+ *     membership-checked login a Push draft uses), never a login that only
+ *     happens to be stored on the household.
+ *   - Known that nothing went out: the entry is removed, then the claim is let
+ *     go. A send that got no answer keeps it, because the text may have
+ *     arrived and its link has to open.
+ *   - A household with no MyTribe sign-in has no list to write to. It is sent
+ *     the short text with a link to the notifications list, which opens the
+ *     sign-in page: what a blast does for that household today. Whether such
+ *     a household should be texted the whole message is an open operator
+ *     question and is not decided here.
+ *   - An entry that could not be written is logged and the text still goes,
+ *     linking to the list, as a blast does.
+ *
+ * Only this file changed for that. `sendExternalMessage` (an inbox reply, and
+ * "Send outside the tribe") still texts the words as typed: those go to
+ * numbers that may belong to no household, with no list to link to.
+ *
  * Owner-only (not on the Auntie list): Communicate sends are the owner's.
  *
  * ── WHERE IT IS DEPLOYED FROM ────────────────────────────────────────────────
@@ -129,6 +163,16 @@ export const DRAFT_SEND_UNCONFIRMED_MESSAGE =
   'The send did not get an answer, so it is not known whether this message reached the household. ' +
   'It is not sent again from this draft. Write a new one if it has to go again.';
 
+/**
+ * #2408: the settings row a Text draft's entry is filed under. The row a Push
+ * draft uses (`sendHouseholdPush`): one message from the business to one
+ * household.
+ */
+export const HOUSEHOLD_TEXT_NOTIFICATION_KEY = 'message.reply';
+/** The entry id for a Text draft: stable, so one draft has one entry. */
+export function householdTextNoticeId(draftId: string): string {
+  return `personal-text-${draftId}`;
+}
 function unconfirmed(): HttpsError {
   return new HttpsError('failed-precondition', DRAFT_SEND_UNCONFIRMED_MESSAGE, { code: DRAFT_SEND_UNCONFIRMED });
 }
@@ -241,11 +285,22 @@ export async function sendGeneratedDraftHandler(req: CallableRequest<unknown>): 
     };
   }
 
+  // #2408: a Text is the short line and a link to its entry on the household's
+  // notifications list, which holds the words whole. An Email goes as written.
+  let send = claim.send;
+  let entry: HouseholdEntry = { ref: null, written: false };
+  if (claim.channel === 'sms') {
+    entry = await keepOnHouseholdList(uid, args.kinfolkId, args.draftId, claim.send.body);
+    const route = householdNoticeEntryRoute(entry.written && entry.ref ? entry.ref.id : '');
+    send = { ...claim.send, body: householdSmsText(claim.send.body, PORTAL_URL, route) };
+  }
   let sent: Awaited<ReturnType<typeof sendThroughProvider>>;
   try {
-    sent = await sendThroughProvider(claim.send);
+    sent = await sendThroughProvider(send);
   } catch (err) {
     if (nothingWentOut(err)) {
+      // No text arrived, so nothing links to the entry: it comes off their list.
+      await removeFromHouseholdList(entry, uid);
       // The draft is unsent again and can be sent again.
       await releaseClaim(draftRef, claim.claimedAt, claim.priorStatus, uid);
       throw err;
@@ -277,10 +332,14 @@ export async function sendGeneratedDraftHandler(req: CallableRequest<unknown>): 
   try {
     await recordExternalSend(
       uid,
-      claim.send,
+      send,
       sent,
       { mirrored: false, mirrorSkippedReason: 'not_requested' },
-      { draftId: args.draftId, kinfolkId: args.kinfolkId },
+      {
+        draftId: args.draftId,
+        kinfolkId: args.kinfolkId,
+        ...(entry.written && entry.ref ? { noticeId: entry.ref.id } : {}),
+      },
     );
   } catch (err) {
     logEvent({
@@ -302,6 +361,99 @@ export async function sendGeneratedDraftHandler(req: CallableRequest<unknown>): 
   return { ok: true, outcome: 'sent', channel: claim.channel, recipientRedacted: sent.recipientRedacted, sentAt };
 }
 
+/** A Text draft's entry on the household's notifications list. */
+interface HouseholdEntry {
+  /** Where the entry is, once a write was tried. Null when there is no list to write to. */
+  ref: FirebaseFirestore.DocumentReference | null;
+  /** The write was acknowledged, so the text links to this entry. */
+  written: boolean;
+}
+/**
+ * #2408: puts a Text draft's whole message on the household's notifications
+ * list, before the text is sent. Never throws: with no entry the text still
+ * goes and links to the list, which is what a blast does.
+ *
+ * The row draws `householdLine` (the short line, as a notice's does) and, for a
+ * message longer than that, the whole text under it with its line breaks
+ * (`householdTextMessage`, which `listMyNotifications` returns as
+ * `fullMessage`, #2371).
+ *
+ * A `set`, so an entry left by an earlier attempt whose removal failed is
+ * written over with the words about to be texted. Only the call that holds the
+ * draft's claim gets here.
+ */
+async function keepOnHouseholdList(
+  uid: string,
+  kinfolkId: string,
+  draftId: string,
+  body: string,
+): Promise<HouseholdEntry> {
+  let ref: FirebaseFirestore.DocumentReference | null = null;
+  try {
+    const recipientUid = await resolveKinfolkUid(kinfolkId);
+    if (!recipientUid) {
+      logEvent({
+        severity: 'info',
+        function: 'sendGeneratedDraft',
+        event: 'draft.text.no_portal_account',
+        uid,
+        extra: { draftId, kinfolkId },
+      });
+      return { ref: null, written: false };
+    }
+    const def = getNotificationDef(HOUSEHOLD_TEXT_NOTIFICATION_KEY);
+    const businessName = await loadBusinessName('sendGeneratedDraft');
+    ref = db().collection('notifications').doc(householdTextNoticeId(draftId));
+    await ref.set({
+      key: def.key,
+      category: def.category,
+      recipientUid,
+      actorUid: uid,
+      data: { kinfolkId, draftId },
+      title: businessName || 'A note for you',
+      description: body,
+      body,
+      householdLine: householdPushShelfLine(body),
+      [HOUSEHOLD_TEXT_MESSAGE_FIELD]: body,
+      targetType: 'kinfolk',
+      targetId: kinfolkId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return { ref, written: true };
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'sendGeneratedDraft',
+      event: 'draft.text.entry.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+      extra: { draftId, kinfolkId },
+    });
+    // `ref` is kept when the write itself failed: a write that timed out may
+    // have landed, and `removeFromHouseholdList` clears it if no text goes.
+    return { ref, written: false };
+  }
+}
+/**
+ * No text went out, so the entry written for it is removed: left there, a
+ * household that was sent nothing would hold the message, and the next send of
+ * the same draft would be its second copy. Never throws.
+ */
+async function removeFromHouseholdList(entry: HouseholdEntry, uid: string): Promise<void> {
+  if (entry.ref === null) return;
+  try {
+    await entry.ref.delete();
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'sendGeneratedDraft',
+      event: 'draft.text.entry.remove.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+      extra: { entryId: entry.ref.id },
+    });
+  }
+}
 /**
  * The check and the claim, in one transaction, so two calls for one draft
  * cannot both pass the check. Fails closed: a missing draft, a draft with no

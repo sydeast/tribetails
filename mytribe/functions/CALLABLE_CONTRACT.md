@@ -3431,6 +3431,17 @@ Email or Text draft; none of them writes the approve or calls
   `approvedBy`, `sendClaimedAt`. After the provider takes the message the draft
   is stamped `sentAt`, `sentChannel`, `sentTo` (masked) and
   `sentProviderMessageId`, and `sendClaimedAt` is removed.
+- A Text is sent short (#2408, ruling 2026-11-14): the household short line
+  (200 characters, cut between whole characters at the end of a word) and
+  `More in MyTribe:` with a link to `/notifications?entry=personal-text-{draftId}`.
+  The whole message is written to `notifications/personal-text-{draftId}`
+  (`key: 'message.reply'`, `householdLine`, `householdTextMessage`) for the
+  household's membership-checked sign-in, after the claim and before the text.
+  The entry is removed when it is known nothing went out and kept when the
+  send got no answer. A household with no MyTribe sign-in, or an entry that
+  could not be written, gets the short text with a link to `/notifications`.
+  An Email is sent whole and writes no entry. The draft keeps the whole
+  message in `generatedCopy` either way.
 - Only a draft that is not `approved` and has no `sentAt` is sent. A call for
   a stamped draft, or one approved with no claim on it (an older client sent
   it), answers `already_sent`. While a claim is under 120 seconds old the call
