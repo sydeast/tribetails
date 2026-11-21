@@ -5,6 +5,7 @@ import {
   ledgerRowBalanceCents,
   ledgerRowCaveat,
   ledgerRowTotalCents,
+  ledgerRowTowardBillCents,
   paymentDayLabel,
   paymentMethodLabel,
   paymentsPanelIsEmpty,
@@ -130,6 +131,20 @@ describe('sessionsWithBrokenBacklink', () => {
   });
 });
 
+describe('ledgerRowTowardBillCents', () => {
+  it('is the amount less the tip inside it', () => {
+    expect(ledgerRowTowardBillCents({ amountCents: 13750, tipCents: 1000 })).toBe(12750);
+  });
+  it('is the whole amount on a row with no tip', () => {
+    expect(ledgerRowTowardBillCents({ amountCents: 3000, tipCents: 0 })).toBe(3000);
+  });
+  it('is zero when the tip is the whole payment', () => {
+    expect(ledgerRowTowardBillCents({ amountCents: 1000, tipCents: 1000 })).toBe(0);
+  });
+  it('never goes below zero', () => {
+    expect(ledgerRowTowardBillCents({ amountCents: 500, tipCents: 2000 })).toBe(0);
+  });
+});
 describe('ledgerCoversBalance', () => {
   it('flags the Stripe case: ledger rows covering a balance nothing settled', () => {
     expect(
@@ -140,15 +155,59 @@ describe('ledgerCoversBalance', () => {
     ).toBe(true);
   });
 
-  it('counts the tip toward the cover, because it is money that came in', () => {
+  // #2413: the amount is gross and the tip is inside it. A tip is never applied
+  // to a bill, so what a row puts toward the balance is its amount less its tip.
+  it('stays quiet on a $100.00 payment with a $10.00 tip against $100.00 owed: it covers $90.00', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 10000,
+        ledgerPayments: [{ amountCents: 10000, tipCents: 1000 }],
+      }),
+    ).toBe(false);
+  });
+  it('does not add the tip on top of the amount', () => {
     expect(
       ledgerCoversBalance({
         amountDueCents: 4000,
         ledgerPayments: [{ amountCents: 3600, tipCents: 500 }],
       }),
+    ).toBe(false);
+  });
+  it('stays quiet on the reported case: $100.00 owed, one $95.00 payment with a $10.00 tip inside it', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 10000,
+        ledgerPayments: [{ amountCents: 9500, tipCents: 1000 }],
+      }),
+    ).toBe(false);
+  });
+  it('adds several tipped rows by amount less tip, to the cent', () => {
+    const rows = [
+      { amountCents: 5000, tipCents: 800 },
+      { amountCents: 4000, tipCents: 700 },
+    ];
+    // $42.00 + $33.00 = $75.00 toward the bill, out of $90.00 collected.
+    expect(ledgerCoversBalance({ amountDueCents: 9000, ledgerPayments: rows })).toBe(false);
+    expect(ledgerCoversBalance({ amountDueCents: 7501, ledgerPayments: rows })).toBe(false);
+    expect(ledgerCoversBalance({ amountDueCents: 7500, ledgerPayments: rows })).toBe(true);
+  });
+  it('flags a tipped row when the amount less the tip meets the balance', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 4000,
+        ledgerPayments: [{ amountCents: 4500, tipCents: 500 }],
+      }),
     ).toBe(true);
   });
-
+  it('lets a row whose tip is larger than its amount count for nothing, not for less than nothing', () => {
+    const rows = [
+      { amountCents: 500, tipCents: 2000 },
+      { amountCents: 4000, tipCents: 0 },
+    ];
+    // Unfloored, the first row would take $15.00 off the second and hide the warning.
+    expect(ledgerCoversBalance({ amountDueCents: 4000, ledgerPayments: rows })).toBe(true);
+    expect(ledgerCoversBalance({ amountDueCents: 4001, ledgerPayments: rows })).toBe(false);
+  });
   it('stays quiet on a settled invoice, where a ledger row is just the receipt', () => {
     expect(
       ledgerCoversBalance({
