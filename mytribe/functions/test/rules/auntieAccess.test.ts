@@ -456,6 +456,38 @@ describe('rules: #944 an Auntie writing a KinTale, and the feed downstream', () 
     await assertFails(asAuntie(env).firestore().doc('kin_care_sessions/s1')
       .set({ status: 'COMPLETED' }, { merge: true }));
   });
+
+  // #2187 ruling, 2026-11-20 ("owner-only"): only the owner makes a New visit.
+  it('#2187: is refused creating a visit, at a chosen id or a new one, in any open status', async () => {
+    const env = await getEnv();
+    const db = asAuntie(env).firestore();
+    const visit = { kinfolkId: 'k1', startTime: '2026-12-01T15:00:00.000Z', serviceType: 'visit_30' };
+    for (const status of ['SCHEDULED', 'PENDING', 'ON_THE_WAY', 'ARRIVED']) {
+      await assertFails(db.doc(`kin_care_sessions/new-${status}`).set({ ...visit, status }));
+    }
+    await assertFails(db.doc('kin_care_sessions/no-status').set(visit));
+    await assertFails(db.collection('kin_care_sessions').add({ ...visit, status: 'SCHEDULED' }));
+    // A merge write to a visit that does not exist yet is a create too.
+    await assertFails(db.doc('kin_care_sessions/merged').set({ ...visit, status: 'SCHEDULED' }, { merge: true }));
+  });
+
+  it('#2187: an account carrying both roles is refused creating a visit too', async () => {
+    const env = await getEnv();
+    await assertFails(
+      asDoubleClaimed(env).firestore().doc('kin_care_sessions/new-1').set({ kinfolkId: 'k1', status: 'SCHEDULED' }),
+    );
+  });
+
+  it('#2187: the owner still creates a visit, and an Auntie still works one the owner made', async () => {
+    const env = await getEnv();
+    await assertSucceeds(
+      asOwner(env).firestore().doc('kin_care_sessions/owners').set({ kinfolkId: 'k1', status: 'SCHEDULED' }),
+    );
+    await assertSucceeds(asAuntie(env).firestore().doc('kin_care_sessions/owners').get());
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('kin_care_sessions/owners').update({ notes: 'Gate code changed' }),
+    );
+  });
 });
 
 describe('rules: #944 an Auntie and per-visit money on booking documents', () => {

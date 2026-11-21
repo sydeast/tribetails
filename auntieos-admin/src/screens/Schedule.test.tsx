@@ -1755,19 +1755,15 @@ describe('#2164 Schedule under an Auntie sign-in', () => {
   });
 
   it('waits visibly, then reads the KinCare list and the clock from her own read', async () => {
-    const user = userEvent.setup();
-    render(<Schedule />);
+    render(<Schedule isAuntie />);
     expect(screen.getByText(WORK_SETTINGS_LOADING)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
     expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
     expect(getBusinessSettings).not.toHaveBeenCalled();
     expect(screen.queryByText(WORK_SETTINGS_FAILED)).not.toBeInTheDocument();
-    // New visit offers her KinCare list by name, with no price beside it.
-    await user.click(screen.getByRole('button', { name: 'New visit' }));
-    const service = screen.getByLabelText('Service');
-    const offered = within(service).getAllByRole('option').map((o) => o.textContent);
-    expect(offered).toEqual(expect.arrayContaining(['Long walk', 'Drop-in']));
-    expect(offered.some((t) => (t ?? '').includes('$'))).toBe(false);
+    // #2187: New visit, the one place the KinCare list was offered to her, is
+    // the owner's now, so it is not drawn.
+    expect(screen.queryByRole('button', { name: 'New visit' })).toBeNull();
   });
 
   it('says plainly when her read fails, which clock the times are on, and offers a retry', async () => {
@@ -1836,6 +1832,30 @@ describe('#1868 a cancelled visit on the Schedule', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * #2187 ruling, 2026-11-20 ("owner-only"): only the owner makes a New visit.
+ * It is not drawn for an Auntie (the server refuses `createKinCareSession`
+ * for her too). Block time, her own availability, stays hers.
+ */
+describe('#2187 New visit is the owner\'s', () => {
+  it('draws an Auntie no New visit, keeps her Block time, and never opens the dialog', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [] } });
+    render(<Schedule isAuntie />);
+    expect(await screen.findByRole('button', { name: 'Block time' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New visit' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'New visit' })).toBeNull();
+    expect(createKinCareSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps New visit for the owner, and it opens the dialog', async () => {
+    const user = userEvent.setup();
+    mockCollections({ sessions: { status: 'ready', data: [] } });
+    render(<Schedule />);
+    await user.click(await screen.findByRole('button', { name: 'New visit' }));
+    expect(screen.getByRole('dialog', { name: 'New visit' })).toBeInTheDocument();
   });
 });
 
