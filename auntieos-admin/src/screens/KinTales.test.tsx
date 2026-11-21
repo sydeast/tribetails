@@ -359,6 +359,7 @@ describe('KinTales screen', () => {
     expect(screen.getByText('MyTribe')).toBeInTheDocument();
     expect(screen.queryByText(/pending/)).toBeNull();
   });
+
   it('a blank sentVia (a draft) never shows the misleading "imported" pip', () => {
     usePagedCollection.mockReturnValue(paged([entry({ sentVia: '' })]));
     render(<KinTales />);

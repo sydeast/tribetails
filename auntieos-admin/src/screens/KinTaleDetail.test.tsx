@@ -281,6 +281,7 @@ describe('KinTaleDetail: report resolution', () => {
     expect(screen.getByText('Sent via MyTribe.')).toBeInTheDocument();
     expect(screen.queryByText(/pending/i)).toBeNull();
   });
+
   it('a stored value the screen cannot say in words reads Not recorded, never the raw value', async () => {
     mockStreams({ reports: { status: 'ready', data: [report({ sentVia: 'dispatch_v2' })] } });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
@@ -289,6 +290,7 @@ describe('KinTaleDetail: report resolution', () => {
     expect(within(rail).getByText('Sent via').nextElementSibling).toHaveTextContent('Not recorded');
     expect(screen.queryByText(/dispatch_v2/)).toBeNull();
   });
+
   it('draws the photo count as the panel\'s mono note, the mock\'s "Photos · N attached"', async () => {
     getMyKinTaleMedia.mockResolvedValue([]);
     mockStreams({ reports: { status: 'ready', data: [report({ mediaFileIds: ['m1', 'm2', 'm3'] })] } });

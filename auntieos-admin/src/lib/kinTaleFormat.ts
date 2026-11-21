@@ -149,6 +149,7 @@ export function sentViaLabel(sentVia: string): string | null {
   if (trimmed === '' || trimmed.startsWith('legacy_')) return 'imported';
   return SENT_VIA_WORDS[trimmed] ?? null;
 }
+
 const SENT_VIA_WORDS: Readonly<Record<string, string>> = {
   pending: 'MyTribe',
   catalog: 'MyTribe',

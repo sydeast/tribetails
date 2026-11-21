@@ -129,11 +129,13 @@ describe('sentViaLabel', () => {
     expect(sentViaLabel('sms')).toBe('text');
     expect(sentViaLabel('push')).toBe('push');
   });
+
   it("#1817: reads the send path's markers as MyTribe, never as a channel called pending", () => {
     expect(sentViaLabel('pending')).toBe('MyTribe');
     expect(sentViaLabel('catalog')).toBe('MyTribe');
     expect(sentViaLabel(' Pending ')).toBe('MyTribe');
   });
+
   it('never prints a stored value it does not know', () => {
     expect(sentViaLabel('dispatch_v2')).toBeNull();
     expect(sentViaLabel('kin_care_reports')).toBeNull();
