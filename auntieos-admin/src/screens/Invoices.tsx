@@ -618,8 +618,8 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
       : '';
   const scopeNote =
     (loaded === null
-      ? `Search covers invoice number, household and client, within ${windowLabel}.`
-      : `Searching the ${String(loaded)} invoice${plural} loaded from ${windowLabel}, by number, household and client.` +
+      ? `Search covers invoice number, household and Kinfolk, within ${windowLabel}.`
+      : `Searching the ${String(loaded)} invoice${plural} loaded from ${windowLabel}, by number, household and Kinfolk.` +
         (hasMore ? ' Load more to reach further back.' : '')) +
     (range === 'all' ? '' : ' Invoices with no date appear only under All (archive).' + misdatedNote);
 

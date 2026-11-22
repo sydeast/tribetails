@@ -355,6 +355,15 @@ describe('KinTales screen', () => {
     expect(screen.getByText('email')).toBeInTheDocument();
   });
 
+  it('#1817: a tale sent from admin web reads MyTribe, never the stored "pending" marker', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'SENT', sentVia: 'pending', sentAt: '2026-11-10T14:00:00.000Z' })]),
+    );
+    render(<KinTales />);
+    expect(screen.getByText('MyTribe')).toBeInTheDocument();
+    expect(screen.queryByText(/pending/)).toBeNull();
+  });
+
   it('a blank sentVia (a draft) never shows the misleading "imported" pip', () => {
     usePagedCollection.mockReturnValue(paged([entry({ sentVia: '' })]));
     render(<KinTales />);
