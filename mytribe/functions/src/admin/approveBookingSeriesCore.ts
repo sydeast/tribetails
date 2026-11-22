@@ -648,6 +648,8 @@ export async function approveBookingSeriesCore(opts: {
     severity: failedVisits > 0 ? 'warn' : 'info',
     actorRole,
     actorUid,
+    // #1818: words. With none the line read "APPROVE_BOOKING_SERIES uid=<id>".
+    description: (await import('../lib/activityWords.js')).bookingSeriesApprovedWords(succeeded, failedVisits),
     payload: { kinfolkId, batchId, affectedVisits: succeeded, failedVisits, sessionsCreated },
   });
 

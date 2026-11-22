@@ -128,11 +128,11 @@ export function TribeHub() {
               Your Kin <Link to="/kin">Manage</Link>
             </div>
             {kinView.kind === 'offline' ? (
-              <OfflineNotice what="your kin" />
+              <OfflineNotice what="your Kin" />
             ) : kinView.kind === 'empty' ? (
               <p className="sub">No Kin yet. Add them from Manage.</p>
             ) : kinView.kind !== 'data' ? (
-              <p className="sub">Loading your kin…</p>
+              <p className="sub">Loading your Kin…</p>
             ) : (
               roster.map((k, i) => (
                 <Link className={`kinrow ${KIN_VARIANTS[i % KIN_VARIANTS.length]}`} to="/kin/$kinId" params={{ kinId: k.id }} key={k.id}>

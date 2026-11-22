@@ -28,12 +28,18 @@ export interface VisitExtras {
   address: string | null;
   /** sessionId -> KinTale (report) id. */
   kinTaleBySession: Map<string, string>;
+  /**
+   * #1836: sessionId -> the name the sent KinTale is signed with. A visit the
+   * office worked itself, with no Auntie assigned, still shows who made it.
+   */
+  kinTaleAuthorBySession: Map<string, string>;
   /** sessionId -> invoice id. Empty when the member has no billing access. */
   invoiceBySession: Map<string, string>;
 }
 export const NO_EXTRAS: VisitExtras = {
   address: null,
   kinTaleBySession: new Map(),
+  kinTaleAuthorBySession: new Map(),
   invoiceBySession: new Map(),
 };
 /** The household address alone, for the write paths that hand a single visit back. */
@@ -69,15 +75,30 @@ export async function loadVisitExtras(
   kinfolkId: string,
   opts: { wantLinks: boolean; billingAccess: boolean },
 ): Promise<VisitExtras> {
-  const [address, kinTaleBySession, invoiceBySession] = await Promise.all([
+  const [address, tales, invoiceBySession] = await Promise.all([
     readHouseholdAddress(firestore, kinfolkId),
-    opts.wantLinks ? readKinTales(firestore, kinfolkId) : Promise.resolve(new Map<string, string>()),
+    opts.wantLinks ? readKinTales(firestore, kinfolkId) : Promise.resolve(NO_TALES),
     opts.wantLinks && opts.billingAccess ? readInvoices(firestore, kinfolkId) : Promise.resolve(new Map<string, string>()),
   ]);
-  return { address, kinTaleBySession, invoiceBySession };
+  return { address, kinTaleBySession: tales.ids, kinTaleAuthorBySession: tales.authors, invoiceBySession };
 }
-async function readKinTales(firestore: Firestore, kinfolkId: string): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+
+const NO_TALES = { ids: new Map<string, string>(), authors: new Map<string, string>() };
+/**
+ * The name a tale is signed with, as a household may read it: blank, and an
+ * address standing in for a name, give nothing.
+ */
+export function kinTaleSignature(raw: unknown): string | null {
+  const name = typeof raw === 'string' ? raw.trim() : '';
+  if (name === '' || name.includes('@')) return null;
+  return name;
+}
+async function readKinTales(
+  firestore: Firestore,
+  kinfolkId: string,
+): Promise<{ ids: Map<string, string>; authors: Map<string, string> }> {
+  const ids = new Map<string, string>();
+  const authors = new Map<string, string>();
   try {
     const snap = await firestore
       .collection('kin_care_reports')
@@ -85,13 +106,17 @@ async function readKinTales(firestore: Firestore, kinfolkId: string): Promise<Ma
       .where('sentAt', '>', '')
       .get();
     for (const d of snap.docs) {
-      const sid = (d.data() as Record<string, unknown>)['sessionId'];
-      if (typeof sid === 'string' && sid.length > 0 && !out.has(sid)) out.set(sid, d.id);
+      const data = d.data() as Record<string, unknown>;
+      const sid = data['sessionId'];
+      if (typeof sid !== 'string' || sid.length === 0 || ids.has(sid)) continue;
+      ids.set(sid, d.id);
+      const author = kinTaleSignature(data['authorDisplayName']);
+      if (author !== null) authors.set(sid, author);
     }
   } catch {
     /* best effort: no link */
   }
-  return out;
+  return { ids, authors };
 }
 /** `cancelled` in either status spelling: withdrawn, and shown to no household. */
 function isCancelled(data: Record<string, unknown>): boolean {

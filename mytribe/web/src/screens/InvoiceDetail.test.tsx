@@ -152,6 +152,19 @@ const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
 };
 
 describe('InvoiceDetail — mutation error surfacing', () => {
+  it('#1824: labels the household block Kinfolk, never "Client"', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Kinfolk', { selector: '.lbl' })).toBeInTheDocument();
+    expect(screen.queryByText('Client', { selector: '.lbl' })).toBeNull();
+  });
+
   it('pay failure shows a visible error instead of just stopping the spinner', async () => {
     const invoicesApi = await import('../api/invoicesApi');
     vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });

@@ -44,11 +44,11 @@ export function Kin() {
 
         {kinView.kind === 'offline' ? (
           <section className="glass card">
-            <OfflineNotice what="your kin" />
+            <OfflineNotice what="your Kin" />
           </section>
         ) : kinView.kind !== 'data' && kinView.kind !== 'empty' ? (
-          <LoadingLine what="your kin" retry={() => void kin.refetch()}>
-          Loading your kin…
+          <LoadingLine what="your Kin" retry={() => void kin.refetch()}>
+          Loading your Kin…
         </LoadingLine>
         ) : kinView.kind === 'empty' ? (
           <section className="glass card emptystate">

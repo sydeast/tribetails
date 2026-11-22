@@ -204,9 +204,9 @@ describe('NotificationsList tap (#1316)', () => {
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/schedule/$visitId', params: { visitId: 'visit-1' } });
   });
 
-  it('opens Schedule for a row about a whole booking request', async () => {
+  it('#1865: opens the request itself for a row about a whole booking request', async () => {
     await open(/Booking requested/);
-    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/schedule' });
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/schedule/booking/$batchId', params: { batchId: 'batch-2' } });
   });
 
   it('opens the invoice, and does not re-mark a row that was already read', async () => {
@@ -552,7 +552,7 @@ describe('NotificationsList shows the whole message of a cut push', () => {
     renderScreen({ unreadNotifications: 2 });
     await userEvent.click(await screen.findByRole('button', { name: /visit request was declined/ }));
     expect(mocks.markRead).toHaveBeenCalledWith('n-cut');
-    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/schedule' });
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/schedule/booking/$batchId', params: { batchId: 'b1' } });
     expect(queryClient.getQueryData<GetMyHomeResult>(['myHome', 'fam1'])?.unreadNotifications).toBe(1);
   });
 });
