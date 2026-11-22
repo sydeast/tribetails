@@ -36,6 +36,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.MembersRepository
+import kotlinx.coroutines.ensureActive
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.joinDateForEdit
@@ -798,6 +799,7 @@ class DirectoryViewModel(
     }
 
     /** Invite a single kinfolk to the portal (inviteKinfolkToPortal callable). */
+    private var portalAccessJob: kotlinx.coroutines.Job? = null
     private val _portalPrimaryActive = MutableStateFlow<Boolean?>(null)
     /** #1888: true or false once read. Null while reading, and after a failed read. */
     val portalPrimaryActive: StateFlow<Boolean?> = _portalPrimaryActive.asStateFlow()
@@ -809,10 +811,15 @@ class DirectoryViewModel(
      * leaves the button on, because the server still refuses a second invite.
      */
     fun loadPortalAccess(kinfolkId: String) {
+        // This view model outlives one profile, so a late answer about the last
+        // household must never set this household's button.
+        portalAccessJob?.cancel()
         _portalPrimaryActive.value = null
         _portalPrimaryReading.value = true
-        viewModelScope.launch {
-            val active = readMembers(kinfolkId).getOrNull()?.any {
+        portalAccessJob = viewModelScope.launch {
+            val read = readMembers(kinfolkId)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val active = read.getOrNull()?.any {
                 it.role == MembersRepository.MemberRole.PRIMARY && it.status == MembersRepository.MemberStatus.ACTIVE
             }
             _portalPrimaryActive.value = active

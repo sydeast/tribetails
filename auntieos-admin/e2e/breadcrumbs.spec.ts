@@ -117,6 +117,35 @@ test('a Kin page survives a reload, and Back returns to the list', async ({ page
 });
 
 /**
+ * #1893, the path the issue walked: from a household profile. Each page keeps
+ * its place through a reload, and Back steps to the page before it.
+ */
+test('from a household, the Kin page and Edit kin keep their place', async ({ page }) => {
+  await page.goto(`/directory/${HOUSEHOLD_ID}`);
+  await page.locator('.kprofile__kin-row--open', { hasText: KIN_NAME }).click();
+  await expect(page).toHaveURL(/\/directory\/e2e-kf-1\?kin=/);
+
+  await page.reload();
+  await expect(trail(page).getByText(KIN_NAME)).toHaveAttribute('aria-current', 'page');
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/directory\/e2e-kf-1$/);
+  await expect(trail(page).getByText(HOUSEHOLD_NAME)).toHaveAttribute('aria-current', 'page');
+
+  await page.locator('.kprofile__kin-row--open', { hasText: KIN_NAME }).click();
+  await page.getByRole('button', { name: 'Edit kin' }).click();
+  await expect(page).toHaveURL(/kinView=edit/);
+
+  await page.reload();
+  await expect(page).toHaveURL(/kinView=edit/);
+  await expect(page.getByText(`Edit ${KIN_NAME}`).first()).toBeVisible();
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/kinView/);
+  await expect(page.getByRole('button', { name: 'Edit kin' })).toBeVisible();
+});
+
+/**
  * And the kicker it replaced. "THE DEN · DIRECTORY" read the same on the list
  * and three levels down, which is the complaint this item answers, so the list
  * keeps it and the nested screen must not.

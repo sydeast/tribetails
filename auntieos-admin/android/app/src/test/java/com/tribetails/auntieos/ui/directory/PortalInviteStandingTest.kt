@@ -73,6 +73,21 @@ class PortalInviteStandingTest {
         assertNull(model.portalPrimaryActive.value)
     }
 
+    @Test fun `a late answer about the last household is dropped`() = runTest(dispatcher) {
+        val first = CompletableDeferred<Result<List<MembersRepository.Member>>>()
+        val model = vm { id ->
+            if (id == "k1") first.await() else Result.success(listOf(member(MemberRole.PRIMARY, MemberStatus.INVITED)))
+        }
+        model.loadPortalAccess("k1")
+        advanceUntilIdle()
+        model.loadPortalAccess("k2")
+        advanceUntilIdle()
+        first.complete(Result.success(listOf(member(MemberRole.PRIMARY, MemberStatus.ACTIVE))))
+        advanceUntilIdle()
+        assertEquals(false, model.portalPrimaryActive.value)
+        assertFalse(model.portalPrimaryReading.value)
+    }
+
     @Test fun `the button says where the household stands`() {
         assertEquals("Sending…", portalInviteLabel(true, true))
         assertEquals("Already on the portal", portalInviteLabel(false, true))
