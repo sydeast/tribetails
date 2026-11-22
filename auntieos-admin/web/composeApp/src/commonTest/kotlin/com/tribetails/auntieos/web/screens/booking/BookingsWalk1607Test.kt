@@ -32,5 +32,8 @@ class BookingsWalk1607Test {
         assertEquals("Staff", bookingNoteAuthorLabel(BookingNote(authorUid = "u-gone", authorRole = "admin"), roster))
         assertEquals("Staff", bookingNoteAuthorLabel(BookingNote(authorUid = "u-owner", authorRole = "admin"), null))
         assertEquals("Kinfolk", bookingNoteAuthorLabel(BookingNote(authorRole = "kinfolk"), roster))
+        // #1882: a staff member with only an email on file is signed by role, never the address.
+        val noName = listOf(StaffMember(uid = "u-mail", displayName = null, email = "e2e-admin@tribetails.com", role = "owner"))
+        assertEquals("Office", bookingNoteAuthorLabel(BookingNote(authorUid = "u-mail", authorRole = "admin"), noName))
     }
 }

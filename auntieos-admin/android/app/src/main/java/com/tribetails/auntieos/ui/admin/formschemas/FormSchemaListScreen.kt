@@ -615,7 +615,7 @@ private fun SchemaRow(
     val meta = if (deleting) {
         "Deleting..."
     } else {
-        val by = emailByUid[row.updatedBy] ?: row.updatedBy
+        val by = row.updatedBy.takeIf { it.isNotBlank() }?.let { plainUpdatedBy(it, emailByUid) }.orEmpty()
         formSchemaUpdatedMeta(row.updatedAt, by)
     }
     Column(
@@ -635,11 +635,6 @@ private fun SchemaRow(
                     text = name,
                     style = AuntieTheme.typography.titleLarge,
                     color = c.textPrimary,
-                )
-                Text(
-                    text = row.id,
-                    style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
-                    color = c.textFaint,
                 )
             }
             // The mock's `.ver`: mono 13 in the dim text, not a capsule.
@@ -731,9 +726,25 @@ private fun SortHeaderCell(
 }
 
 /**
+ * #1890: what Updated by shows for a stored `updatedBy`. A person's name, or a
+ * plain word: a sign-in email, a uid and a seed script's name
+ * ("seed_phase14_schemas") are all things the owner would have to decode. A
+ * label that is itself an email came from the admin roster, whose people are
+ * the office.
+ */
+internal fun plainUpdatedBy(updatedBy: String, names: Map<String, String>): String {
+    val stored = updatedBy.trim()
+    val label = names[stored]?.trim()
+    if (!label.isNullOrEmpty()) return if (label.contains('@')) "Office" else label
+    if (stored.contains('@') || Regex("^[A-Za-z0-9]{16,}$").matches(stored)) return "Staff"
+    if (Regex("^[a-z0-9]+(_[a-z0-9]+)+$").matches(stored)) return "Set up"
+    return stored
+}
+
+/**
  * #1592: who the Updated by column names for a uid. The staff name
- * (`listStaff`) wins over the roster's email, which still answers for a uid
- * only the roster knows.
+ * (`listStaff`) wins over the roster's entry, which still answers for a uid
+ * only the roster knows ([plainUpdatedBy] reads an email there as the office).
  */
 internal fun updatedByLabels(emailByUid: Map<String, String>, staffNames: Map<String, String>): Map<String, String> =
     emailByUid + staffNames

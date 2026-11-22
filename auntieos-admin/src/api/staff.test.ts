@@ -65,13 +65,18 @@ describe('staffLabel', () => {
 describe('staff names by uid (#1564)', () => {
   beforeEach(() => resetStaffNamesForTest());
 
-  it('maps each uid to its picker label', () => {
+  it('maps each uid to the person, never their email (#1882)', () => {
     const names = staffNamesByUid([
       { uid: 'a', displayName: 'E2E Admin', email: 'e2e-admin@tribetails.com' },
-      { uid: 'b', displayName: null, email: 'catch@hanasamku.com' },
+      { uid: 'b', displayName: null, email: 'catch@hanasamku.com', role: 'owner' },
+      { uid: 'c', displayName: 'pawsome@hanasamku.com', email: null, role: 'auntie' },
+      { uid: 'd', displayName: null, email: null },
     ]);
     expect(names.get('a')).toBe('E2E Admin');
-    expect(names.get('b')).toBe('catch@hanasamku.com');
+    // #1882: no name on file reads as the role, the words the visit notes sign with.
+    expect(names.get('b')).toBe('Office');
+    expect(names.get('c')).toBe('Auntie');
+    expect(names.get('d')).toBe('Staff');
   });
 
   it('reads once for every caller', async () => {

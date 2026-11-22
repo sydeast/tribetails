@@ -344,7 +344,7 @@ private fun SchemaMetaFields(
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
         FieldGroup(
-            label = if (state.isNew) "Schema ID" else "Schema ID (immutable once persisted)",
+            label = if (state.isNew) "Short name" else "Short name (fixed once saved)",
             required = true,
         ) {
             BottomBorderField(

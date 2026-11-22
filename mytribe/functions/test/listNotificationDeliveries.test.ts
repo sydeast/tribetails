@@ -212,6 +212,23 @@ describe('listNotificationDeliveriesHandler', () => {
     const res = await listNotificationDeliveriesHandler({ data: {}, ...REQ } as any);
     expect(res.deliveries.map((d) => d.recipientName)).toEqual(['The East Household', 'Ops Person']);
   });
+  it('#1882: a staff member with no name reads as Staff, never an email or a uid', async () => {
+    mocks.getUsers.mockResolvedValue({
+      users: [{ uid: 'op1', displayName: '', email: 'e2e-admin@tribetails.com' }],
+      notFound: [],
+    });
+    const ctx = buildDbMock({
+      docs: { 'staff/op1': {} },
+      queryDocs: {
+        notificationDispatch: [
+          { id: 'd1', data: { key: 'invoice.new', recipientUid: 'op1', createdAt: new Date(1) } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listNotificationDeliveriesHandler({ data: {}, ...REQ } as any);
+    expect(res.deliveries[0]?.recipientName).toBe('Staff');
+  });
   it('rejects a limit outside the allowed range', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock().db);
     await expect(

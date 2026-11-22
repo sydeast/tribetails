@@ -117,7 +117,8 @@ fun FormSchemaEditorScreen(
             kicker     = navKicker(Destination.FormSchemas),
             title      = if (creating) "New" else "Edit",
             accentTail = "form schema",
-            subtitle   = if (state.schema.id.isNotBlank()) "${state.schema.id} · v${state.schema.version}" else null,
+            // #1890: the schema's name, never its stored id.
+            subtitle   = if (!creating && state.schema.name.isNotBlank()) "${state.schema.name} · v${state.schema.version}" else null,
             trailing = {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -180,7 +181,7 @@ fun FormSchemaEditorScreen(
                 BottomBorderField(
                     value         = state.schema.id,
                     onValueChange = { viewModel.updateId(it) },
-                    label         = if (creating) "Schema ID *" else "Schema ID * (immutable once persisted)",
+                    label         = if (creating) "Short name *" else "Short name * (fixed once saved)",
                     placeholder   = "tribeProfile",
                     enabled       = creating, // id is immutable once persisted
                     modifier      = Modifier.fillMaxWidth(),

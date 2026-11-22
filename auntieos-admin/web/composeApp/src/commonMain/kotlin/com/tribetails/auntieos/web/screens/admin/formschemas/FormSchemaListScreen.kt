@@ -119,7 +119,23 @@ internal fun deleteResultMessage(result: WriteResult<Unit>): String? = when (res
  * knows the uid, else the stored value as it is.
  */
 internal fun updatedByLabel(updatedBy: String, names: Map<String, String>): String =
-    names[updatedBy.trim()] ?: updatedBy
+    plainUpdatedBy(updatedBy, names)
+
+/**
+ * #1890: what Updated by shows for a stored `updatedBy`. A person's name, or a
+ * plain word: a sign-in email, a uid and a seed script's name
+ * ("seed_phase14_schemas") are all things the owner would have to decode. A
+ * label that is itself an email came from the admin roster, whose people are
+ * the office.
+ */
+internal fun plainUpdatedBy(updatedBy: String, names: Map<String, String>): String {
+    val stored = updatedBy.trim()
+    val label = names[stored]?.trim()
+    if (!label.isNullOrEmpty()) return if (label.contains('@')) "Office" else label
+    if (stored.contains('@') || Regex("^[A-Za-z0-9]{16,}$").matches(stored)) return "Staff"
+    if (Regex("^[a-z0-9]+(_[a-z0-9]+)+$").matches(stored)) return "Set up"
+    return stored
+}
 
 internal fun deletedNoticeMessage(target: FormSchemaSummary): String =
     "Deleted ${target.name.ifBlank { target.id }}."
@@ -357,11 +373,7 @@ fun FormSchemaListScreen(
                 )
             },
         ) {
-            Text(
-                "Schema id: ${target.id}",
-                style = AuntieTheme.typography.mono,
-                color = c.textDim,
-            )
+            // #1890: the hint above names the schema; its stored id is not the owner's to read.
         }
     }
 }
@@ -398,12 +410,6 @@ private fun SchemaRow(
                 text  = row.name.ifBlank { row.id },
                 style = AuntieTheme.typography.titleMedium,
                 color = if (row.name.isBlank()) c.textDim else c.textPrimary,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text  = row.id,
-                style = AuntieTheme.typography.labelSmall.copy(fontFamily = AuntieTheme.typography.mono.fontFamily),
-                color = c.textFaint,
             )
             Spacer(Modifier.height(6.dp))
             // Meta line: version, updated date, updated by - blank parts dropped.

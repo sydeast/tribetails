@@ -125,6 +125,14 @@ export function mediaLocalMonth(uploadedAt: string): string | null {
   return day === '' ? null : day.slice(0, 7);
 }
 
+/**
+ * A stored author that is an identifier rather than a name (#1882): an email
+ * address, or a long opaque uid.
+ */
+export function isStoredIdentifier(value: string): boolean {
+  return value.includes('@') || /^[A-Za-z0-9_-]{20,}$/.test(value);
+}
+
 export function mediaMetaLine(
   uploadedAt: string,
   uploadedBy: string,
@@ -136,7 +144,9 @@ export function mediaMetaLine(
 ): string {
   const date = mediaLocalDay(uploadedAt);
   const stored = str(uploadedBy).trim();
-  const author = staffNames.get(stored) ?? stored;
+  // #1882: a uid the staff list does not know, or an email, is not a name. The
+  // line keeps the date rather than print either.
+  const author = staffNames.get(stored) ?? (isStoredIdentifier(stored) ? '' : stored);
   const realAuthor = author !== '' && author.toLowerCase() !== 'auntie' ? author : '';
   return [date, realAuthor].filter((s) => s !== '').join(' · ');
 }
