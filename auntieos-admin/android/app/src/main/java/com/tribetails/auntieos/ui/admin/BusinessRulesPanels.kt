@@ -269,7 +269,7 @@ internal const val VISIT_REMINDER_TOGGLE_TITLE = "Remind kinfolk $VISIT_REMINDER
  * check runs at all; the Notifications row picks the channels. Both must be on.
  */
 internal const val VISIT_REMINDER_TOGGLE_DESCRIPTION =
-    "Turns every visit reminder on or off. While this is off, none go out, whatever Notifications says. Notifications picks email, text or push."
+    "Turns every visit reminder on or off. While this is off, none go out, whatever Notifications says. Notifications can also turn them off, and picks email, text or push."
 
 /** ISSUE #1612: names the switch it depends on, rather than "the switch above". */
 internal const val ARRIVAL_RADIUS_NOTE =

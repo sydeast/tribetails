@@ -376,7 +376,7 @@ export const VISIT_REMINDER_TIMING = '24 to 48 hours before';
  * reminder picks its channels. Both have to be on for a reminder to go out.
  */
 export const VISIT_REMINDER_SWITCH_NOTE =
-  'Turns every visit reminder on or off. While this is off, none go out, whatever Notifications says. Notifications picks email, text or push.';
+  'Turns every visit reminder on or off. While this is off, none go out, whatever Notifications says. Notifications can also turn them off, and picks email, text or push.';
 
 /** The end time a NEW block gets: `startTime` plus the operator's default block length, capped at 23:59. */
 export function defaultBlockEnd(startTime: string, durationHours: number): string {
