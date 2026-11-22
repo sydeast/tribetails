@@ -172,10 +172,10 @@ describe('HouseholdMembers HAPPY', () => {
 
     // Every permission the server understands is rendered, granted or not.
     expect(
-      screen.getByRole('switch', { name: 'Direct messaging for marcus@example.com' }),
+      screen.getByRole('switch', { name: 'Direct messaging for Spouse' }),
     ).toHaveAttribute('aria-checked', 'true');
     expect(
-      screen.getByRole('switch', { name: 'Full billing for marcus@example.com' }),
+      screen.getByRole('switch', { name: 'Full billing for Spouse' }),
     ).toHaveAttribute('aria-checked', 'false');
 
     expect(await screen.findByText('jane@example.com')).toBeInTheDocument();
@@ -192,7 +192,7 @@ describe('HouseholdMembers HAPPY', () => {
     mount();
 
     await user.click(
-      await screen.findByRole('switch', { name: 'Full billing for marcus@example.com' }),
+      await screen.findByRole('switch', { name: 'Full billing for Spouse' }),
     );
 
     await waitFor(() => {
@@ -322,7 +322,7 @@ describe('HouseholdMembers PRIMARY entitlements are not switches', () => {
     mount({ members: [primary(), member()] });
 
     await user.click(
-      await screen.findByRole('switch', { name: 'Full billing for marcus@example.com' }),
+      await screen.findByRole('switch', { name: 'Full billing for Spouse' }),
     );
     await waitFor(() => {
       expect(api.setMemberPermissions).toHaveBeenCalledWith('fam1', 'u1', { billing_full: true });
@@ -401,7 +401,7 @@ describe('HouseholdMembers NEGATIVE', () => {
   it('renders kintales_only as locked on and refuses to let it be turned off', async () => {
     mount();
     const locked = await screen.findByRole('switch', {
-      name: 'KinTales feed for marcus@example.com',
+      name: 'KinTales feed for Spouse',
     });
     expect(locked).toHaveAttribute('aria-checked', 'true');
     expect(locked).toBeDisabled();
@@ -491,16 +491,16 @@ describe('HouseholdMembers ERROR', () => {
     mount();
 
     const toggle = await screen.findByRole('switch', {
-      name: 'Full billing for marcus@example.com',
+      name: 'Full billing for Spouse',
     });
     await user.click(toggle);
 
     expect(
-      await screen.findByText(/Could not save the access for marcus@example.com/),
+      await screen.findByText(/Could not save the access for Spouse/),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(
-        screen.getByRole('switch', { name: 'Full billing for marcus@example.com' }),
+        screen.getByRole('switch', { name: 'Full billing for Spouse' }),
       ).toHaveAttribute('aria-checked', 'false');
     });
   });
@@ -617,6 +617,26 @@ describe('HouseholdMembers PRIMARY RECOVERY', () => {
     // into, and this assertion is the whole point of the dialog.
     expect(within(dialog).queryByRole('textbox')).toBeNull();
     expect(api.listRecoveryCandidates).toHaveBeenCalledWith('fam1', 'p1');
+  });
+
+  it('#1853 #1855: names the sitting primary in words, never by email, and in plain wording', async () => {
+    const user = userEvent.setup();
+    api.listRecoveryCandidates.mockResolvedValue([candidate()]);
+    mount({
+      members: [
+        member({ uid: 'p1', role: 'PRIMARY', status: 'ACTIVE', invitedEmail: 'lost@example.com', secondaryLabel: null }),
+        roster[1]!,
+      ],
+    });
+    await user.click(await screen.findByRole('button', { name: 'Swap primary' }));
+    const dialog = await screen.findByRole('dialog');
+    const sentence = within(dialog).getByText(/will be suspended and signed out/);
+    expect(sentence).toHaveTextContent(
+      'The primary contact will be suspended and signed out. The member you pick is emailed a claim ' +
+        'link that expires in 14 days. Once they open it, they have full access to this household, ' +
+        'billing included.',
+    );
+    expect(sentence).not.toHaveTextContent(/lost@example\.com|entitlement/);
   });
 
   it('sends the claim link to the picked address and reloads the roster', async () => {
@@ -791,9 +811,11 @@ describe('HouseholdMembers mock structure', () => {
     // The crest: the mock's letter tile, "W" for the Walls, in the leading slot.
     expect(hero.querySelector('.den-heading-leading .avatar')).not.toBeNull();
     expect(within(hero).getByRole('img', { name: 'the Walls' })).toHaveTextContent('W');
+    // #1844: no field name, no id, no stored key; the same count the panel shows.
     expect(
-      within(hero).getByText('familyId: fam1 · 2 members · 1 PRIMARY, 1 SECONDARY'),
+      await within(hero).findByText('2 people · 1 primary, 1 secondary'),
     ).toHaveClass('hmembers__where');
+    expect(within(hero).queryByText(/familyId|fam1|PRIMARY|SECONDARY/)).toBeNull();
     // The actions live in the band, in the mock's order: Back, Swap primary,
     // then the portal invite in the primary slot. The mock's "Add secondary
     // contact" is gone with the contacts list (ruling 2026-09-27, #829).
@@ -808,12 +830,24 @@ describe('HouseholdMembers mock structure', () => {
     );
   });
 
-  it('writes the id alone while the roster is unread, never a zero count', () => {
-    expect(whereLine('fam1', { status: 'loading' })).toBe('familyId: fam1');
-    expect(whereLine('fam1', { status: 'error', message: 'x' })).toBe('familyId: fam1');
-    expect(whereLine('fam1', { status: 'ready', data: [primary()] })).toBe(
-      'familyId: fam1 · 1 member · 1 PRIMARY, 0 SECONDARY',
-    );
+  it('writes nothing while either read is unread, never a zero count (#1844)', () => {
+    expect(whereLine(null, null)).toBe('');
+    expect(whereLine(1, null)).toBe('');
+    expect(whereLine(null, 1)).toBe('');
+    expect(whereLine(1, 0)).toBe('1 person · 1 primary, 0 secondary');
+    expect(whereLine(1, 2)).toBe('3 people · 1 primary, 2 secondary');
+  });
+
+  it('#1844: counts a secondary with no portal account in the header too, as the panel does', async () => {
+    api.listSecondaryKinfolk.mockResolvedValue([
+      { personId: 'p1', name: 'Rae East', phone: null, email: null, access: 'NONE', memberUid: null },
+    ]);
+    mount({ members: [primary()] });
+    await screen.findByText('Rae East');
+    const hero = document.querySelector('.den-heading') as HTMLElement;
+    expect(await within(hero).findByText('2 people · 1 primary, 1 secondary')).toBeInTheDocument();
+    const panel = (await screen.findByText('Secondary kinfolk')).closest('.den-panel') as HTMLElement;
+    expect(within(panel).getByText('1 person')).toHaveClass('den-panel-meta');
   });
 
   it('takes the crest letter after a leading article', () => {
@@ -834,7 +868,7 @@ describe('HouseholdMembers mock structure', () => {
     mount({ members: [primary()] });
     await screen.findByText('Rae East');
     const panel = (await screen.findByText('Secondary kinfolk')).closest('.den-panel') as HTMLElement;
-    await waitFor(() => expect(within(panel).getByText('1 of role: SECONDARY')).toBeInTheDocument());
+    await waitFor(() => expect(within(panel).getByText('1 person')).toBeInTheDocument());
     expect(within(panel).queryByText(/No secondary kinfolk yet/)).toBeNull();
   });
 
@@ -842,7 +876,7 @@ describe('HouseholdMembers mock structure', () => {
     mount({ members: [primary()] });
     const panel = (await screen.findByText('Secondary kinfolk')).closest('.den-panel') as HTMLElement;
     expect(await within(panel).findByText(/No secondary kinfolk yet/)).toBeInTheDocument();
-    expect(within(panel).getByText('0 of role: SECONDARY')).toBeInTheDocument();
+    expect(within(panel).getByText('0 people')).toBeInTheDocument();
   });
 
   // Q4 (operator, 2026-09-27): the panel is "Secondary kinfolk".
@@ -850,7 +884,7 @@ describe('HouseholdMembers mock structure', () => {
     mount({ members: [primary(), member()] });
     await screen.findByText('marcus@example.com');
     // #1602: the count waits for the no-portal list as well.
-    await screen.findByText('1 of role: SECONDARY');
+    await screen.findByText('1 person');
     const titles = Array.from(document.querySelectorAll('.den-panel-title')).map(
       (el) => el.textContent,
     );
@@ -858,11 +892,8 @@ describe('HouseholdMembers mock structure', () => {
     const metas = Array.from(document.querySelectorAll('.den-panel-meta')).map(
       (el) => el.textContent,
     );
-    expect(metas).toEqual([
-      'role: PRIMARY',
-      '1 of role: SECONDARY',
-      '1 total',
-    ]);
+    // #1853: no stored key beside a title. The Primary contact panel has no meta.
+    expect(metas).toEqual(['1 person', '1 total']);
     const panels = document.querySelectorAll('.den-panel');
     expect(within(panels[0] as HTMLElement).getByText('lost@example.com')).toBeInTheDocument();
     expect(within(panels[0] as HTMLElement).queryByText('marcus@example.com')).toBeNull();
@@ -885,12 +916,12 @@ describe('HouseholdMembers mock structure', () => {
     expect(within(row).getByText('marcus@example.com')).toHaveClass('hmembers__member-contact');
     expect(within(row).queryByText('u1')).toBeNull();
     // The label, read-only: `updateMemberLabel` is PRIMARY-only on the server.
-    expect(within(row).getByText('secondaryLabel')).toHaveClass('hmembers__labeled');
+    expect(within(row).getByText('Label')).toHaveClass('hmembers__labeled');
     expect(within(row).getByText('Spouse')).toHaveClass('hmembers__labelval');
     expect(within(row).queryByRole('textbox')).toBeNull();
     const prow = (await screen.findByText('lost@example.com')).closest('li') as HTMLElement;
     expect(within(prow).getByText('Primary')).toHaveAttribute('data-tone', 'purple');
-    expect(within(prow).queryByText('secondaryLabel')).toBeNull();
+    expect(within(prow).queryByText('Label')).toBeNull();
   });
 
   it('paints an invited member orange and a suspended one coral', async () => {
@@ -949,7 +980,8 @@ describe('HouseholdMembers mock structure', () => {
     // The group heading and its mono note, the note a sibling of the h3 so the
     // section's accessible name stays the one word.
     expect(screen.getByRole('heading', { level: 3, name: 'Pending' })).toBeInTheDocument();
-    expect(screen.getByText('PENDING / EMAIL_SENT · 1')).toHaveClass('hmembers__group-note');
+    expect(document.querySelector('.hmembers__group-note')).toHaveTextContent(/^1$/);
+    expect(screen.queryByText(/PENDING|EMAIL_SENT/)).toBeNull();
   });
 
   it('says the secondaries are unknown, once, while the member read is failing', async () => {
@@ -1235,7 +1267,7 @@ describe('HouseholdMembers for an Auntie', () => {
     await screen.findByText('marcus@example.com');
     expect(screen.getByRole('button', { name: 'Invite to portal' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Swap primary' })).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: 'Direct messaging for marcus@example.com' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Direct messaging for Spouse' })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Invites' })).toBeInTheDocument();
     await waitFor(() => expect(api.listHouseholdInvites).toHaveBeenCalledWith('fam1'));
     const row = (await screen.findByText('Rae East')).closest('[data-testid="secondary-kinfolk-row"]') as HTMLElement;

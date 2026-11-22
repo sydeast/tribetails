@@ -8,6 +8,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { isOwner, isOwnerClaim, staffBypass } from '../lib/staffGate';
 import { draftMadeBy, draftWentOut, isKinTaleDraft, messageDraftStanding } from '../lib/generatedDraftType';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
+import { auditActorPayload, resolveAuditActor } from '../lib/auditActor';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -371,6 +372,9 @@ function testScopeOf(token: Record<string, unknown>): string | null {
  * in the rules, and `getMyKinTales` and the share page copy named fields only),
  * and the send removes them.
  */
+/** #1821: the Activity Log sentence for a KinTale sent from a visit. */
+export const SENT_KINTALE_WORDS = 'Sent a KinTale';
+
 export const KEPT_NOTES_FIELDS = ['keptNotes', 'keptNotesDraft'] as const;
 export async function sendKinTaleReportHandler(
   req: CallableRequest<unknown>,
@@ -455,8 +459,47 @@ export async function sendKinTaleReportHandler(
       updatedAt: now,
     });
 
-    return { alreadySent: false as const, source: careTasks.source, done: careTasks.done.length };
+    return {
+      alreadySent: false as const,
+      source: careTasks.source,
+      done: careTasks.done.length,
+      kinfolkId: either(report['kinfolkId'], ''),
+      sessionId,
+    };
   });
+
+  // #1821: the send's Activity Log line, after the send has committed and only
+  // for a real send, so a replay (answered above) never writes a second one.
+  // It stays out of the transaction: Android and the desktop console tell the
+  // household before this call, so a failed line must not fail the send, and
+  // every send would otherwise contend on the audit chain's head.
+  if (!outcome.alreadySent) {
+    try {
+      const actor = await resolveAuditActor(req.auth, 'sendKinTaleReport');
+      await writeAuditEntry({
+        event: AUDIT_EVENTS.CONTENT_KINTALE_SENT,
+        severity: 'info',
+        status: 'SUCCESS',
+        actorRole: actor.actorRole,
+        actorUid,
+        targetUid: reportId,
+        targetCollection: 'kin_care_reports',
+        ...(outcome.kinfolkId !== '' ? { familyId: outcome.kinfolkId } : {}),
+        // Words only. The tale's title and text stay on the tale.
+        description: SENT_KINTALE_WORDS,
+        payload: { reportId, visitId: outcome.sessionId, ...auditActorPayload(actor) },
+      });
+    } catch (err) {
+      logEvent({
+        severity: 'error',
+        function: 'sendKinTaleReport',
+        event: 'audit.write.failed',
+        uid: actorUid,
+        extra: { reportId },
+        errorMessage: (err as Error)?.message,
+      });
+    }
+  }
 
   logEvent({
     severity: outcome.alreadySent ? 'info' : outcome.source === 'templateMissing' ? 'warn' : 'info',

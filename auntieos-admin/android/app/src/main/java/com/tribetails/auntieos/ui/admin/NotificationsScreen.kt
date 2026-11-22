@@ -389,13 +389,16 @@ fun NotificationsScreen(
                                     onToggleRead = { entry ->
                                         viewModel.toggleNotificationRead(entry.id, isNotificationUnread(entry))
                                     },
-                                    onOpen = { entry ->
-                                        // #2367: a whole-booking notice opens on Bookings too.
-                                        val request = requestCardOf(entry, pendingKeys) ?: wholeBookingOf(entry)
-                                        if (request != null && onOpenRequest != null) {
-                                            onOpenRequest(request.first, request.second)
-                                        } else {
-                                            onOpenEntry?.invoke(entry) ?: onOpenTarget(entry.targetType, entry.targetId)
+                                    onOpen = { opened ->
+                                        // #1829: Open marks an unread notice read on the way.
+                                        openNotification(opened, markRead = viewModel::markNotificationReadOnOpen) { entry ->
+                                            // #2367: a whole-booking notice opens on Bookings too.
+                                            val request = requestCardOf(entry, pendingKeys) ?: wholeBookingOf(entry)
+                                            if (request != null && onOpenRequest != null) {
+                                                onOpenRequest(request.first, request.second)
+                                            } else {
+                                                onOpenEntry?.invoke(entry) ?: onOpenTarget(entry.targetType, entry.targetId)
+                                            }
                                         }
                                     },
                                     onCreateQuote = { entry -> onCreateQuote(notificationKinfolkId(entry)) },
