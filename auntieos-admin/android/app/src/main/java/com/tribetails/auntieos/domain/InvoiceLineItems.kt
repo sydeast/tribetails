@@ -151,6 +151,24 @@ fun invoiceTotalDisagreement(invoice: Invoice): InvoiceTotalDisagreement? {
 /** "$36.00" / "-$12.50" from an integer count of cents. */
 fun formatCents(cents: Long): String = formatUsdCents(cents)
 
+const val INVOICE_TOTAL_DISAGREEMENT_TITLE = "The line items do not add up to the total"
+/**
+ * The banner body: both figures, which one is billed, and the one thing the
+ * Admin can do. #1860: the old copy told her to re-save lines a recorded
+ * payment has locked. Same words as web
+ * (`lib/invoiceReconcile.ts#invoiceTotalMismatchText`) and the desktop console.
+ */
+fun invoiceTotalDisagreementText(d: InvoiceTotalDisagreement, linesEditable: Boolean): String {
+    val stored = formatCents(d.storedCents)
+    val head = "The line items add up to ${formatCents(d.derivedCents)}, but the invoice total is $stored. " +
+        "The household is billed $stored. Nothing was changed to make them match."
+    return if (linesEditable) {
+        "$head If the line items are right, press Edit and save them, and the total will follow."
+    } else {
+        "$head The line items on this invoice are locked, so they cannot be edited."
+    }
+}
+
 /** "3" for a whole quantity, "2.5" for a fractional one. Never money-style decimals. */
 fun formatQty(qty: Double): String {
     if (!qty.isFinite()) return "0"

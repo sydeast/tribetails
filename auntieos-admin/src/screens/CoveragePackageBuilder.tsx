@@ -103,7 +103,7 @@ export function CoveragePackageBuilder() {
         kicker="Care Ops · Pricing"
         title="Coverage"
         accentTail="package builder."
-        subtitle={`Name the client and the dates, set that client's rules, then build packages: mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day. ${
+        subtitle={`Name the Kinfolk and the dates, set their rules, then build packages: mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day. ${
           auntie
             ? "Lengths and prices come from the owner's KinCare types."
             : 'Lengths and prices come from your KinCare types in Settings.'
@@ -611,7 +611,7 @@ function Builder({ settings }: BuilderProps) {
       >
         <div className="cpb__ruleRow">
           <label className="cpb__field">
-            <span className="cpb__fieldLabel">Client (optional)</span>
+            <span className="cpb__fieldLabel">Kinfolk (optional)</span>
             <input className="cpb__input" placeholder="Kinfolk name" value={clientName} onChange={(e) => setClientName(e.target.value)} />
           </label>
           <label className="cpb__field">
@@ -646,7 +646,7 @@ function Builder({ settings }: BuilderProps) {
       </DenPanel>
 
       {/* Coverage rules */}
-      <DenPanel title="Coverage rules for this client" subtitle="Per-client: they travel with this quote, not with your KinCare types. Seed the suggestions and gap warnings; not a hard gate." className="cpb__noprint">
+      <DenPanel title="Coverage rules for this household" subtitle="Per household: they travel with this quote, not with your KinCare types. Seed the suggestions and gap warnings; not a hard gate." className="cpb__noprint">
         <div className="cpb__ruleRow">
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Day starts</span>
@@ -697,7 +697,7 @@ function Builder({ settings }: BuilderProps) {
         <div className="cpb__pinned">
           {/* #1595: a label and a tip, not a label with its explanation run on. */}
           <p className="cpb__pinnedHeading">
-            Pinned visits <InfoTip text="This client's non-negotiables. New blank packages start with these." />
+            Pinned visits <InfoTip text="This household's non-negotiables. New blank packages start with these." />
           </p>
           {rules.pinnedTimes.map((p) => (
             <div key={p.id} className="cpb__pinnedRow">
@@ -731,7 +731,7 @@ function Builder({ settings }: BuilderProps) {
       {/* Packages */}
       <DenPanel
         title="Packages"
-        subtitle="Lean, Balance and Premium are built from this client's rules the moment a quote opens; build your own beside them. Mix any visit lengths, a 15-min lunch check-in with a 60-min evening, however you like."
+        subtitle="Lean, Balance and Premium are built from this household's rules the moment a quote opens; build your own beside them. Mix any visit lengths, a 15-min lunch check-in with a 60-min evening, however you like."
         trailing={
           <span className="cpb__seedRow">
             {suggestions.map((s) => (
@@ -1051,7 +1051,7 @@ function DayDetailRow({
             ? `Overnight — ${row.overnightLabel} from ${minutesToTime(row.overnightStartMin)}`
             : row.canOvernight
               ? 'No overnight'
-              : 'Client returns — no overnight'}
+              : 'Household home, no overnight'}
         </span>
         <span className="cpb__nightRowPrice">{formatUsd(row.dayCost)}</span>
       </div>
