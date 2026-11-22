@@ -401,7 +401,7 @@ private fun LiveStatsCard(route: com.tribetails.auntieos.data.model.VisitRoute, 
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "Currently at client's home",
+                        "Currently at the household's home",
                         style = AuntieTheme.typography.bodySmall,
                         color = AuntieTheme.colors.success
                     )
@@ -602,7 +602,7 @@ private fun LocationPermissionDialog(
             }
         }
     ) {
-        Text("To track your route during visits and provide transparency to clients, we need access to your location. This enables:\n\n• Route recording during dog walks\n• Arrival/departure verification\n• Visit documentation for clients")
+        Text("To track your route during visits and keep households informed, we need access to your location. This enables:\n\n• Route recording during dog walks\n• Arrival/departure verification\n• Visit records for households")
     }
 }
 

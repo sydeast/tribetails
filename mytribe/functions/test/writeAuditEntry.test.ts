@@ -89,7 +89,9 @@ describe('writeAuditEntry', () => {
     expect(arg.actionType).toBe('MEMBERSHIP_INVITE_SENT');
     expect(typeof arg.timestamp).toBe('string');
     expect(arg.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(arg.description).toContain('MEMBERSHIP_INVITE_SENT');
+    // #1818: a line with no sentence reads as its key in words, with no uid.
+    expect(arg.description).toBe('Membership invite sent');
+    expect(arg.description).not.toMatch(/uid=|target=|u1|_/);
     expect(arg.status).toBe('SUCCESS');
     expect(arg.actorId).toBe('u1');
     expect(arg.targetId).toBe('');

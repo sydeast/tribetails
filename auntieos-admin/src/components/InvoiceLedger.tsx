@@ -233,7 +233,7 @@ function PaymentsPanel({
               <span id={historyNameId}>Payment history</span>{' '}
               <InfoTip
                 id={historyTipId}
-                text="What the client actually paid, recorded for the books, and NOT counted in the figures above. A row reads across as amount = applied + tip + balance; the fee is the processor's cut, taken off what reaches the business rather than off the bill."
+                text="What the Kinfolk actually paid, recorded for the books, and NOT counted in the figures above. A row reads across as amount = applied + tip + balance; the fee is the processor's cut, taken off what reaches the business rather than off the bill."
               />
             </caption>
             <thead>

@@ -5,7 +5,7 @@ import { unauditedRefusal } from '../lib/wrapCallable';
 import { isAuntieClaim } from '../lib/staffGate';
 import { logEvent } from '../lib/logger';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
-import { isServerOnlyAuditEvent, SERVER_ONLY_EVENT_REFUSAL, type AuditEvent } from '../lib/auditEvents';
+import { auditEventWords, isServerOnlyAuditEvent, SERVER_ONLY_EVENT_REFUSAL, type AuditEvent } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { auditActorPayload, resolveAuditActor } from '../lib/auditActor';
 import { ActivityPayload, compactActivityPayload } from '../lib/activityPayload';
@@ -102,8 +102,8 @@ export const AUNTIE_LOGGABLE_EVENTS: ReadonlySet<string> = new Set<string>([
   // Her own availability.
   'BLOCK_TIME_SLOT',
   'UNBLOCK_TIME_SLOT',
-  // KinTales, and a generated draft she sends (publishGeneratedDraft).
-  'CONTENT_KINTALE_SENT',
+  // A generated draft she sends (publishGeneratedDraft). A KinTale sent from
+  // a visit is the server's line since #1821 (`sendKinTaleReport`).
   'DRAFT_APPROVED',
   // The households she serves: record edits, never archive or delete.
   'UPDATE_KINFOLK',
@@ -155,15 +155,21 @@ export async function logActivityHandler(
   }
   const args = parsed.data;
   // We trust the auth uid as the actor, not the client-supplied actorId.
-  // The latter is captured in the description as forensic info if it
-  // diverges (e.g., system-impersonation pattern in MyTribe functions
-  // already does the same for orphan triage callable).
+  // #1818: a diverging claim goes to the function log for correlation. It used
+  // to be appended to the line's sentence ("<KEY> (client-actor=<uid>)"),
+  // which the Activity Log printed as written. A line with no sentence reads
+  // as its title in words.
   const suppliedActorId = args.actorId ?? '';
-  const description =
-    args.description ??
-    (suppliedActorId && suppliedActorId !== authUid
-      ? `${args.actionType} (client-actor=${suppliedActorId})`
-      : args.actionType);
+  if (suppliedActorId && suppliedActorId !== authUid) {
+    logEvent({
+      severity: 'warn',
+      function: 'logActivity',
+      event: 'logActivity.clientActorDiverged',
+      uid: authUid,
+      extra: { actionType: args.actionType, clientActorId: suppliedActorId },
+    });
+  }
+  const description = args.description ?? auditEventWords(args.actionType);
   // #2162: a kind the server writes itself is refused from every sign-in, the
   // owner's included, before anything else is looked up.
   if (isServerOnlyAuditEvent(args.actionType)) {

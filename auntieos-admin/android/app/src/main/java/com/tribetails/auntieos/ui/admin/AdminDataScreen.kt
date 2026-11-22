@@ -59,7 +59,7 @@ fun AdminDataScreen(
     val dataCards = listOf(
         AdminDataCard(
             title       = "Invoices",
-            description = "View and manage client invoices, billing status, and payment history",
+            description = "View and manage household invoices, billing status, and payment history",
             icon        = Lucide.Receipt,
             count       = invoices.size.toString(),
             route       = "invoices"

@@ -56,12 +56,13 @@ class GalleryScreenTest {
     }
 
     @Composable
-    private fun Screen(fake: FakeFunctionsClient) {
+    private fun Screen(fake: FakeFunctionsClient, onOpenTale: (String) -> Unit = {}) {
         GalleryScreen(
             kinfolkId = "fam-1",
             portalApi = PortalApi(fake),
             onBack = {},
             onOpenKinDetail = {},
+            onOpenTale = onOpenTale,
         )
     }
 
@@ -207,6 +208,21 @@ class GalleryScreenTest {
         onNodeWithContentDescription("Close photo").assertExists()
     }
 
+    // #1911: a picture opened the photo alone, with no way to the KinTale it came from.
+    @Test
+    fun theViewer_opensTheKinTaleThePhotoCameFrom() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinPhotos", page(listOf("m1", "m2")))
+        val opened = mutableListOf<String>()
+        setThemedContent { Screen(fake, onOpenTale = { opened += it }) }
+        waitForIdle()
+        onAllNodesWithTag("galleryTile")[1].performClick()
+        waitForIdle()
+        onNodeWithText("Open the KinTale").performClick()
+        waitForIdle()
+        assertEquals(listOf("tale-m2"), opened)
+        onNodeWithContentDescription("Close photo").assertDoesNotExist()
+    }
     @Test
     fun aVideoTile_saysItIsAVideoInsteadOfShowingAFailedImage() = runComposeUiTest {
         val fake = FakeFunctionsClient()

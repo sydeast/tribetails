@@ -1,5 +1,6 @@
 import { type VisitLifecycleAction } from '../api/sessionsWrite';
 import { type VisitLifecycleSession } from './visitLifecyclePatch';
+import { statusWords } from './activityWords';
 
 /**
  * #1794: what the household is told about a visit-clock tap, said in plain
@@ -172,6 +173,30 @@ export function noticeAbout(
   const step = visitNoticeStepOf(action);
   return step === null || sessionId === null || sessionId.trim() === '' ? null : { sessionId, step };
 }
+
+/** The clock's order, so a step back (an undo) reads "Back to", never "Marked". */
+const CLOCK_ORDER = ['SCHEDULED', 'ON_MY_WAY', 'ARRIVED', 'DEPARTED', 'COMPLETED'];
+/**
+ * #1814: the first part of the card's line after a clock tap, in words.
+ * The line used to open with the stored keys ("SCHEDULED → ON_MY_WAY."). A
+ * step forward reads "Marked on the way.", a step back reads "Back to on the
+ * way.", and a tap that changed nothing reads "Already arrived.".
+ */
+export function visitMovedSentence(from: string, to: string): string {
+  const a = CLOCK_ORDER.indexOf(from.trim().toUpperCase());
+  const b = CLOCK_ORDER.indexOf(to.trim().toUpperCase());
+  const word = statusWords(to);
+  if (word === '') return 'Visit updated.';
+  return a !== -1 && b !== -1 && b < a ? `Back to ${word}.` : `Marked ${word}.`;
+}
+
+/** #1814: a tap that found the visit already at this step. */
+export function visitAlreadySentence(status: string): string {
+  const word = statusWords(status);
+  const head = word === '' ? 'Nothing was changed' : `Already ${word}. Nothing was changed`;
+  return `${head}, and the time already on file is unchanged.`;
+}
+
 /** Whether this action tells the household anything, so whether there is a question to ask. */
 export function actionNotifiesHousehold(action: VisitLifecycleAction): boolean {
   return TOLD_WHAT[action] !== undefined;
