@@ -309,9 +309,31 @@ function createdMs(row: Pick<KinTaleEntry, 'createdAt'>): number | null {
   return d === null ? null : d.getTime();
 }
 
+/**
+ * #1856: the instant the row's DATE LABEL shows, in ms, or null when the label
+ * reads "Date TBD".
+ *
+ * The label is `kinTaleWhen`: the first non-blank of visitDate, arrivedAt,
+ * sentAt, createdAt. The list used to be ordered on `createdAt` alone, and a
+ * migrated report's `createdAt` can be the day it was copied over rather than
+ * the day of the visit. Those rows came out oldest first, with a 2026 row among
+ * the 2025 ones, because the order and the label read two different fields.
+ * Same precedence, same parser, so the two can no longer disagree.
+ */
+export function shownMs(
+  row: Pick<KinTaleEntry, 'createdAt'> & Partial<Pick<KinTaleEntry, 'visitDate' | 'arrivedAt' | 'sentAt'>>,
+): number | null {
+  const raw = [row.visitDate, row.arrivedAt, row.sentAt, row.createdAt]
+    .map((v) => str(v).trim())
+    .find((v) => v !== '');
+  if (raw === undefined) return null;
+  const d = tsToDate(kinTaleTimeOf(raw));
+  return d === null ? null : d.getTime();
+}
 // ── the reports: ISO pages plus the free-text rows, by parsed date ─────────
 /**
- * Orders rows newest-first by their PARSED `createdAt` (#1599).
+ * Orders rows newest-first by the PARSED instant their date label shows
+ * (#1599, #1856: see `shownMs`; it was `createdAt` alone).
  *
  * The server cannot do this for the whole collection: `createdAt` is an ISO
  * string on every row written since the migration learned to parse, but the 83
@@ -327,9 +349,12 @@ function createdMs(row: Pick<KinTaleEntry, 'createdAt'>): number | null {
  * date. Migrated rows keep their original dates; nothing here reads the
  * migration time.
  */
-export function reportsNewestFirst<T extends Pick<KinTaleEntry, 'createdAt'>>(rows: readonly T[]): T[] {
+export function reportsNewestFirst<
+  T extends Pick<KinTaleEntry, 'createdAt'> & Partial<Pick<KinTaleEntry, 'visitDate' | 'arrivedAt' | 'sentAt'>>,
+>(rows: readonly T[]): T[] {
   return rows
-    .map((row, index) => ({ row, index, at: createdMs(row) }))
+    // #1856: by the instant the label shows, not `createdAt` alone.
+    .map((row, index) => ({ row, index, at: shownMs(row) }))
     .sort((a, b) => {
       if (a.at === null && b.at === null) return a.index - b.index;
       if (a.at === null) return 1;
@@ -397,8 +422,9 @@ export function mergeByCreatedDesc(
     // Non-null: both indices are bounds-checked by the loop condition.
     const a = reports[i]!;
     const b = drafts[j]!;
-    const ta = createdMs(a);
-    const tb = createdMs(b);
+    // #1856: the same instant each row's label shows.
+    const ta = shownMs(a);
+    const tb = shownMs(b);
     if (tb === null || (ta !== null && ta >= tb)) {
       out.push(a);
       i += 1;
