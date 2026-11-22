@@ -400,6 +400,8 @@ export async function createInvoiceHandler(
     status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_INVOICE_CREATED,
     severity: 'info', actorRole: 'AUNTIE', actorUid: req.auth!.uid, familyId: args.familyId,
+    // #1818: words. With none the line read "BILLING_INVOICE_CREATED uid=<id>".
+    description: (await import('../lib/activityWords.js')).invoiceCreatedWords(invoiceNumber),
     payload: {
       invoiceId: ref.id,
       invoiceNumber,
