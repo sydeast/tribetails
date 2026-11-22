@@ -16,6 +16,10 @@
 .tabs a:hover, .tabs button:hover { background: rgba(223, 132, 49, .12); color: var(--navy); }
 .tabs a.on, .tabs button.on { background: var(--navy); color: #fff; box-shadow: var(--shadow-card); }
 
+/* #1843: a tale opened by id (a notice, a Gallery picture, a completed visit) is scrolled to,
+   and scrollIntoView lands it at the top of the viewport, under the see-through sticky nav. */
+.feature, .talecard { scroll-margin-top: calc(var(--nav-h) + 12px); }
+
 /* featured KinTale */
 .feature { padding: 0; overflow: hidden; animation: rise .6s var(--ease) .08s both; }
 .feature .banner { padding: 22px 26px; color: #fff; background: var(--tribe-grad); position: relative; overflow: hidden; }

@@ -54,7 +54,7 @@ internal fun invoiceEditLineSummary(line: InvoiceEditLine): String {
 
 /**
  * The invoice editor (#1174), the web edit form on Android: number, date, due
- * date, terms, household, client, address, the legacy discount note (#1198),
+ * date, terms, household, Kinfolk, address, the legacy discount note (#1198),
  * line items and the whole-invoice discount, saved through `updateInvoice`.
  *
  * Under a `metadataOnly` scope the money is SHOWN, read-only, under the same
@@ -97,7 +97,7 @@ internal fun InvoiceEditDialog(
             AuntieBanner(tone = AuntieBannerTone.Warning, title = "Money is locked") {
                 Text(
                     "A payment has already been recorded against this invoice, so its line items and " +
-                        "discounts cannot change. The number, dates, terms, household, client, address and " +
+                        "discounts cannot change. The number, dates, terms, household, Kinfolk, address and " +
                         "discount note can still be corrected.",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
@@ -158,7 +158,7 @@ internal fun InvoiceEditDialog(
         AuntieField(
             value = draft.client,
             onValueChange = { onChange(draft.copy(client = it)) },
-            label = "Client",
+            label = "Kinfolk",
             enabled = enabled,
             modifier = Modifier.fillMaxWidth(),
         )

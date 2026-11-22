@@ -264,7 +264,7 @@ internal enum class SettingsSection(
     KinCareTypes("KinCare types", "Names, lengths and prices the booking screen offers", Lucide.ListOrdered),
     BookingRules("Booking rules", "Time zone, booking modes, and bookable blocks", Lucide.CalendarClock),
     BusinessOperations("Business operations", "Booking modes, tracking, retention", Lucide.Building2),
-    Payments("Payments", "Handles clients pay you through", Lucide.Wallet),
+    Payments("Payments", "Handles Kinfolk pay you through", Lucide.Wallet),
     WeatherArea("Weather area", "Coverage area for the weather widgets", Lucide.CloudSun),
     BusinessHours("Business hours", "When the Den is open for visits", Lucide.CalendarClock),
     CalendarSync("Google Calendar sync", "Import busy events as private blocks", Lucide.RefreshCw),
@@ -881,7 +881,7 @@ private fun BusinessOperationsPanel(
             SettingsSavingCue(saving)
             AuntieSettingRow(
                 title = "Enable GPS Tracking for All Visits",
-                description = "Your operational standard for liability protection and client transparency.",
+                description = "Your operational standard for liability protection and household transparency.",
                 leadingIcon = Lucide.MapPin,
                 iconTone = AuntieStatusTone.Teal,
                 showDivider = true,

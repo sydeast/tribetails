@@ -9,6 +9,7 @@ import {
   listHouseholdMembers,
   listRecoveryCandidates,
   memberLabel,
+  memberSubject,
   memberStatusTone,
   permissionsFollowRole,
   type HouseholdInvite,
@@ -172,19 +173,30 @@ export function householdInitial(name: string): string {
 }
 
 /**
- * The mock's `.where` line under the household name: `familyId: fam_7Qk2 · 3
- * members · 1 PRIMARY, 2 SECONDARY`. Counts are by ROLE, which is what the
- * two panels below are split by, and they are only written once the roster
- * has been read: before that the line is the id alone, never "0 members".
+ * The line under the household name: "2 people · 1 primary, 1 secondary".
+ *
+ * #1844: the mock's line opened with `familyId: fam_7Qk2` and counted by stored
+ * role key. The settled rule wins over the mock: no field name, no id and no
+ * stored key on screen. The secondary count is the SAME number the Secondary
+ * kinfolk panel shows (portal members plus the people with no portal account),
+ * so the two can never disagree. Until both reads land the line is blank,
+ * never "0 secondary".
  */
-export function whereLine(kinfolkId: string, members: Async<HouseholdMember[]>): string {
-  const head = `familyId: ${kinfolkId}`;
-  if (members.status !== 'ready') return head;
-  const rows = members.data;
-  const primary = rows.filter((m) => m.role === 'PRIMARY').length;
-  const secondary = rows.length - primary;
-  const noun = rows.length === 1 ? 'member' : 'members';
-  return `${head} · ${rows.length} ${noun} · ${primary} PRIMARY, ${secondary} SECONDARY`;
+export function whereLine(primaryCount: number | null, secondaryCount: number | null): string {
+  if (primaryCount === null || secondaryCount === null) return '';
+  const people = primaryCount + secondaryCount;
+  return `${peopleCount(people)} · ${primaryCount} primary, ${secondaryCount} secondary`;
+}
+
+/** #1853: a permission in words for the toast, never its stored key ("billing_full"). */
+function permissionWords(key: PermissionKey): string {
+  const label = PERMISSION_META.find((p) => p.key === key)?.label ?? 'access';
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+/** "1 person", "3 people". */
+export function peopleCount(n: number): string {
+  return `${n} ${n === 1 ? 'person' : 'people'}`;
 }
 
 /** "Active" from ACTIVE. The mock's LED text is title case. */
@@ -314,7 +326,7 @@ export function HouseholdMembers({
     setPermError(null);
     try {
       await setMemberPermissions(kinfolkId, member.uid, { [key]: next });
-      showToast(`${next ? 'Granted' : 'Revoked'} ${key} for ${memberLabel(member)}.`);
+      showToast(`${next ? 'Granted' : 'Revoked'} ${permissionWords(key)} for ${memberLabel(member)}.`);
     } catch (err: unknown) {
       setMembers({ status: 'ready', data: prev });
       setPermError(
@@ -349,7 +361,7 @@ export function HouseholdMembers({
     setRemoveError(null);
     try {
       await removeMember(kinfolkId, target.uid);
-      showToast(`${memberLabel(target)} is suspended and signed out.`);
+      showToast(`${memberSubject(target)} is suspended and signed out.`);
       setRemoveTarget(null);
       loadMembers();
       // A removed SECONDARY's person record may have just gone back to 'NONE'.
@@ -400,7 +412,7 @@ export function HouseholdMembers({
         newEmail: recoveryChoice,
         oldUid: sittingPrimary.uid,
       });
-      showToast(`Claim link sent to ${recoveryChoice}. ${memberLabel(sittingPrimary)} is suspended.`);
+      showToast(`Claim link sent to ${recoveryChoice}. ${memberSubject(sittingPrimary)} is suspended.`);
       setRecoveryOpen(false);
       loadMembers();
       loadInvites();
@@ -419,8 +431,9 @@ export function HouseholdMembers({
     setRemoveTarget(member);
   }
 
-  // The mock's `.ct` on the Secondary kinfolk panel: "2 of role: SECONDARY".
-  // Written only from a read roster; a count is a claim.
+  // The count beside the Secondary kinfolk panel's title, "2 people" (#1853:
+  // the mock's "2 of role: SECONDARY" printed a stored key). Written only from
+  // a read roster; a count is a claim.
   // #1602: the people added here with no portal account count too. The walk
   // added one and the panel still read 0 with its empty sentence, after reload.
   const portalSecondaryCount =
@@ -430,7 +443,10 @@ export function HouseholdMembers({
       ? null
       : portalSecondaryCount + noPortalSecondaryCount;
   const inviteCount = invites.status === 'ready' ? invites.data.length : null;
-  const secondaryMeta = secondaryCount === null ? '' : `${secondaryCount} of role: SECONDARY`;
+  const secondaryMeta = secondaryCount === null ? '' : peopleCount(secondaryCount);
+  const primaryCount =
+    members.status === 'ready' ? members.data.filter((m) => m.role === 'PRIMARY').length : null;
+  const countsLine = whereLine(primaryCount, secondaryCount);
 
   return (
     <div className="screen hmembers">
@@ -498,7 +514,7 @@ export function HouseholdMembers({
             </div>
           }
         >
-          <p className="hmembers__where">{whereLine(kinfolkId, members)}</p>
+          {countsLine !== '' && <p className="hmembers__where">{countsLine}</p>}
         </DenScreenHeading>
       </div>
 
@@ -520,7 +536,6 @@ export function HouseholdMembers({
       <DenPanel
         className="d1"
         title="Primary contact"
-        meta="role: PRIMARY"
         subtitle="The household account owner. Held by role, not by setting: full billing, home access, kin edits and messaging come with being the primary, so there is nothing here to switch off. Swap primary suspends them and emails a claim link to a verified member you pick."
       >
         <AsyncRegion
@@ -642,9 +657,7 @@ export function HouseholdMembers({
                         so the section's accessible name stays the one word. */}
                     <div className="hmembers__group-head">
                       <h3 className="hmembers__group-title">{group.heading}</h3>
-                      <span className="hmembers__group-note">
-                        {group.statuses.join(' / ')} · {inGroup.length}
-                      </span>
+                      <span className="hmembers__group-note">{inGroup.length}</span>
                     </div>
                     <ul className="hmembers__list">
                       {inGroup.map((invite) => (
@@ -689,9 +702,9 @@ export function HouseholdMembers({
           }
         >
           <p>
-            {memberLabel(sittingPrimary)} will be suspended and signed out. The member you pick is
-            mailed a claim link that expires in {INVITE_TTL_DAYS} days, and holds every entitlement
-            on this household once they open it, billing included.
+            {memberSubject(sittingPrimary)} will be suspended and signed out. The member you pick
+            is emailed a claim link that expires in {INVITE_TTL_DAYS} days. Once they open it, they
+            have full access to this household, billing included.
           </p>
           <AsyncRegion
             state={recoveryCandidates}
@@ -768,7 +781,7 @@ export function HouseholdMembers({
           }
         >
           <p>
-            {memberLabel(removeTarget)} will be suspended on {householdName} and signed out of every
+            {memberSubject(removeTarget)} will be suspended on {householdName} and signed out of every
             device. This does not delete their record: the row stays in the list marked Suspended,
             and any invite they already accepted stays accepted.
           </p>
@@ -844,7 +857,7 @@ function MemberBlock({
             // Read-only. `updateMemberLabel` is PRIMARY-only on the server, so
             // the mock's input would be a control the admin cannot use.
             <span className="hmembers__labelwrap">
-              <span className="hmembers__labeled">secondaryLabel</span>
+              <span className="hmembers__labeled">Label</span>
               <span className="hmembers__labelval">{member.secondaryLabel}</span>
             </span>
           )}

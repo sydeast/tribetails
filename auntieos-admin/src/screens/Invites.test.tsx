@@ -220,7 +220,9 @@ describe('Invites', () => {
     // No wrapping panel: the sections sit on the ground, as the mock draws them.
     expect(container.querySelector('.den-panel')).toBeNull();
     const section = screen.getByRole('heading', { level: 2, name: 'Pending' }).closest('section')!;
-    expect(within(section).getByText('status: PENDING / EMAIL_SENT · 2')).toBeInTheDocument();
+    // #1853: the count alone beside the heading, never the stored status keys.
+    expect(within(section).getByText('2')).toHaveClass('invites__section-note');
+    expect(within(section).queryByText(/PENDING|EMAIL_SENT|status:/)).toBeNull();
     expect(within(section).getAllByRole('listitem')).toHaveLength(2);
     const row = within(section).getByText('jane@example.com').closest('li')!;
     expect(row).toHaveClass('invites__card');
@@ -403,12 +405,6 @@ describe('filterInvites', () => {
       'Accepted',
       'Expired',
       'Revoked',
-    ]);
-    expect(groupInvitesByStatus([]).map((s) => s.statusNote)).toEqual([
-      'status: PENDING / EMAIL_SENT',
-      'status: ACCEPTED',
-      'status: EXPIRED',
-      'status: REVOKED',
     ]);
   });
 
