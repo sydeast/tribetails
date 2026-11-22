@@ -215,7 +215,7 @@ private fun AboutCard(kin: Kin) {
                     kin.species?.takeIf { it.isNotBlank() }?.let { "SPECIES" to it },
                     kin.breed?.takeIf { it.isNotBlank() }?.let { "BREED" to it },
                     kin.ageYears?.let { "AGE" to kinAgeLabel(it) },
-                    kin.sex?.takeIf { it.isNotBlank() }?.let { "SEX" to it },
+                    kin.sex?.takeIf { it.isNotBlank() }?.let { KIN_GENDER_LABEL to it },
                     kin.weight?.takeIf { it.isNotBlank() }?.let { "WEIGHT" to it },
                     kin.colorMarkings?.takeIf { it.isNotBlank() }?.let { "MARKINGS" to it },
                     if (kin.spayedNeutered) "FIXED" to "Spayed / neutered" else null,

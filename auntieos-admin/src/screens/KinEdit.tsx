@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { getKin, type KinDetail } from '../api/kinView';
-import { updateKin, setKinArchived, type KinEditPatch } from '../api/directoryWrite';
+import { updateKin, setKinArchived, NEW_KIN_SEX_OPTIONS, type KinEditPatch } from '../api/directoryWrite';
 import { useBreedBanks } from '../api/breeds';
 import { breedBankNote, breedCatalogForSpecies } from '../lib/breedSearch';
 import { type Async } from '../lib/async';
@@ -39,7 +39,6 @@ const TEXT_FIELDS = [
   ['name', 'Name'],
   ['species', 'Species'],
   ['age', 'Age'],
-  ['sex', 'Sex'],
   ['weight', 'Weight'],
   ['colorMarkings', 'Color / markings'],
 ] as const;
@@ -349,6 +348,29 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                           </span>
                         )}
                       </label>
+                      {key === 'age' && (
+                        // #1852: the same "Gender" list Add kin offers. A stored
+                        // value outside the list ("M", "male") stays as its own
+                        // choice, so opening and saving never rewrites it.
+                        <label className="kedit__field">
+                          <span className="kedit__label">Gender</span>
+                          <select
+                            className="kedit__input"
+                            value={form.sex}
+                            onChange={(e) => set('sex', e.target.value)}
+                          >
+                            <option value="">Not set</option>
+                            {NEW_KIN_SEX_OPTIONS.map((o) => (
+                              <option key={o} value={o}>
+                                {o}
+                              </option>
+                            ))}
+                            {form.sex !== '' && !NEW_KIN_SEX_OPTIONS.includes(form.sex) && (
+                              <option value={form.sex}>{form.sex}</option>
+                            )}
+                          </select>
+                        </label>
+                      )}
                       {key === 'species' && (
                         // Rendered here rather than appended so Breed keeps its
                         // place beside the Species that chooses its bank.
