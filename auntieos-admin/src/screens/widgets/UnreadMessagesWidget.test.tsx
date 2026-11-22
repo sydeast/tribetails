@@ -58,6 +58,13 @@ describe('UnreadMessagesWidget', () => {
     expect(names).toEqual(['Newer', 'Older']);
   });
 
+  it('#1824: the panel title names Kinfolk, never "client"', async () => {
+    listConversations.mockResolvedValue([]);
+    render(<UnreadMessagesWidget />);
+    expect(await screen.findByText('Unread Kinfolk messages')).toBeInTheDocument();
+    expect(screen.queryByText(/client/i)).toBeNull();
+  });
+
   it('shows the caught-up empty state (not an error) when nothing is unread', async () => {
     listConversations.mockResolvedValue([conv({ unreadForAdmin: false })]);
     render(<UnreadMessagesWidget />);

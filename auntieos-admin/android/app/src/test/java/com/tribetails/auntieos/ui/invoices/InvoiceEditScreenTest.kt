@@ -87,7 +87,7 @@ class InvoiceEditScreenTest {
         // Unmerged: a field's label is merged into the field's own node, so it
         // is only matchable as text in the unmerged tree.
         // Matched inside the dialog body only: the detail screen behind it has
-        // its own CLIENT and ADDRESS rows.
+        // its own KINFOLK and ADDRESS rows.
         val body = hasScrollAction() and hasAnyDescendant(hasText("INVOICE NUMBER"))
         rule.onNode(body, useUnmergedTree = true).performScrollToNode(hasText(text))
         rule.onNode(hasText(text) and hasAnyAncestor(body), useUnmergedTree = true).assertIsDisplayed()
@@ -118,7 +118,7 @@ class InvoiceEditScreenTest {
         rule.onNodeWithText("Money is locked").assertIsDisplayed()
         rule.onNodeWithText("INVOICE NUMBER").assertIsDisplayed()
         // #1198: the four descriptive fields stay editable with the money locked.
-        for (label in listOf("HOUSEHOLD", "CLIENT", "ADDRESS", "DISCOUNT NOTE")) {
+        for (label in listOf("HOUSEHOLD", "KINFOLK", "ADDRESS", "DISCOUNT NOTE")) {
             scrollDialogTo(label)
         }
         // The line is on screen as text inside the dialog, with no field to type into.

@@ -301,7 +301,7 @@ private fun ShareFormBody(
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                 ) {
                     Text(
-                        text = "$expiresInDays Days",
+                        text = expiryDaysLabel(expiresInDays),
                         style = type.sansMeta.copy(color = c.primary, fontWeight = FontWeight.SemiBold),
                     )
                 }
@@ -662,3 +662,6 @@ private fun DaySlider(
         }
     }
 }
+
+/** #1900: the chip beside the expiry slider. "1 Day", never "1 Days". The same words as the web portal's ShareKinTaleDialog. */
+internal fun expiryDaysLabel(days: Int): String = if (days == 1) "1 Day" else "$days Days"

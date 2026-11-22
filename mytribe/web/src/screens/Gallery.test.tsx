@@ -36,17 +36,24 @@ vi.mock('@tanstack/react-router', () => ({
   Link: ({
     children,
     to,
+    search,
     title,
     className,
     'aria-label': ariaLabel,
   }: {
     children?: ReactNode;
     to?: string;
+    search?: Record<string, string>;
     title?: string;
     className?: string;
     'aria-label'?: string;
   }) => (
-    <a href={to} title={title} className={className} aria-label={ariaLabel}>
+    <a
+      href={search && Object.keys(search).length > 0 ? `${to}?${new URLSearchParams(search).toString()}` : to}
+      title={title}
+      className={className}
+      aria-label={ariaLabel}
+    >
       {children}
     </a>
   ),
@@ -117,6 +124,16 @@ describe('Gallery', () => {
     expect(images[0]?.getAttribute('alt')).toBe('Tale a');
   });
 
+  // #1911: a tile opened the KinTales feed on its newest tale, not the tale it came from.
+  it('links each tile to the KinTale it came from', async () => {
+    mocks.getMyKinPhotos.mockResolvedValue(page({ photos: [photo('a'), photo('b', { taleId: 'july-tale' })] }));
+    renderScreen();
+    const grid = await screen.findByTestId('gallery-grid');
+    const tiles = grid.querySelectorAll('a.gallery-tile');
+    expect(tiles).toHaveLength(2);
+    expect(tiles[0]?.getAttribute('href')).toBe('/kintales?tale=t-a');
+    expect(tiles[1]?.getAttribute('href')).toBe('/kintales?tale=july-tale');
+  });
   it('replaces a tile with the broken-photo glyph when its image fails to load (S9), never a dead browser glyph', async () => {
     mocks.getMyKinPhotos.mockResolvedValue(page({ photos: [photo('a')] }));
     renderScreen();
