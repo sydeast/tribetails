@@ -42,13 +42,13 @@ class MediaCellRenderTest {
         composeRule.setContent {
             AuntieOSTheme {
                 MediaThumbnail(
-                    mediaFile = media(profile = true, at = "2026-05-27T09:41:00Z", by = "jo@tribetails.com"),
+                    mediaFile = media(profile = true, at = "2026-05-27T09:41:00Z", by = "Jo"),
                     onDelete = {},
                 )
             }
         }
         composeRule.onNodeWithText("Profile").assertIsDisplayed()
-        composeRule.onNodeWithText("2026-05-27 · jo@tribetails.com").assertIsDisplayed()
+        composeRule.onNodeWithText("2026-05-27 · Jo").assertIsDisplayed()
     }
 
     @Test
@@ -69,14 +69,14 @@ class MediaCellRenderTest {
         composeRule.setContent {
             AuntieOSTheme {
                 MediaThumbnail(
-                    mediaFile = media(profile = false, at = "2026-05-27", by = "jo@tribetails.com"),
+                    mediaFile = media(profile = false, at = "2026-05-27", by = "Jo"),
                     onDelete = {},
                 )
             }
         }
         // Negative: the "Profile" badge must be ABSENT on a non-profile cell.
         composeRule.onAllNodesWithText("Profile").assertCountEquals(0)
-        composeRule.onNodeWithText("2026-05-27 · jo@tribetails.com").assertIsDisplayed()
+        composeRule.onNodeWithText("2026-05-27 · Jo").assertIsDisplayed()
     }
 
     // ── #802: video duration badge ───────────────────────────────────────────
