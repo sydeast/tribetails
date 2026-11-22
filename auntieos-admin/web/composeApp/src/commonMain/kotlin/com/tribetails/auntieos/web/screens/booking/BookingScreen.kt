@@ -1338,7 +1338,10 @@ private fun bookingDateLabel(b: KinCareSession): String {
         .ifBlank { b.completedAt }
         .ifBlank { b.departedAt }
         .ifBlank { b.createdAt }
-    return raw.take(10).ifBlank { "Date pending" }
+    // #1828: "Nov 10, 2026" on the business's calendar. `take(10)` of a UTC
+    // instant was the next day for a late evening visit.
+    return com.tribetails.auntieos.web.ui.AdminTime.storedDay(raw, com.tribetails.auntieos.web.util.businessTimeZone())
+        ?: com.tribetails.auntieos.web.ui.AdminTime.dayKeyLabel(raw.take(10)).ifBlank { "Date pending" }
 }
 
 

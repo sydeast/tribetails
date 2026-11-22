@@ -49,7 +49,7 @@ class FormSchemaUpdatedLabelTest {
     // ── formSchemaUpdatedLabel: the well-formed case ────────────────────────
 
     @Test fun `formats a real ISO instant as local MM-DD HH mm`() {
-        assertEquals("08-02 05:15", formSchemaUpdatedLabel("2026-08-02T10:15:00.000Z"))
+        assertEquals("Aug 2, 2026 05:15", formSchemaUpdatedLabel("2026-08-02T10:15:00.000Z"))
     }
 
     @Test fun `never leaks the raw machine timestamp`() {
@@ -62,11 +62,11 @@ class FormSchemaUpdatedLabelTest {
     @Test fun `shows the local calendar day, not the UTC one`() {
         // 01:00 UTC on the 17th is 20:00 on the 16th in Chicago. Slicing the raw
         // string (what KinTaleLogsScreen still does) would print the 17th.
-        assertEquals("07-16 20:00", formSchemaUpdatedLabel("2026-07-17T01:00:00.000Z"))
+        assertEquals("Jul 16, 2026 20:00", formSchemaUpdatedLabel("2026-07-17T01:00:00.000Z"))
     }
 
     @Test fun `zero-pads a single-digit month, day, hour and minute`() {
-        assertEquals("01-05 03:07", formSchemaUpdatedLabel("2026-01-05T09:07:00.000Z"))
+        assertEquals("Jan 5, 2026 03:07", formSchemaUpdatedLabel("2026-01-05T09:07:00.000Z"))
     }
 
     @Test fun `reads an explicit offset as the same instant`() {
@@ -77,11 +77,11 @@ class FormSchemaUpdatedLabelTest {
     }
 
     @Test fun `reads a designator-less local datetime as local, matching JS`() {
-        assertEquals("08-02 05:15", formSchemaUpdatedLabel("2026-08-02T05:15:00"))
+        assertEquals("Aug 2, 2026 05:15", formSchemaUpdatedLabel("2026-08-02T05:15:00"))
     }
 
     @Test fun `anchors a date-only value at UTC midnight, matching JS`() {
-        assertEquals("08-01 19:00", formSchemaUpdatedLabel("2026-08-02"))
+        assertEquals("Aug 1, 2026 19:00", formSchemaUpdatedLabel("2026-08-02"))
     }
 
     // ── formSchemaUpdatedLabel: the sad + negative cases ────────────────────
@@ -115,13 +115,13 @@ class FormSchemaUpdatedLabelTest {
 
     @Test fun `meta reads updated LABEL by WHO`() {
         assertEquals(
-            "updated 08-02 05:15 by e2e-admin",
+            "updated Aug 2, 2026 05:15 by e2e-admin",
             formSchemaUpdatedMeta("2026-08-02T10:15:00.000Z", "e2e-admin"),
         )
     }
 
     @Test fun `meta drops the by clause when updatedBy is blank`() {
-        assertEquals("updated 08-02 05:15", formSchemaUpdatedMeta("2026-08-02T10:15:00.000Z", "  "))
+        assertEquals("updated Aug 2, 2026 05:15", formSchemaUpdatedMeta("2026-08-02T10:15:00.000Z", "  "))
     }
 
     @Test fun `meta is honest when the whole pair is absent`() {

@@ -9,8 +9,8 @@ import java.util.Locale
 /** The `[2026-11-05T21:32:52Z]` stamp the office and field notes are written with. */
 private val NOTE_STAMP = Regex("""\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)]""")
 
-private val SAME_YEAR = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.US)
-private val OTHER_YEAR = DateTimeFormatter.ofPattern("MMM d, yyyy, h:mm a", Locale.US)
+private val SAME_YEAR = AdminTime.DATE_TIME
+private val OTHER_YEAR = AdminTime.DATE_TIME
 
 /**
  * The visit notes as the operator reads them (#1592, web's `readableVisitNotes`

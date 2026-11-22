@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.directory
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -628,8 +629,8 @@ fun KinfolkProfileScreen(
                             AuntieKeyValueRow(
                                 label = LocalServiceCatalog.current.nameOf(s.serviceType),
                                 value = businessDateTimeOf(s.startTime.trim(), businessTimeZone())
-                                    ?.let { "${it.date} ${it.hour.toString().padStart(2, '0')}:${it.minute.toString().padStart(2, '0')}" }
-                                    ?: s.startTime.take(16).replace('T', ' ').ifBlank { null },
+                                    ?.let { AdminTime.dateTime(it) }
+                                    ?: (AdminTime.dateTimeOfWallClock(s.startTime) ?: s.startTime.trim()).ifBlank { null },
                                 showDivider = i != ups.lastIndex,
                             )
                         }

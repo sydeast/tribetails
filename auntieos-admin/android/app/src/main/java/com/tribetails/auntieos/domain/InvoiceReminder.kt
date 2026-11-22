@@ -77,9 +77,8 @@ const val PAYMENT_CONFIRMATION_APP_ONLY_NOTE =
  * (#1599), in [zone] (the device's own zone unless a test pins one).
  */
 fun formatReminderTime(ms: Long, zone: TimeZone = TimeZone.getDefault(), nowMs: Long = System.currentTimeMillis()): String {
-    val year = SimpleDateFormat("yyyy", Locale.US).apply { timeZone = zone }
-    val pattern = if (year.format(Date(ms)) == year.format(Date(nowMs))) "MMM d, h:mm a" else "MMM d, yyyy, h:mm a"
-    return SimpleDateFormat(pattern, Locale.US).apply { timeZone = zone }.format(Date(ms))
+    // #1828: the admin day and 24-hour clock, always with the year; [nowMs] no longer changes it.
+    return SimpleDateFormat(AdminTime.DATE_TIME_PATTERN, Locale.US).apply { timeZone = zone }.format(Date(ms))
 }
 
 /** The toast or banner line after a press. */

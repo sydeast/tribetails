@@ -47,7 +47,7 @@ describe('commentTimeOf (AO-18: local, never a raw UTC slice)', () => {
 describe('commentWhen', () => {
   it('formats LOCAL "MM-DD HH:mm"', () => {
     const ms = Date.parse('2026-07-16T19:32:00.000Z'); // 14:32 CDT
-    expect(commentWhen(ms)).toBe('07-16 14:32');
+    expect(commentWhen(ms)).toBe('Jul 16, 2026 14:32');
   });
 
   it('falls back to "Date TBD", never "(no time)", for a missing/unparseable value', () => {

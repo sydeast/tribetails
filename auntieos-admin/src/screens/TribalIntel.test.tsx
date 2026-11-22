@@ -116,7 +116,7 @@ describe('TribalIntel screen', () => {
       data: [entry({ uploadedAt: '2026-07-17T01:00:00.000Z' })],
     });
     render(<TribalIntel />);
-    expect(screen.getByText('07-16 20:00')).toBeInTheDocument();
+    expect(screen.getByText('Jul 16, 2026 20:00')).toBeInTheDocument();
     expect(screen.queryByText('2026-07-17T01:00:00.000Z')).toBeNull();
   });
 

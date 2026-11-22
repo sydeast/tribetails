@@ -184,11 +184,11 @@ describe('buildRescheduleTimes', () => {
 
 describe('bookingWhenLabel', () => {
   it('renders the viewer clock, not the stored UTC hour, when no business zone is given', () => {
-    // 01:00Z on the 17th is 6:00 PM on the 16th on the LA device.
-    expect(bookingWhenLabel('2026-07-17T01:00:00.000Z')).toBe('Thu, Jul 16 at 6:00 PM');
+    // 01:00Z on the 17th is 18:00 on the 16th on the LA device.
+    expect(bookingWhenLabel('2026-07-17T01:00:00.000Z')).toBe('Thu, Jul 16, 2026 18:00');
   });
   it('renders the business clock when the zone is given, whatever the device zone', () => {
-    expect(bookingWhenLabel('2026-07-17T01:00:00.000Z', BIZ)).toBe('Thu, Jul 16 at 8:00 PM');
+    expect(bookingWhenLabel('2026-07-17T01:00:00.000Z', BIZ)).toBe('Thu, Jul 16, 2026 20:00');
   });
 
   it('says the time is not set rather than inventing one', () => {

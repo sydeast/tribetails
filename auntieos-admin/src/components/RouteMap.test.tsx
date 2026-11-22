@@ -183,7 +183,7 @@ describe('RouteMap without a token', () => {
       />,
     );
     expect(getByText('Completed in 1:04')).toBeInTheDocument();
-    expect(getByText('Arrived at 12:05pm - Departed at 1:09pm - 0.1 miles')).toBeInTheDocument();
+    expect(getByText('Arrived at 12:05 - Departed at 13:09 - 0.1 miles')).toBeInTheDocument();
   });
 
   it('still shows the distance, duration and ping statistics', () => {
@@ -356,7 +356,7 @@ describe('RouteMap with a token', () => {
       />,
     );
     expect(getByText('Completed in 0:33')).toBeInTheDocument();
-    expect(getByText('Arrived at 9:01am - Departed at 9:34am - 1.0 miles')).toBeInTheDocument();
+    expect(getByText('Arrived at 09:01 - Departed at 09:34 - 1.0 miles')).toBeInTheDocument();
   });
 });
 

@@ -181,7 +181,7 @@ describe('Notifications screen', () => {
   it('renders streamed rows grouped by day, with the title and the category in words', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Notifications />);
-    expect(screen.getByText('2026-07-16')).toBeInTheDocument();
+    expect(screen.getByText('Jul 16, 2026')).toBeInTheDocument();
     // #1592: a row with no title reads its key as words, never the key itself.
     expect(screen.getByText('KinCare booking confirm')).toBeInTheDocument();
     expect(screen.queryByText('kincare.booking.confirm')).toBeNull();
@@ -474,7 +474,7 @@ describe('Notifications feed context (issue #20)', () => {
     });
     render(<Notifications />);
     const days = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
-    expect(days).toEqual(['2026-07-16', '2026-07-15']);
+    expect(days).toEqual(['Jul 16, 2026', 'Jul 15, 2026']);
   });
 
   it('filters the feed by category chip, and says so when nothing matches', async () => {

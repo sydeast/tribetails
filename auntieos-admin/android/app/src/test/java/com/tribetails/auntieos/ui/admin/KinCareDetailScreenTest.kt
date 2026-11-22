@@ -308,7 +308,7 @@ class KinCareDetailScreenTest {
         // 9:30a · the Wrens". The household is also the top bar's title and
         // the trail's last step, hence "first".
         rule.onAllNodesWithText("Dog walk").onFirst().assertIsDisplayed()
-        rule.onNodeWithText("Aug 19 · 14:00 - 14:30 · The Wrens").assertIsDisplayed()
+        rule.onNodeWithText("Aug 19, 2026 14:00 - 14:30 · The Wrens").assertIsDisplayed()
         rule.onAllNodesWithText("The Wrens").onFirst().assertIsDisplayed()
         // The status pill hangs off the hero, and the lifecycle stepper draws
         // every node whatever the record holds.

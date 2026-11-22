@@ -55,11 +55,11 @@ class NotificationSchedulePanelTest {
 
     @Test
     fun `hours read as a person would say them`() {
-        assertEquals("12:00 AM", notificationHourLabel(0))
-        assertEquals("9:00 AM", notificationHourLabel(9))
-        assertEquals("12:00 PM", notificationHourLabel(12))
-        assertEquals("1:00 PM", notificationHourLabel(13))
-        assertEquals("11:00 PM", notificationHourLabel(23))
+        assertEquals("00:00", notificationHourLabel(0))
+        assertEquals("09:00", notificationHourLabel(9))
+        assertEquals("12:00", notificationHourLabel(12))
+        assertEquals("13:00", notificationHourLabel(13))
+        assertEquals("23:00", notificationHourLabel(23))
     }
 
     /**
@@ -130,11 +130,11 @@ class NotificationSchedulePanelTest {
             notificationScheduleDetail(live = true, hour = null, zone = "America/Chicago"),
         )
         assertEquals(
-            "Notices to households: off · Invoice reminders: 2:00 PM · Times are in America/Chicago",
+            "Notices to households: off · Invoice reminders: 14:00 · Times are in America/Chicago",
             notificationScheduleDetail(live = false, hour = 14, zone = "America/Chicago"),
         )
         assertEquals(
-            "Notices to households: on · Invoice reminders: 12:00 AM · Times are in America/Chicago",
+            "Notices to households: on · Invoice reminders: 00:00 · Times are in America/Chicago",
             notificationScheduleDetail(live = true, hour = 0, zone = "America/Chicago"),
         )
     }

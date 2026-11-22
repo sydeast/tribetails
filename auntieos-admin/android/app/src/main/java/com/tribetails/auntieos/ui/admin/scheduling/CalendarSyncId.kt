@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import com.tribetails.auntieos.domain.AdminTime
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -105,7 +106,7 @@ fun calendarSyncRunFrom(
     )
 }
 
-private val RUN_STAMP_FORMAT = DateTimeFormatter.ofPattern("MM-dd HH:mm")
+private val RUN_STAMP_FORMAT = AdminTime.DATE_TIME
 
 /**
  * ONE line describing what the last run did, in LOCAL time, matching the React

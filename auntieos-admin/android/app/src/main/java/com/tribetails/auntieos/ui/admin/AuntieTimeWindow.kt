@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.data.model.visitStatusCode
@@ -212,23 +213,16 @@ internal fun auntieTimeIdentityLine(
         .joinToString(" · ")
 }
 
-private val MONTHS =
-    listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
 /**
- * "Jul 16 · 14:00", and "Jan 16, 2025 · 14:00" once the year is not [todayIso]'s.
- *
- * Without the year a visit from last January read exactly like this January,
- * which is the one thing a dated label must never be ambiguous about. Omitted
- * in the current year so the common case stays short.
+ * "Jul 16, 2026 14:00" (#1828: the admin day and 24-hour clock, always with the
+ * year; [todayIso] no longer changes it).
  */
+@Suppress("UNUSED_PARAMETER")
 internal fun auntieTimeDate(iso: String, todayIso: String, zone: ZoneId = businessZone(null)): String {
     // #2036: the day and the clock are the business's. An instant used to be
     // printed as its own characters, which is the UTC day and hour.
     val at = businessLocalOf(iso, zone) ?: return iso
-    val month = MONTHS[at.monthValue - 1]
-    val yearSuffix = if (at.year.toString().padStart(4, '0') == todayIso.take(4)) "" else ", ${at.year}"
-    return "$month ${at.dayOfMonth}$yearSuffix · ${clockOf(at)}"
+    return AdminTime.DATE_TIME.format(at)
 }
 
 internal fun auntieTimeClock(iso: String, zone: ZoneId = businessZone(null)): String =

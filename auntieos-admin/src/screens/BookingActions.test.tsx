@@ -126,7 +126,7 @@ describe('BookingActions: detail view', () => {
     );
     expect(screen.getByText(/the whitfields · booking/i)).toBeInTheDocument();
     expect(screen.getByText('Dog Walking')).toBeInTheDocument();
-    expect(screen.getByText(/Jul 16, 9:00 AM/)).toBeInTheDocument();
+    expect(screen.getByText(/Jul 16, 2026 09:00/)).toBeInTheDocument();
     expect(screen.getByText('Leave the gate latched.')).toBeInTheDocument();
     expect(screen.getByText('SCHEDULED')).toBeInTheDocument();
   });

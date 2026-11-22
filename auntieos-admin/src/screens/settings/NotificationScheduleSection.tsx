@@ -1,3 +1,4 @@
+import { formatHHmm } from '../../lib/time';
 import { useState } from 'react';
 import type { BusinessSettings } from '../../api/settings';
 import { DenPanel, InfoTip } from '../../components/DenScreenKit';
@@ -72,14 +73,11 @@ export function hourFieldNumber(value: string): number | null {
 }
 
 /**
- * "9:00 AM" for 9. Twelve-hour with a meridiem because the operator reads this,
- * not a machine, and "13:00" is a needless translation on a US business's
- * settings screen. The stored value is the integer either way.
+ * "09:00" for 9: the admin's 24-hour clock (#1828, owner ruling 2026-11-12).
+ * The stored value is the integer either way.
  */
 export function hourLabel(hour: number): string {
-  const meridiem = hour < 12 ? 'AM' : 'PM';
-  const twelve = hour % 12 === 0 ? 12 : hour % 12;
-  return `${twelve}:00 ${meridiem}`;
+  return formatHHmm(hour, 0);
 }
 
 /** The 24 choices, plus the "not scheduled" one that comes first. */

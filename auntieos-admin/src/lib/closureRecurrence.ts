@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { dayKeyLabel } from './time';
 
 /**
  * WEB MIRROR of `mytribe/functions/src/lib/closureRecurrence.ts`, the
@@ -280,11 +281,11 @@ const MONTH_NAMES = [
 const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const NTH_WORDS = ['', '1st', '2nd', '3rd', '4th'];
 
-/** "Every year, Jul 4" / "Every year, 4th Thursday of November" / "Every year, last Monday of May", or the bare `YYYY-MM-DD` for a `once` entry. */
+/** "Every year, Jul 4" / "Every year, 4th Thursday of November" / "Every year, last Monday of May", or "Dec 16, 2026" for a `once` entry (#1828, never the stored `YYYY-MM-DD`). */
 export function describeClosureRecurrence(entry: ClosureEntry): string {
   switch (entry.recurrence) {
     case 'once':
-      return entry.date;
+      return dayKeyLabel(entry.date);
     case 'yearly-fixed':
       return `Every year, ${MONTH_NAMES[entry.month - 1] ?? '?'} ${entry.day}`;
     case 'yearly-nth-weekday':

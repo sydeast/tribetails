@@ -313,8 +313,8 @@ describe('ScheduleWeekGrid', () => {
       session({ _id: 'late', startTime: bizIso(18, 30), endTime: bizIso(19, 0) }),
     ]);
     const labels = Array.from(document.querySelectorAll('.schedule-grid__time')).map((el) => el.textContent);
-    expect(labels[0]).toBe('6a');
-    expect(labels[labels.length - 1]).toBe('6p');
+    expect(labels[0]).toBe('06:00');
+    expect(labels[labels.length - 1]).toBe('18:00');
     expect(document.querySelector('[data-session-id="early"]')).not.toBeNull();
     const late = document.querySelector('[data-session-id="late"]') as HTMLElement;
     expect(late).not.toBeNull();
@@ -327,7 +327,7 @@ describe('ScheduleWeekGrid', () => {
     renderGrid([session()]);
     const labels = Array.from(document.querySelectorAll('.schedule-grid__time')).map((el) => el.textContent);
     expect(labels).toHaveLength(10);
-    expect(labels[0]).toBe('8a');
+    expect(labels[0]).toBe('08:00');
   });
 
   /** #1606: a half-hour block names its household beside the time, not below it where it was cut off. */

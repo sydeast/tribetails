@@ -18,8 +18,8 @@ class KinTaleSortDateTest {
     private fun ids(rows: List<KinCareReport>) = rows.map { it._id }
     @Test
     fun `free text row shows its date and time`() {
-        assertEquals("Sep 3, 2025 · 14:02", kinTaleShortDateTime("September 3, 2025 2:02pm", 2026))
-        assertEquals("Apr 10 · 09:00", kinTaleShortDateTime("April 10, 2026 9am", 2026))
+        assertEquals("Sep 3, 2025 14:02", kinTaleShortDateTime("September 3, 2025 2:02pm", 2026))
+        assertEquals("Apr 10, 2026 09:00", kinTaleShortDateTime("April 10, 2026 9am", 2026))
     }
     @Test
     fun `ISO and free text parse to the same instant scale`() {

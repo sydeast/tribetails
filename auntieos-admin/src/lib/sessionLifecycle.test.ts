@@ -227,14 +227,14 @@ describe("#1592: visit notes and saves read in the operator's words", () => {
 
   it('shows a stored stamp as a business-zone time, and leaves the stored text alone', () => {
     const stored = '[2026-11-05T21:32:52Z] (office) Gate code changed';
-    expect(readableVisitNotes(stored, 'America/Chicago', NOW)).toBe('[Nov 5, 3:32 PM] (office) Gate code changed');
+    expect(readableVisitNotes(stored, 'America/Chicago', NOW)).toBe('[Nov 5, 2026 15:32] (office) Gate code changed');
     expect(stored).toContain('2026-11-05T21:32:52Z');
   });
 
   it('adds the year to a stamp from another year, and reads every stamp in the notes', () => {
     const stored = '[2026-11-05T21:32:52Z] (office) b\n[2025-03-01T15:00:00Z] (field) a';
     expect(readableVisitNotes(stored, 'America/Chicago', NOW)).toBe(
-      '[Nov 5, 3:32 PM] (office) b\n[Mar 1, 2025, 9:00 AM] (field) a',
+      '[Nov 5, 2026 15:32] (office) b\n[Mar 1, 2025 09:00] (field) a',
     );
   });
 

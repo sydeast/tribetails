@@ -236,8 +236,8 @@ class AuntieTimeWindowTest {
     @Test
     fun `a blank part drops out instead of leaving a stranded separator`() {
         assertEquals(
-            "Dog Walk · Jul 16 · 14:00 to 15:00",
-            auntieTimeIdentityLine("Dog Walk", emptyList(), "Jul 16 · 14:00 to 15:00", null),
+            "Dog Walk · Jul 16, 2026 14:00 to 15:00",
+            auntieTimeIdentityLine("Dog Walk", emptyList(), "Jul 16, 2026 14:00 to 15:00", null),
         )
         assertEquals(
             "Pepper · 10:30",
@@ -248,8 +248,8 @@ class AuntieTimeWindowTest {
     @Test
     fun `the time block rides last, as the mock writes "Evening block"`() {
         assertEquals(
-            "Overnight · Clover & Sage · Jul 16 · 18:00 to 08:00 · Evening block",
-            auntieTimeIdentityLine("Overnight", listOf("Clover", "Sage"), "Jul 16 · 18:00 to 08:00", "Evening"),
+            "Overnight · Clover & Sage · Jul 16, 2026 18:00 to 08:00 · Evening block",
+            auntieTimeIdentityLine("Overnight", listOf("Clover", "Sage"), "Jul 16, 2026 18:00 to 08:00", "Evening"),
         )
     }
 
@@ -259,15 +259,15 @@ class AuntieTimeWindowTest {
     fun `the year shows once the visit is not in the current year`() {
         // #2036: a zone-less time is the business's wall clock and prints as written;
         // an instant prints on the business's clock (14:00Z is 08:00 in Chicago in January).
-        assertEquals("Jan 16, 2025 · 14:00", auntieTimeDate("2025-01-16T14:00:00", today))
-        assertEquals("Jan 16, 2025 · 08:00", auntieTimeDate("2025-01-16T14:00:00Z", today))
-        assertEquals("Mar 2, 2027 · 09:30", auntieTimeDate("2027-03-02T09:30:00", today))
+        assertEquals("Jan 16, 2025 14:00", auntieTimeDate("2025-01-16T14:00:00", today))
+        assertEquals("Jan 16, 2025 08:00", auntieTimeDate("2025-01-16T14:00:00Z", today))
+        assertEquals("Mar 2, 2027 09:30", auntieTimeDate("2027-03-02T09:30:00", today))
     }
 
     @Test
-    fun `the year is omitted in the current year, so the common case stays short`() {
-        assertEquals("Jul 16 · 14:00", auntieTimeDate("2026-07-16T14:00:00", today))
-        assertEquals("Jul 16 · 09:00", auntieTimeDate("2026-07-16T14:00:00Z", today))
+    fun `the current year is written too (#1828)`() {
+        assertEquals("Jul 16, 2026 14:00", auntieTimeDate("2026-07-16T14:00:00", today))
+        assertEquals("Jul 16, 2026 09:00", auntieTimeDate("2026-07-16T14:00:00Z", today))
     }
 
     @Test
@@ -278,7 +278,7 @@ class AuntieTimeWindowTest {
     @Test
     fun `the session window carries the year through to the row label`() {
         val s = session(startTime = "2025-01-16T14:00:00").apply { endTime = "2025-01-16T15:30:00" }
-        assertEquals("Jan 16, 2025 · 14:00 to 15:30", sessionWindow(s, today))
+        assertEquals("Jan 16, 2025 14:00 to 15:30", sessionWindow(s, today))
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.communicate
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import androidx.compose.foundation.background
@@ -166,5 +167,5 @@ fun MessageBubble(message: MessageEvent) {
 }
 
 private fun formatTime(millis: Long): String {
-    return SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(millis))
+    return SimpleDateFormat(AdminTime.CLOCK_PATTERN, Locale.US).format(Date(millis))
 }

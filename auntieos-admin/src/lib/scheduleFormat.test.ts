@@ -12,7 +12,7 @@ import {
   busySlotKind,
   groupBlockedSlotsByDate,
   isValidHHmm,
-  formatHHmm12h,
+  formatHHmmClock,
   busyWindowLabel,
   distinctServiceTypes,
 } from './scheduleFormat';
@@ -204,7 +204,7 @@ describe('groupBlockedSlotsByDate', () => {
   });
 });
 
-describe('isValidHHmm / formatHHmm12h', () => {
+describe('isValidHHmm / formatHHmmClock', () => {
   it('accepts a valid 24h HH:mm', () => {
     expect(isValidHHmm('08:00')).toBe(true);
     expect(isValidHHmm('23:59')).toBe(true);
@@ -218,14 +218,14 @@ describe('isValidHHmm / formatHHmm12h', () => {
   });
 
   it('formats morning, noon, and evening correctly', () => {
-    expect(formatHHmm12h('08:00')).toBe('8:00 AM');
-    expect(formatHHmm12h('12:00')).toBe('12:00 PM');
-    expect(formatHHmm12h('00:00')).toBe('12:00 AM');
-    expect(formatHHmm12h('23:30')).toBe('11:30 PM');
+    expect(formatHHmmClock('08:00')).toBe('08:00');
+    expect(formatHHmmClock('12:00')).toBe('12:00');
+    expect(formatHHmmClock('00:00')).toBe('00:00');
+    expect(formatHHmmClock('23:30')).toBe('23:30');
   });
 
   it('returns null (not a guess) for an unparseable value', () => {
-    expect(formatHHmm12h('not-a-time')).toBeNull();
+    expect(formatHHmmClock('not-a-time')).toBeNull();
   });
 });
 
@@ -235,15 +235,15 @@ describe('busyWindowLabel', () => {
   });
 
   it('shows just the start when only the end is unparseable', () => {
-    expect(busyWindowLabel('08:00', '')).toBe('8:00 AM');
+    expect(busyWindowLabel('08:00', '')).toBe('08:00');
   });
 
   it('shows just the end when only the start is unparseable', () => {
-    expect(busyWindowLabel('', '09:00')).toBe('9:00 AM');
+    expect(busyWindowLabel('', '09:00')).toBe('09:00');
   });
 
   it('shows the full window when both ends parse', () => {
-    expect(busyWindowLabel('08:00', '09:30')).toBe('8:00 AM to 9:30 AM');
+    expect(busyWindowLabel('08:00', '09:30')).toBe('08:00 to 09:30');
   });
 });
 
