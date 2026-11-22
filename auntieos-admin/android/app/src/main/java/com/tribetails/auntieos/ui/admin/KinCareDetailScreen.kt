@@ -294,7 +294,7 @@ fun KinCareDetailScreen(
 
             item {
                 DenScreenHeading(
-                    kicker = "Care Ops · Auntie Time",
+                    kicker = railKicker(RailScreen.AUNTIE_TIME),
                     // The crumb IS the way back, the same trail the web detail
                     // draws: the rail's name for the board, then the Kin.
                     crumbs = listOf(

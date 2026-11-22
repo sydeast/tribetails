@@ -140,7 +140,7 @@ fun InboxScreen(
             ) {
                 item {
                     DenScreenHeading(
-                        kicker   = "The Den · Inbox",
+                        kicker   = railKicker(RailScreen.INBOX),
                         title    = "Inbox",
                         // Operator-facing UI chrome (no kinfolk-facing copy).
                         subtitle = "Voicemails, calls, SMS, and emails, everywhere kinfolk reach out.",

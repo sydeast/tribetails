@@ -67,7 +67,7 @@ describe('templates (real callables)', () => {
     });
     cy.get('[role="menu"]').within(() => {
       cy.contains('[role="menuitem"]', 'Manage assignments').should('exist');
-      cy.contains('[role="menuitem"]', 'Import from repo').should('exist');
+      cy.contains('[role="menuitem"]', 'Template Import').should('exist');
       cy.contains('[role="menuitem"]', 'New binding').should('exist');
     });
     cy.focused().type('{esc}');

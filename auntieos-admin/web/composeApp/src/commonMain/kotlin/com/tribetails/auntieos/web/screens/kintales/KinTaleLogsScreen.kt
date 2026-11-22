@@ -91,10 +91,13 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
+import com.tribetails.auntieos.web.ui.components.AuntieInfoTip
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 private enum class Bucket(val label: String) {
     Drafts ("Drafts"),
@@ -176,7 +179,7 @@ fun KinTaleLogsScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · KinTales",
+            kicker     = navKicker(Destination.KinTales),
             title      = "KinTales",
             subtitle   = "Every recap that goes home to a Kinfolk after care",
             trailing   = {
@@ -202,11 +205,8 @@ fun KinTaleLogsScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(6.dp))
-        Text(
-            text  = "Filters the KinTales loaded here, not the full archive.",
-            style = AuntieTheme.typography.labelSmall,
-            color = AuntieTheme.colors.textFaint,
-        )
+        // #1827: what the search reaches is guidance, an info tip, not a line under the field.
+        AuntieInfoTip("Filters the KinTales loaded here, not the full archive.")
         Spacer(Modifier.height(12.dp))
         // KT1: operator-chosen ordering so the Sent bucket can be organized, not just
         // an ever-growing newest-first scroll. Applied before bucketing below.
@@ -1025,7 +1025,10 @@ private fun bucketFor(r: KinCareReport): Bucket = when (r.status.uppercase()) {
  * above every ISO row, so this is epoch milliseconds, null when unreadable.
  */
 internal fun sortMillis(r: KinCareReport): Long? = kinTaleSortMillis(
-    sequenceOf(r.sentAt, r.updatedAt, r.visitDate, r.createdAt).firstOrNull { it.isNotBlank() },
+    // #1856: the same fields, in the same order, as the row's date label.
+    // Sorting on sentAt / updatedAt first put rows out of the order their
+    // labels read.
+    sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt).firstOrNull { it.isNotBlank() },
 )
 
 // KT1: operator-chosen ordering for the KinTales list (organizes the Sent bucket).

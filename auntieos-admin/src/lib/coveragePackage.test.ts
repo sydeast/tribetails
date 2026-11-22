@@ -331,11 +331,13 @@ describe('quoteText', () => {
 
   it('renders a client-facing per-day quote', () => {
     const text = quoteText({ clientName: 'Rex', startDate: '2026-07-01', days: 2, priced });
-    expect(text).toContain('TribeTails — Coverage Package');
+    expect(text).toContain('TribeTails Coverage Package');
     expect(text).toContain('Prepared for: Rex');
     expect(text).toContain('Balance · 2 days');
     expect(text).toContain('Lunch (45-min visit)');
     expect(text).toContain('Total');
+    // #1859: the quote goes to the household, and no copy carries an em dash.
+    expect(text).not.toContain('\u2014');
   });
 });
 

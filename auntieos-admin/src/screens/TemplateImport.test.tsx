@@ -66,7 +66,7 @@ describe('TemplateImport: the plan is shown before anything is written', () => {
     planSeedTemplateImport.mockResolvedValue(report());
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
 
-    expect(await screen.findByText('kincare.reschedule.requested')).toBeInTheDocument();
+    expect(await screen.findByText('KinCare reschedule requested')).toBeInTheDocument();
     expect(screen.getByTestId('summary-kincare.reschedule.requested')).toHaveTextContent('New');
     expect(screen.getAllByText('create')).toHaveLength(3);
   });
@@ -87,7 +87,7 @@ describe('TemplateImport: overwriting is a per-template choice', () => {
         templateId: 'kincare.reschedule.requested',
         aliasOf: null,
         channels: [
-          channel('email', 'skipped', ['The stored email copy differs from the repo copy.']),
+          channel('email', 'skipped', ['The stored email copy differs from the built-in copy.']),
           channel('sms', 'create'),
           channel('push', 'create'),
         ],
@@ -102,9 +102,9 @@ describe('TemplateImport: overwriting is a per-template choice', () => {
     planSeedTemplateImport.mockResolvedValue(differing);
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
 
-    expect(await screen.findByText(/Some stored templates differ from the repo/)).toBeInTheDocument();
+    expect(await screen.findByText(/Some stored templates differ from the built-in copies/)).toBeInTheDocument();
     expect(
-      screen.getByLabelText('Replace the stored copy of kincare.reschedule.requested'),
+      screen.getByLabelText('Replace the stored copy of KinCare reschedule requested'),
     ).toBeInTheDocument();
   });
 
@@ -124,7 +124,7 @@ describe('TemplateImport: overwriting is a per-template choice', () => {
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
 
     await userEvent.click(
-      await screen.findByLabelText('Replace the stored copy of kincare.reschedule.requested'),
+      await screen.findByLabelText('Replace the stored copy of KinCare reschedule requested'),
     );
     await userEvent.click(screen.getByRole('button', { name: /Import 3 documents/ }));
 
@@ -156,7 +156,7 @@ describe('TemplateImport: overwriting is a per-template choice', () => {
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
 
     expect(await screen.findByTestId('summary-invoice.new')).toHaveTextContent(
-      'Already matches the repo',
+      'Already matches the built-in copy',
     );
     expect(screen.queryByLabelText(/Replace the stored copy/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Import 0 documents/ })).toBeDisabled();
@@ -270,7 +270,7 @@ describe('TemplateImport: after a successful run', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Import 3 documents/ }));
 
     await waitFor(() =>
-      expect(onImported).toHaveBeenCalledWith('Imported 3 template documents from the repo.'),
+      expect(onImported).toHaveBeenCalledWith('Imported 3 template documents from the built-in set.'),
     );
     expect(await screen.findByText('Wrote 3 documents.')).toBeInTheDocument();
   });
@@ -281,7 +281,7 @@ describe('TemplateImport: tick all (#1060)', () => {
     aliasOf: null,
     channels: [
       channel('email', 'skipped', [
-        'The stored email copy differs from the repo copy. Your stored copy stays as it is. Tick this template to replace it with the repo wording.',
+        'The stored email copy differs from the built-in copy. Your stored copy stays as it is. Tick this template to replace it with the built-in wording.',
       ]),
       channel('sms', 'create'),
       channel('push', 'unchanged'),
@@ -326,9 +326,9 @@ describe('TemplateImport: tick all (#1060)', () => {
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Tick all' }));
     expect(screen.getByTestId('tick-count')).toHaveTextContent('2 of 2 ticked');
-    expect(screen.getByLabelText('Replace the stored copy of invoice.new')).toBeChecked();
-    expect(screen.getByLabelText('Replace the stored copy of visit.reminder')).toBeChecked();
-    expect(screen.queryByLabelText('Replace the stored copy of kincare.booking.confirm')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Replace the stored copy of Invoice new')).toBeChecked();
+    expect(screen.getByLabelText('Replace the stored copy of Visit reminder')).toBeChecked();
+    expect(screen.queryByLabelText('Replace the stored copy of KinCare booking confirm')).not.toBeInTheDocument();
     expect(importSeedTemplates).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Untick all' })).toBeInTheDocument();
   });
@@ -346,13 +346,13 @@ describe('TemplateImport: tick all (#1060)', () => {
   it('Untick all clears every tick, and a partial tick offers Tick all', async () => {
     planSeedTemplateImport.mockResolvedValue(mixed);
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
-    await userEvent.click(await screen.findByLabelText('Replace the stored copy of invoice.new'));
+    await userEvent.click(await screen.findByLabelText('Replace the stored copy of Invoice new'));
     expect(screen.getByTestId('tick-count')).toHaveTextContent('1 of 2 ticked');
     expect(screen.getByRole('button', { name: 'Tick all' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Tick all' }));
     await userEvent.click(screen.getByRole('button', { name: 'Untick all' }));
     expect(screen.getByTestId('tick-count')).toHaveTextContent('0 of 2 ticked');
-    expect(screen.getByLabelText('Replace the stored copy of invoice.new')).not.toBeChecked();
+    expect(screen.getByLabelText('Replace the stored copy of Invoice new')).not.toBeChecked();
   });
   it('shows no tick-all control when no row can be ticked', async () => {
     planSeedTemplateImport.mockResolvedValue(report());
@@ -367,7 +367,7 @@ describe('TemplateImport: tick all (#1060)', () => {
     expect(await screen.findAllByText(/Your stored copy stays as it is/)).toHaveLength(2);
     await userEvent.click(screen.getByRole('button', { name: 'Tick all' }));
     expect(screen.queryByText(/Your stored copy stays as it is/)).not.toBeInTheDocument();
-    expect(screen.getAllByText(/Importing replaces your stored copy with the repo wording/)).toHaveLength(2);
+    expect(screen.getAllByText(/Importing replaces your stored copy with the built-in wording/)).toHaveLength(2);
     expect(screen.getByTestId('summary-invoice.new')).toHaveTextContent('Differs, selected for overwrite');
   });
 
@@ -406,7 +406,7 @@ describe('TemplateImport: both wordings, before the tick (#1936)', () => {
           {
             channel: 'sms',
             outcome: 'skipped',
-            notes: ['The stored sms copy differs from the repo copy.'],
+            notes: ['The stored sms copy differs from the built-in copy.'],
             differences: [
               { field: 'text', label: 'Text message', stored: 'Sorry, we cannot make that visit.', repo: '{{business}}: we cannot make that visit.' },
             ],
@@ -426,14 +426,14 @@ describe('TemplateImport: both wordings, before the tick (#1936)', () => {
     expect(compare).toHaveTextContent('Text message');
     expect(compare).toHaveTextContent('Your stored copySorry, we cannot make that visit.');
     expect(compare).toHaveTextContent('Repo copy{{business}}: we cannot make that visit.');
-    const tick = screen.getByLabelText('Replace the stored copy of kincare.request.declined');
+    const tick = screen.getByLabelText('Replace the stored copy of KinCare request declined');
     // Document order: the comparison comes before the box it informs.
     expect(compare.compareDocumentPosition(tick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
   it('keeps the comparison on screen once the row is ticked', async () => {
     planSeedTemplateImport.mockResolvedValue(smsDiffers);
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
-    await userEvent.click(await screen.findByLabelText('Replace the stored copy of kincare.request.declined'));
+    await userEvent.click(await screen.findByLabelText('Replace the stored copy of KinCare request declined'));
     expect(screen.getByTestId('compare-kincare.request.declined-sms')).toHaveTextContent('Sorry, we cannot make that visit.');
   });
   it('says the wordings could not be shown when the server sent none, never a blank comparison', async () => {
@@ -443,7 +443,7 @@ describe('TemplateImport: both wordings, before the tick (#1936)', () => {
           {
             templateId: 'kincare.request.declined',
             aliasOf: null,
-            channels: [channel('email', 'skipped', ['The stored email copy differs from the repo copy.'])],
+            channels: [channel('email', 'skipped', ['The stored email copy differs from the built-in copy.'])],
             differsFromRepo: true,
             blocked: false,
           },
@@ -458,7 +458,7 @@ describe('TemplateImport: both wordings, before the tick (#1936)', () => {
   it('draws nothing to compare on a created or unchanged channel', async () => {
     planSeedTemplateImport.mockResolvedValue(report());
     render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
-    await screen.findByText('kincare.reschedule.requested');
+    await screen.findByText('KinCare reschedule requested');
     expect(screen.queryByTestId(/^compare-/)).toBeNull();
     expect(screen.queryByText(/could not be shown/)).toBeNull();
   });
@@ -473,7 +473,7 @@ describe('TemplateImport: both wordings, before the tick (#1936)', () => {
               {
                 channel: 'email',
                 outcome: 'skipped',
-                notes: ['The stored email copy differs from the repo copy.'],
+                notes: ['The stored email copy differs from the built-in copy.'],
                 differences: [
                   { field: 'content', label: 'Message', stored: 'Same words', repo: 'Same words', note: 'The wording is the same. Your stored copy uses the older email format, and importing moves it to the current one.' },
                 ],

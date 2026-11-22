@@ -90,6 +90,8 @@ import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.RouteMap
 import com.tribetails.auntieos.ui.components.ServicePill
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 // ── Feature flags (read via the central ambient LocalFeatureFlags) ──
 // Pet-mood is LIVE: the default template ships petMoodEnabled=true with mood
@@ -229,7 +231,7 @@ fun KinTaleReportScreen(
                     // badge row, and Back is the band's control. The mocks' cover
                     // eyebrow ("KinTale · Visit Recap") is on the cover below. ──
                     DenScreenHeading(
-                        kicker = "The Den · KinTales",
+                        kicker = railKicker(RailScreen.KINTALES),
                         crumbs = listOf(
                             DenCrumb("KinTales", leave),
                             DenCrumb(if (isSent) "KinTale" else "New tale"),

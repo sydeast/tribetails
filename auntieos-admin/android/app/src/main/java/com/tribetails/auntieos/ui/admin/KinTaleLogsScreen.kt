@@ -65,6 +65,7 @@ import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.isUntriagedOrphan
 import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.ui.components.AuntieBanner
+import com.tribetails.auntieos.ui.components.DenInfoTip
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
 import com.tribetails.auntieos.ui.components.AuntieDialog
@@ -85,6 +86,8 @@ import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.kintales.sentViaWords
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 private enum class Bucket(val label: String) {
     Failed ("Needs another look"),
@@ -199,7 +202,7 @@ fun KinTaleLogsScreen(
                     Spacer(Modifier.size(4.dp))
 
                     DenScreenHeading(
-                        kicker   = "The Den · KinTales",
+                        kicker   = railKicker(RailScreen.KINTALES),
                         title    = "KinTales",
                         subtitle = "Every recap that goes home to a Kinfolk after care",
                         // The mock's `.head .ico`: the ClipboardList tile in the
@@ -242,11 +245,8 @@ fun KinTaleLogsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.size(6.dp))
-                    Text(
-                        text  = "Filters the KinTales loaded here, not the full archive.",
-                        style = AuntieTheme.typography.labelSmall,
-                        color = AuntieTheme.colors.textFaint,
-                    )
+                    // #1827: what the search reaches is guidance, an info tip, not a line under the field.
+                    DenInfoTip("Filters the KinTales loaded here, not the full archive.")
 
                     // KT1 (A8): operator-chosen ordering for the list (organizes Sent).
                     SortChipRow(selected = sortMode, onSelect = { sortMode = it })
@@ -1011,7 +1011,10 @@ private fun SortChipRow(selected: ReportSort, onSelect: (ReportSort) -> Unit) {
  * above every ISO row, so this is epoch milliseconds, null when unreadable.
  */
 internal fun sortMillis(r: KinCareReport): Long? =
-    kinTaleSortMillis(sequenceOf(r.sentAt, r.visitDate, r.arrivedAt, r.createdAt).firstOrNull { !it.isNullOrBlank() })
+    // #1856: the same fields, in the same order, as the row's date label
+    // (`reportWhen`). Sorting on sentAt first put rows out of the order their
+    // labels read, so a list ran "newest first" by a date nobody could see.
+    kinTaleSortMillis(sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt).firstOrNull { !it.isNullOrBlank() })
 
 /** KT1 (A8): operator-chosen ordering for the KinTales list. Mirror of web ReportSort. */
 internal enum class ReportSort(val label: String) {

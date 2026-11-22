@@ -64,7 +64,7 @@ internal fun routedTemplateName(
 internal fun failingKeysLine(failing: List<String>, loadable: List<String>, rows: List<CatalogKeyRow>): String {
     val names = failing.joinToString(", ") { catalogKeyNameFor(it, rows) }
     val load = if (loadable.isEmpty()) "" else
-        " The repo has a copy of ${loadable.joinToString(", ") { catalogKeyNameFor(it, rows) }}. Load it from Template Import."
+        " A built-in copy of ${loadable.joinToString(", ") { catalogKeyNameFor(it, rows) }} exists. Load it from Template Import."
     return "The template does not exist: $names.$load"
 }
 
@@ -106,8 +106,8 @@ internal fun missingTemplateNote(row: CatalogKeyRow, templateMissing: Boolean): 
     val load = if (row.inRepoCorpus) " Load it from Template Import." else ""
     return when (row.whenTemplateMissing) {
         "generic" -> "Not in the bank yet, so this sends generic wording that cannot say what happened.$load"
-        "repoCopy" -> "Not in the bank yet, so this sends the repo copy.$load"
-        else -> if (row.inRepoCorpus) "The repo has a copy. Load it from Template Import." else null
+        "repoCopy" -> "Not in the bank yet, so this sends the built-in copy.$load"
+        else -> if (row.inRepoCorpus) "A built-in copy exists. Load it from Template Import." else null
     }
 }
 

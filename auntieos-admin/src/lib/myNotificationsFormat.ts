@@ -298,7 +298,7 @@ export function notifSections(stream: NotifStream): NotifSection[] {
         { title: 'Bookings and visits', categories: ['visit'] },
         { title: 'Messages', categories: ['messages'] },
         { title: 'Billing and payments', categories: ['invoice'] },
-        { title: 'Ratings and pets', categories: ['ratings'] },
+        { title: 'Ratings and Kin', categories: ['ratings'] },
         { title: 'Account and security', categories: ['account', 'security'] },
       ];
     case STREAM_STAFF:
@@ -306,7 +306,7 @@ export function notifSections(stream: NotifStream): NotifSection[] {
         { title: 'Assignments and schedule', categories: ['schedule'] },
         { title: 'Visit workflow', categories: ['visit'] },
         { title: 'KinTales and comments', categories: ['kintale'] },
-        { title: 'Pets and profiles', categories: ['home'] },
+        { title: 'Kin and profiles', categories: ['home'] },
       ];
     case STREAM_KINFOLK:
       return [
@@ -320,7 +320,7 @@ export function notifSections(stream: NotifStream): NotifSection[] {
         // overlooked.
         { title: 'Messages', categories: ['messages'] },
         { title: 'Billing and payments', categories: ['invoice'] },
-        { title: 'Home and pets', categories: ['home'] },
+        { title: 'Home and Kin', categories: ['home'] },
         { title: 'Account and security', categories: ['account', 'security'] },
         { title: 'Newsletters and community', categories: ['marketing'] },
       ];

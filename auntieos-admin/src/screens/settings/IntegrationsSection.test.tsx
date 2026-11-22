@@ -223,7 +223,15 @@ describe('IntegrationsSection remediation', () => {
 describe('IntegrationsSection never leaks a credential', () => {
   it('reports a length, and offers no field that could carry a value', async () => {
     render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
-    expect(await screen.findByText('set, 32 characters')).toBeInTheDocument();
+    expect(await screen.findByText('saved')).toBeInTheDocument();
+  });
+  // #1887: the line named the stored credential (TWILIO_AUTH_TOKEN) and
+  // counted its characters. It names it in words now.
+  it('names each credential in words, not by its stored name', async () => {
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
+    expect(await screen.findByText('Twilio auth token')).toBeInTheDocument();
+    expect(document.querySelector('.integrations__secretName')?.textContent).not.toMatch(/_/);
+    expect(screen.queryByText(/characters/)).not.toBeInTheDocument();
   });
 });
 
@@ -277,7 +285,7 @@ describe('IntegrationsSection failure state', () => {
 
     expect(await screen.findByText(/Part of this check could not run/)).toBeInTheDocument();
     expect(screen.getByText(/the functions index would not load/)).toBeInTheDocument();
-    expect(screen.queryByText('no deployed function declares this')).not.toBeInTheDocument();
+    expect(screen.queryByText('nothing uses this yet')).not.toBeInTheDocument();
   });
 
   it('flags an undeclared secret when the server DID look', async () => {
@@ -300,7 +308,7 @@ describe('IntegrationsSection failure state', () => {
       }),
     );
     render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
-    expect(await screen.findByText('no deployed function declares this')).toBeInTheDocument();
+    expect(await screen.findByText('nothing uses this yet')).toBeInTheDocument();
   });
 });
 

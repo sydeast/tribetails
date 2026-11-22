@@ -192,7 +192,7 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
       <TitleWithTip
         as="h3"
         className="tribal-form__title"
-        tip="Saved notes are folded into the household's dossier and the pet's 411 overnight. Attachments are listed as sources: only their names and links are read, never what an image shows."
+        tip="Saved notes are folded into the household's dossier and the Kin's 411 overnight. Attachments are listed as sources: only their names and links are read, never what an image shows."
       >
         {editing === null ? 'New Tribal Intel' : 'Edit Tribal Intel'}
       </TitleWithTip>

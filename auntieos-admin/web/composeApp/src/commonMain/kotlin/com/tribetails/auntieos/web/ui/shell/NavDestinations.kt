@@ -66,6 +66,12 @@ enum class Destination(
     MyNotifications ("My notifications", Lucide.Bell,          NavGroup.More);
 }
 
+/**
+ * A screen's breadcrumb kicker, "<rail section> · <rail title>" (#1598, #1894),
+ * read off the rail entry so a heading can never name a section the sidebar
+ * does not file the screen under. Mirrors the web `navKicker`.
+ */
+fun navKicker(dest: Destination): String = "${dest.group.label} · ${dest.title}"
 enum class NavGroup(val label: String) {
     Den    ("The Den"),
     CareOps("Care Ops"),

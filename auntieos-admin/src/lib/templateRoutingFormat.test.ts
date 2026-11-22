@@ -24,7 +24,7 @@ describe('templateRoutingFormat (#1592)', () => {
   it('names a key the rows do not hold as words', () => {
     const rows = [{ key: 'invoice.new', label: 'New invoice', source: 'catalog' }];
     expect(catalogKeyNameFor('invoice.new', rows)).toBe('New invoice');
-    expect(catalogKeyNameFor('account.welcome.kinfolk', rows)).toBe('Account welcome kinfolk');
+    expect(catalogKeyNameFor('account.welcome.kinfolk', rows)).toBe('Account welcome Kinfolk');
     expect(catalogKeyNameFor('', rows)).toBe('Notification');
   });
 

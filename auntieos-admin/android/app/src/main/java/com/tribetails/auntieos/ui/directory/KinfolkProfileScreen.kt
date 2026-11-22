@@ -460,7 +460,7 @@ private fun ProfileHero(
     val active = kinfolk.status.trim().equals("active", ignoreCase = true)
     val context = LocalContext.current
     DenScreenHeading(
-        kicker = "The Den · Directory",
+        kicker = railKicker(RailScreen.DIRECTORY),
         crumbs = listOf(
             DenCrumb("Directory", onDirectory),
             DenCrumb(kinfolk.displayName),

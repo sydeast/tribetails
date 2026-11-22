@@ -91,6 +91,8 @@ import com.tribetails.auntieos.ui.components.mediaDurationLabel
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.SegmentedPicker
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * #13 global Gallery (android): all business media across every KinTale/entity in one
@@ -229,7 +231,7 @@ fun GalleryBody(
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         DenScreenHeading(
-            kicker = "The Den · Gallery",
+            kicker = railKicker(RailScreen.GALLERY),
             title = "All",
             accentTail = "media",
             subtitle = "All media from every KinTale, tagged to its household. Tap a photo to tag the kin in it.",

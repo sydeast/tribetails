@@ -3,7 +3,7 @@ import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
 import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { PrimaryButton } from '../../components/Buttons';
-import { pendingTaleRows } from '../../lib/dashboardInsights';
+import { pendingDraftCount, pendingTaleRows } from '../../lib/dashboardInsights';
 import { useDraftsStream } from './homeData';
 import './widgets.css';
 
@@ -41,6 +41,9 @@ export function KinTalesPendingWidget({ onReviewTales }: KinTalesPendingWidgetPr
     () => (drafts.status === 'ready' ? pendingTaleRows(drafts.data, 4) : []),
     [drafts],
   );
+  // #1850: the card above counts every draft waiting; this list draws the
+  // newest four. When those differ, the list says so.
+  const total = drafts.status === 'ready' ? pendingDraftCount(drafts.data) : 0;
 
   return (
     <DenPanel
@@ -83,10 +86,20 @@ export function KinTalesPendingWidget({ onReviewTales }: KinTalesPendingWidgetPr
                 </li>
               ))}
             </ul>
+            {total > rows.length && (
+              <p className="den-hint" data-testid="kintales-pending-shown">
+                {pendingShownLine(rows.length, total)}
+              </p>
+            )}
             <PrimaryButton label="Review and send tales" onClick={() => onReviewTales(rows[0]?.id ?? null)} />
           </div>
         )}
       </AsyncRegion>
     </DenPanel>
   );
+}
+
+/** #1850: "Newest 4 of 12 drafts." under the list when it draws fewer than are waiting. */
+export function pendingShownLine(shown: number, total: number): string {
+  return `Newest ${String(shown)} of ${String(total)} drafts.`;
 }

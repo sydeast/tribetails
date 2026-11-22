@@ -9,21 +9,24 @@ import { logEvent } from './logger';
  * the 2026-11-05 walk the only business admin had a staff record with no name
  * and no email, so all three showed a bare uid.
  *
- * The name is, in order: the staff record's name, the Firebase Auth account's
- * display name, then an email (the record's, then the sign-in one). A uid is
- * never the answer while any of those exists.
+ * The name is, in order: the staff record's name, the name the person saved on
+ * their Account page (`users/{uid}`: display name, then first and last), then
+ * the Firebase Auth account's display name. Null when none of those holds a
+ * name.
  *
- * NAME ONLY. Operator ruling, 2026-11-05 docket: every business email goes to
- * the business contact email in business settings, so the sign-in email here is
- * a label and never an address anything is sent to. `email` stays the staff
- * record's own value.
+ * NEVER AN EMAIL (#1882). #1564 fell back to the sign-in email, and the
+ * 2026-11-10 walk then read an address under "By name:", on the Gallery
+ * uploader line and on a kinfolk-facing note. The owner's Account page saves
+ * to `users/{uid}`, which this never read, so his saved name never reached
+ * those screens. A value shaped like an address is not a name wherever it is
+ * stored. `email` stays the staff record's own value.
  *
  * The record is never written here.
  */
 
 export interface StaffIdentity {
   uid: string;
-  /** The name to show. Null only when no source has a name or an email. */
+  /** The name to show. Null when no source has a name. Never an email. */
   displayName: string | null;
   /** The staff record's email, as stored. Null when it has none. */
   email: string | null;
@@ -32,12 +35,27 @@ export interface StaffIdentity {
 }
 
 type StaffRecord = { displayName?: unknown; email?: unknown };
+/** The Account page's own profile, `users/{uid}`. */
+type ProfileRecord = { displayName?: unknown; firstName?: unknown; lastName?: unknown };
 
 /** `getUsers` takes at most 100 identifiers per call. */
 const AUTH_BATCH = 100;
 
 function trimmed(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
+}
+
+/** A trimmed name, or '' when it is blank or shaped like an email address. */
+function nameOnly(v: unknown): string {
+  const s = trimmed(v);
+  return s.includes('@') ? '' : s;
+}
+
+/** The name a profile holds: its display name, else first and last. */
+function profileName(profile: ProfileRecord | undefined): string {
+  const display = nameOnly(profile?.displayName);
+  if (display !== '') return display;
+  return nameOnly([trimmed(profile?.firstName), trimmed(profile?.lastName)].filter((s) => s !== '').join(' '));
 }
 
 /**
@@ -76,10 +94,10 @@ export function mergeIdentity(
   uid: string,
   record: StaffRecord | undefined,
   signIn: { displayName: string; email: string } | undefined,
+  profile?: ProfileRecord,
 ): StaffIdentity {
   const recordEmail = trimmed(record?.email);
-  const name =
-    trimmed(record?.displayName) || signIn?.displayName || recordEmail || signIn?.email || '';
+  const name = nameOnly(record?.displayName) || profileName(profile) || nameOnly(signIn?.displayName);
   return {
     uid,
     displayName: name || null,
@@ -112,7 +130,36 @@ export async function withSignInFallback(
   records: ReadonlyArray<StaffRecord | undefined>,
   context: string,
 ): Promise<StaffIdentity[]> {
-  const gaps = uids.filter((_uid, i) => !trimmed(records[i]?.displayName));
-  const signIn = gaps.length > 0 ? await signInIdentities(gaps, context) : new Map();
-  return uids.map((uid, i) => mergeIdentity(uid, records[i], signIn.get(uid)));
+  const gaps = uids.filter((_uid, i) => !nameOnly(records[i]?.displayName));
+  const profiles = gaps.length > 0 ? await accountProfiles(gaps, context) : new Map<string, ProfileRecord>();
+  const stillGaps = gaps.filter((uid) => !profileName(profiles.get(uid)));
+  const signIn = stillGaps.length > 0 ? await signInIdentities(stillGaps, context) : new Map();
+  return uids.map((uid, i) => mergeIdentity(uid, records[i], signIn.get(uid), profiles.get(uid)));
+}
+
+/**
+ * The Account page's profile for each uid (`users/{uid}`), or an empty map
+ * when it cannot be read. Like the sign-in lookup, a failure is logged and
+ * costs only that rung of the fallback.
+ */
+async function accountProfiles(uids: readonly string[], context: string): Promise<Map<string, ProfileRecord>> {
+  const out = new Map<string, ProfileRecord>();
+  const unique = [...new Set(uids.filter((u) => u.length > 0))];
+  if (unique.length === 0) return out;
+  try {
+    const firestore = db();
+    const snaps = await firestore.getAll(...unique.map((uid) => firestore.collection('users').doc(uid)));
+    snaps.forEach((snap, i) => {
+      if (snap.exists) out.set(unique[i]!, snap.data() as ProfileRecord);
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'staffIdentity',
+      event: 'staffIdentity.profileLookupFailed',
+      errorMessage: err instanceof Error ? err.message : String(err),
+      extra: { context, count: unique.length },
+    });
+  }
+  return out;
 }

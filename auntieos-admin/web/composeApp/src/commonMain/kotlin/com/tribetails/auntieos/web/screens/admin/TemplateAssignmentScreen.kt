@@ -53,6 +53,8 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Template Routing on the desktop console, the shape web (`TemplateAssignments.tsx`)
@@ -171,7 +173,7 @@ fun TemplateAssignmentBody(
 
     Column(Modifier.fillMaxWidth()) {
         DenScreenHeading(
-            kicker = "The Den · Admin",
+            kicker = navKicker(Destination.Templates),
             title = "Template",
             accentTail = "Routing.",
             subtitle = "Every notification already sends a template. An override points one at another.",
@@ -539,7 +541,7 @@ private fun OverrideEditorDialog(
 
         // Audience pills: single-select; clicking the selected one clears it (nullable).
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-            AuntieFieldLabel(text = "Audience (stored, unused)")
+            AuntieFieldLabel(text = "Audience (not used yet)")
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(dims.space2),

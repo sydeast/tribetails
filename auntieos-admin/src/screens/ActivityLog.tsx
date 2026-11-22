@@ -45,6 +45,7 @@ import { IconTile, type IconTileTone } from '../components/IconTile';
 import { LoadingRow } from '../components/LoadingRow';
 import { Spinner } from '../components/Spinner';
 import './ActivityLog.css';
+import { navKicker } from '../lib/nav';
 
 /** Human line for each anomaly shape (head_mismatch carries no entryId/seq). */
 function anomalyDetail(a: VerifyAnomaly): string {
@@ -318,7 +319,7 @@ export function ActivityLog() {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Activity log"
+        kicker={navKicker('activity')}
         title="Every move,"
         accentTail="sealed."
         subtitle="A tamper-evident audit trail, newest first. Legacy pre-chain entries are not listed. Open an entry for the full record. Re-verify walks the SHA-256 chain server-side and reports the verdict."

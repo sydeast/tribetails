@@ -208,7 +208,7 @@ class FormSchemaEditorRobolectricTest {
             }
         }
         rule.waitForIdle()
-        rule.onNodeWithText("THE DEN · FORM SCHEMAS").assertIsDisplayed()
+        rule.onNodeWithText("MORE · FORM SCHEMAS").assertIsDisplayed()
         rule.onNodeWithText("tribeProfile · v1").assertIsDisplayed()
         rule.onNodeWithText("Sections").assertIsDisplayed()
         rule.onNodeWithText("Add section").assertIsDisplayed()

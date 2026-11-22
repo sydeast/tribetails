@@ -31,6 +31,7 @@ import {
   type VetLinkedHousehold,
 } from '../lib/vetClinicManager';
 import './VetClinics.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Vet clinics: the manager for the shared `vet_clinics` bank (punchlist B4).
@@ -78,7 +79,7 @@ export function VetClinics({ isAuntie = false }: { isAuntie?: boolean } = {}) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Directory"
+        kicker={navKicker('settings')}
         title="Vet"
         accentTail="clinics"
         subtitle="The shared bank every household and the kinfolk portal pick from. Correcting a clinic here rewrites the copy stored on every household linked to it, so the number on file at a doorstep changes with it."

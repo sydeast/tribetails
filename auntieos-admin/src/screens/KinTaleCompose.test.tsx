@@ -1114,7 +1114,10 @@ describe('L20 · template selection', () => {
   it('says so, in the operator’s own words, when it fell back to the built-in', async () => {
     renderComposer({ templates: [templateDoc({ serviceTypeKeys: ['Overnight'] })] });
     expect(await screen.findByText('Standard Visit')).toBeInTheDocument();
-    expect(screen.getByText(/nothing in the template bank matches/i)).toBeInTheDocument();
+    // #1827: an info tip beside the name, never a sentence under it.
+    const note = screen.getByText(/nothing in the template bank matches/i);
+    expect(note).toHaveAttribute('role', 'tooltip');
+    expect(note.closest('.kintale-compose__provenance')).toBeNull();
   });
   /**
    * The REFUSAL that matters most: an unresolved template must never be

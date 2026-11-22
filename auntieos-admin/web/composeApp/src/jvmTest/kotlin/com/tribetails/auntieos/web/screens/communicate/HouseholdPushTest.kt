@@ -119,7 +119,7 @@ class HouseholdPushTest {
         val sent = held.copy(_id = "sent", pushOutcome = "sent")
         val noStamp = held.copy(_id = "nostamp", pushOutcome = "")
         val sms = held.copy(_id = "sms", communication_type = "sms")
-        val pending = GeneratedDraft(_id = "pending", status = "generated", communication_type = "push", createdOn = "2026-11-16T00:00:00Z")
+        val pending = GeneratedDraft(_id = "pending", status = "generated", generatedCopy = "A note.", communication_type = "push", createdOn = "2026-11-16T00:00:00Z")
         val all = listOf(held, sent, noStamp, sms, pending)
         // #2381: the approved push with no answer on it is listed too.
         assertEquals(listOf("held", "nostamp", "pending"), kinTaleListDrafts(all).map { it._id })

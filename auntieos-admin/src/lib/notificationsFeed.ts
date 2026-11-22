@@ -156,9 +156,24 @@ export function unreadAmong(
 /** The bucket a row with a blank or absent `category` falls into. */
 const UNCATEGORIZED = 'uncategorized';
 
+/** #1887: words a stored key spells in lower case, as the app spells them. */
+const KEY_WORDS: Readonly<Record<string, string>> = {
+  pet: 'Kin',
+  pets: 'Kin',
+  kin: 'Kin',
+  kinfolk: 'Kinfolk',
+  kintale: 'KinTale',
+  kintales: 'KinTales',
+  kincare: 'KinCare',
+  auntie: 'Auntie',
+  aunties: 'Aunties',
+  tribe: 'Tribe',
+  sms: 'SMS',
+  api: 'API',
+};
 /**
  * A dotted or underscored key as words: `account.welcome.kinfolk` becomes
- * "Account welcome kinfolk". The last resort for a value with no label of its
+ * "Account welcome Kinfolk". The last resort for a value with no label of its
  * own, so the operator reads words instead of a key (#1592).
  */
 export function humanizeKey(raw: string): string {
@@ -166,8 +181,8 @@ export function humanizeKey(raw: string): string {
     .trim()
     .split(/[._\-\s]+/)
     .filter((w) => w !== '')
-    .join(' ')
-    .toLowerCase();
+    .map((w) => KEY_WORDS[w.toLowerCase()] ?? w.toLowerCase())
+    .join(' ');
   return words === '' ? '' : words.charAt(0).toUpperCase() + words.slice(1);
 }
 
@@ -190,7 +205,7 @@ export function notificationTitle(entry: Pick<NotificationEntry, 'title' | 'key'
  */
 const CATEGORY_LABELS: Record<string, string> = {
   account: 'Account',
-  home: 'Home and pets',
+  home: 'Home and Kin',
   invoice: 'Billing',
   kintale: 'KinTales',
   marketing: 'Newsletters',

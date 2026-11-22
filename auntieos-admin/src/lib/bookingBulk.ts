@@ -121,7 +121,7 @@ function skipReason(state: BookingState, action: BatchBookingAction): string {
   switch (state) {
     case 'draft':
     case 'pending':
-      return `Still awaiting a reply, so it cannot be ${verb}. Approve or reject it instead.`;
+      return `Not approved yet, so it cannot be ${verb}. Approve or reject it instead.`;
     case 'scheduled':
       return `Already on the books, so it cannot be ${verb}. Cancel it instead.`;
     case 'onMyWay':

@@ -322,7 +322,7 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
     const heading = screen.getByRole('heading', { level: 1 });
     expect(heading).toHaveTextContent('How the Den runs.');
     expect(heading.querySelector('.den-heading-accent')).toHaveTextContent('runs.');
-    expect(document.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Settings');
+    expect(document.querySelector('.den-heading-kicker')).toHaveTextContent('More · Settings');
     // The stamp is a VALUE, so it sits on the heading's detail line, never as
     // a stray paragraph between the band and the columns.
     const detail = document.querySelector('.den-heading-detail');

@@ -87,6 +87,8 @@ import com.tribetails.auntieos.domain.householdTextAsSentLines
 import com.tribetails.auntieos.domain.householdTextChannelLine
 import com.tribetails.auntieos.domain.channelLabel
 import com.tribetails.auntieos.domain.isoDatePrefixOrNull
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Communicate: the Den comms surface, ported from the web CommunicateScreen and
@@ -241,7 +243,7 @@ fun CommunicateScreen(
             // the info button.
             item {
                 DenScreenHeading(
-                    kicker = "Care Ops · Communicate",
+                    kicker = railKicker(RailScreen.COMMUNICATE),
                     title = "Talk to your",
                     accentTail = "kinfolk",
                     subtitle = if (mode == ComposeMode.Broadcast)

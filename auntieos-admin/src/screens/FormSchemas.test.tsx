@@ -83,17 +83,29 @@ afterAll(() => {
 const emptyRoster = new Map<string, string>();
 
 describe('resolveUpdatedBy (pure)', () => {
-  it('resolves a known uid to the roster email', () => {
-    const map = new Map([['uid1', 'auntie@tribetails.example']]);
-    expect(resolveUpdatedBy('uid1', map)).toBe('auntie@tribetails.example');
+  it('resolves a known uid to the person named for it', () => {
+    const map = new Map([['uid1', 'Syd']]);
+    expect(resolveUpdatedBy('uid1', map)).toBe('Syd');
   });
 
-  it('shortens an unresolved value that looks like a uid', () => {
-    expect(resolveUpdatedBy('nppJNdMNYJfUigibGKUQj3n4obt2', emptyRoster)).toBe('nppJNdMN…');
+  // #1890: the walk read a sign-in email and "seed_phase14_schemas" under
+  // UPDATED BY.
+  it('#1890: never shows an email, even one the lookup handed back', () => {
+    const map = new Map([['uid1', 'e2e-admin@tribetails.com']]);
+    expect(resolveUpdatedBy('uid1', map)).toBe('Staff');
+    expect(resolveUpdatedBy('e2e-admin@tribetails.com', emptyRoster)).toBe('Staff');
   });
 
-  it('shows a non-uid unresolved value verbatim (e.g. a seed script name)', () => {
-    expect(resolveUpdatedBy('seed_phase14_schemas', emptyRoster)).toBe('seed_phase14_schemas');
+  it('#1890: an unresolved uid reads "Staff", never part of the uid', () => {
+    expect(resolveUpdatedBy('nppJNdMNYJfUigibGKUQj3n4obt2', emptyRoster)).toBe('Staff');
+  });
+
+  it('#1890: a seed script name reads "Set up"', () => {
+    expect(resolveUpdatedBy('seed_phase14_schemas', emptyRoster)).toBe('Set up');
+  });
+
+  it('keeps a plain word somebody typed', () => {
+    expect(resolveUpdatedBy('Syd', emptyRoster)).toBe('Syd');
   });
 
   it('is null for a blank or null updatedBy, never a placeholder string', () => {
@@ -156,11 +168,11 @@ describe('sortSchemas (pure)', () => {
 
   it('sorts by updatedBy on the RESOLVED label, not the raw uid', () => {
     const emailByUid = new Map([
-      ['uid-a', 'zed@tribetails.example'],
-      ['uid-b', 'ann@tribetails.example'],
-      ['uid-c', 'mid@tribetails.example'],
+      ['uid-a', 'Zed'],
+      ['uid-b', 'Ann'],
+      ['uid-c', 'Mid'],
     ]);
-    // Alphabetically by resolved email: ann (b), mid (c), zed (a).
+    // Alphabetically by resolved name: Ann (b), Mid (c), Zed (a).
     expect(sortSchemas(rows, emailByUid, { column: 'updatedBy', direction: 'asc' }).map((r) => r.id)).toEqual([
       'b',
       'c',
@@ -249,14 +261,17 @@ describe('FormSchemas screen', () => {
     );
     render(<FormSchemas />);
     expect(await screen.findByText('Tribe Profile')).toBeInTheDocument();
-    expect(screen.getByText('tribeProfile')).toBeInTheDocument();
+    // #1890: the stored schema id is not printed under the name.
+    expect(screen.queryByText('tribeProfile')).toBeNull();
     // The mock's `.ver` is mono text in the Version column, not a capsule.
     const version = screen.getByText('v3');
     expect(version).toHaveClass('schemas__version');
     expect(version).not.toHaveClass('den-pill');
     // 2026-07-01T00:00:00Z is 2026-06-30 19:00 in America/Chicago (CDT, UTC-5).
     expect(screen.getByText('Jun 30, 2026 19:00')).toBeInTheDocument();
-    expect(await screen.findByText('auntie@tribetails.example')).toBeInTheDocument();
+    // #1890: an admin the roster knows by email alone is the office, never the address.
+    expect(await screen.findByText('Office')).toBeInTheDocument();
+    expect(screen.queryByText('auntie@tribetails.example')).toBeNull();
   });
 
   it('renders the table headers as sort controls, Updated active and descending by default', async () => {
@@ -278,15 +293,15 @@ describe('FormSchemas screen', () => {
     await screen.findByText('Bravo');
 
     function bodyRowIds(): (string | null | undefined)[] {
-      return screen.getAllByRole('row').slice(1).map((row) => row.querySelector('code')?.textContent);
+      return screen.getAllByRole('row').slice(1).map((row) => row.querySelector('.schemas__row-name')?.textContent);
     }
 
     await userEvent.click(screen.getByRole('button', { name: /^name/i }));
-    expect(bodyRowIds()).toEqual(['a', 'b']);
+    expect(bodyRowIds()).toEqual(['Alpha', 'Bravo']);
     expect(screen.getByRole('columnheader', { name: /^name/i })).toHaveAttribute('aria-sort', 'ascending');
 
     await userEvent.click(screen.getByRole('button', { name: /^name/i }));
-    expect(bodyRowIds()).toEqual(['b', 'a']);
+    expect(bodyRowIds()).toEqual(['Bravo', 'Alpha']);
     expect(screen.getByRole('columnheader', { name: /^name/i })).toHaveAttribute('aria-sort', 'descending');
   });
 
@@ -298,8 +313,8 @@ describe('FormSchemas screen', () => {
     render(<FormSchemas />);
     await screen.findByText('Lo');
     await userEvent.click(screen.getByRole('button', { name: /^version/i }));
-    const ids = screen.getAllByRole('row').slice(1).map((row) => row.querySelector('code')?.textContent);
-    expect(ids).toEqual(['lo', 'hi']);
+    const ids = screen.getAllByRole('row').slice(1).map((row) => row.querySelector('.schemas__row-name')?.textContent);
+    expect(ids).toEqual(['Lo', 'Hi']);
     expect(screen.getByRole('columnheader', { name: /^version/i })).toHaveAttribute('aria-sort', 'ascending');
   });
 
@@ -336,18 +351,19 @@ describe('FormSchemas screen', () => {
     ]);
     render(<FormSchemas />);
     await screen.findByText('Dated');
-    const ids = screen.getAllByRole('row').slice(1).map((row) => row.querySelector('code')?.textContent);
-    expect(ids).toEqual(['dated', 'draft']);
+    const ids = screen.getAllByRole('row').slice(1).map((row) => row.querySelector('.schemas__row-name')?.textContent);
+    expect(ids).toEqual(['Dated', 'Draft']);
   });
 
-  it('shows a shortened uid when it does not resolve against the admin roster', async () => {
+  it('#1890: shows "Staff", never part of a uid, when it does not resolve against the admin roster', async () => {
     listFormSchemas.mockResolvedValue([
       schema({ id: 'legacy', name: 'Legacy schema', updatedBy: 'nppJNdMNYJfUigibGKUQj3n4obt2' }),
     ]);
     listBusinessAdmins.mockResolvedValue(roster([]));
     render(<FormSchemas />);
     await screen.findByText('Legacy schema');
-    expect(await screen.findByText('nppJNdMN…')).toBeInTheDocument();
+    expect(await screen.findByText('Staff')).toBeInTheDocument();
+    expect(screen.queryByText(/nppJNdMN/)).toBeNull();
   });
 
   it('renders the schemas list even when the admin roster fails to load', async () => {
@@ -387,7 +403,7 @@ describe('FormSchemas screen', () => {
     await screen.findByText('Tribe Profile');
     const heading = container.querySelector('.den-heading');
     expect(heading).not.toBeNull();
-    expect(heading!.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Admin');
+    expect(heading!.querySelector('.den-heading-kicker')).toHaveTextContent('More · Form Schemas');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Form Schemas');
     const tile = heading!.querySelector('.den-heading-leading .icon-tile');
     expect(tile).not.toBeNull();

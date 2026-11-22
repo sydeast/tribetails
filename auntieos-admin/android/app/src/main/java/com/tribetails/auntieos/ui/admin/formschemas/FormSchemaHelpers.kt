@@ -196,7 +196,7 @@ fun formSchemaRefusalsOf(t: Throwable?): List<FormSchemaValidationError> =
 object FormSchemaValidator {
 
     /**
-     * Schema id pattern. Must start with a letter; allows letters, digits,
+     * Short name pattern. Must start with a letter; allows letters, digits,
      * underscore, dot, hyphen. Mirrors the Zod schema on the server (Cloud
      * Function `saveFormSchema`) so client + server agree before the round-
      * trip. Fail-loud per [[fail-loud-policy]] - surface a clear message
@@ -220,18 +220,18 @@ object FormSchemaValidator {
     fun validate(schema: FormSchema): List<FormSchemaValidationError> {
         val errors = mutableListOf<FormSchemaValidationError>()
         if (schema.id.isBlank()) {
-            errors += FormSchemaValidationError(-1, null, "Schema id is required")
+            errors += FormSchemaValidationError(-1, null, "Short name is required")
         } else if (!SCHEMA_ID_REGEX.matches(schema.id)) {
             errors += FormSchemaValidationError(
                 -1, null,
-                "Schema id \"${schema.id}\" is invalid: must start with a letter and contain only letters, digits, underscore, dot, or hyphen",
+                "Short name \"${schema.id}\" is invalid: must start with a letter and contain only letters, digits, underscore, dot, or hyphen",
             )
         }
         val r = FormSchemaTextRules
         fun add(section: Int, field: Int?, problem: String?) {
             if (problem != null) errors += FormSchemaValidationError(section, field, problem)
         }
-        if (schema.id.length > r.ID) add(-1, null, "Schema id is ${schema.id.length} characters long. The limit is ${r.ID}.")
+        if (schema.id.length > r.ID) add(-1, null, "Short name is ${schema.id.length} characters long. The limit is ${r.ID}.")
         if (schema.name.isBlank()) {
             errors += FormSchemaValidationError(-1, null, "Schema name is required")
         } else {

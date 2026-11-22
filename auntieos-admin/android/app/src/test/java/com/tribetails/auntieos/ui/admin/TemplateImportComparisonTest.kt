@@ -32,7 +32,7 @@ class TemplateImportComparisonTest {
                             mapOf(
                                 "channel" to "sms",
                                 "outcome" to "skipped",
-                                "notes" to listOf("The stored sms copy differs from the repo copy."),
+                                "notes" to listOf("The stored sms copy differs from the built-in copy."),
                                 "differences" to listOf(
                                     mapOf(
                                         "field" to "text",

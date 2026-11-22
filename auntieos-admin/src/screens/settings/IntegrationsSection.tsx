@@ -19,6 +19,7 @@ import { gradientForSeed } from '../../components/Avatar';
 import { CalendarSection } from './CalendarSection';
 import { LoadingRow } from '../../components/LoadingRow';
 import './IntegrationsSection.css';
+import { humanizeKey } from '../../lib/notificationsFeed';
 
 /**
  * Settings > Integrations: whether the outside services this business runs on
@@ -259,15 +260,16 @@ function IntegrationCard({ integration, declaredKnown, calendarOpen, onToggleCal
 function SecretLine({ secret, declaredKnown }: { secret: IntegrationSecret; declaredKnown: boolean }) {
   return (
     <li className="integrations__secret">
-      <code className="integrations__secretName">{secret.name}</code>
+      {/* #1887: the credential in words; its stored name is a developer detail. */}
+      <span className="integrations__secretName">{humanizeKey(secret.name)}</span>
       <span className="integrations__secretState" data-set={secret.resolves ? 'yes' : 'no'}>
-        {secret.resolves ? `set, ${String(secret.length)} characters` : 'not set'}
+        {secret.resolves ? 'saved' : 'not set'}
       </span>
       {/* Withdrawn entirely when the server could not look, rather than shown as
           a false. "Nothing declares it" is a bug to fix; "we could not find out"
           is not, and they must not read alike. */}
       {declaredKnown && !secret.declared ? (
-        <span className="integrations__secretWarn">no deployed function declares this</span>
+        <span className="integrations__secretWarn">nothing uses this yet</span>
       ) : null}
       {!secret.required ? <span className="integrations__secretOptional">optional</span> : null}
       <span className="integrations__secretPurpose">{secret.purpose}</span>

@@ -441,7 +441,7 @@ describe('a visit whose start time the Auntie sets (#1098)', () => {
   it('still says who sets it when the night cannot be read', () => {
     const noDate = booking({ startTimeMs: null, startTimePending: true, requestedDate: null });
     expect(bookingSubtitle(noDate)).toBe('Start time set by your Auntie');
-    expect(visitTile(noDate)).toEqual({ month: '—', day: '—' });
+    expect(visitTile(noDate)).toEqual({ month: '--', day: '--' });
     expect(bookingSubtitle({ ...noDate, requestedDate: 'not-a-date' })).toBe('Start time set by your Auntie');
   });
   it('leaves a timed visit, and a visit from an older server, as they were', () => {

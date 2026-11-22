@@ -65,11 +65,36 @@ export async function listStaff(): Promise<StaffMember[]> {
 }
 
 /**
- * uid -> the label `staffLabel` gives, for screens that hold a staff uid and
- * must show a person (#1564: the Gallery's uploader line showed a raw uid).
+ * uid -> the byline a screen shows for a staff member who wrote, uploaded or
+ * saved something (#1564: the Gallery's uploader line showed a raw uid).
  */
 export function staffNamesByUid(staff: readonly StaffMember[]): Map<string, string> {
-  return new Map(staff.map((m) => [m.uid, staffLabel(m)]));
+  return new Map(staff.map((m) => [m.uid, staffByline(m)]));
+}
+
+/** True for a value shaped like an email address, which is never a name. */
+export function looksLikeEmail(value: string): boolean {
+  return value.includes('@');
+}
+
+/**
+ * The word a byline uses for a staff member with no name on file (#1882): the
+ * same words the visit notes already sign with. Never an email, never a uid.
+ */
+export function staffBylineWord(role: StaffRole | null | undefined): string {
+  if (role === 'owner') return 'Office';
+  if (role === 'auntie') return 'Auntie';
+  return 'Staff';
+}
+
+/**
+ * A person's byline (#1882): their name, else the word for their role. An
+ * email stored as a display name is not a name. The picker keeps
+ * `staffLabel` below, which must tell two unnamed Aunties apart (#1857).
+ */
+export function staffByline(member: StaffMember): string {
+  const name = (member.displayName ?? '').trim();
+  return name !== '' && !looksLikeEmail(name) ? name : staffBylineWord(member.role);
 }
 
 /**

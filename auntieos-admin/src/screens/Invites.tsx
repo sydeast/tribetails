@@ -12,6 +12,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { DenScreenHeading, EmptyHint, StatusPill, type DenTone } from '../components/DenScreenKit';
 import './Invites.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Invites, across every household. (Wave 1, item 3)
@@ -274,7 +275,7 @@ export function Invites() {
   return (
     <section className="invites">
       <DenScreenHeading
-        kicker="The Den · Invites"
+        kicker={navKicker('invites')}
         title="Invites"
         subtitle="Every invite across every household, and who never came in. Expired reads Expired the minute it lapses. Sending and revoking live on the household's own Members screen."
       />

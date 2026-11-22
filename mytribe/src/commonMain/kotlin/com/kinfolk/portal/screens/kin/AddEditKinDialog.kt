@@ -811,6 +811,16 @@ private fun OutlinePillButton(label: String, color: Color, onClick: () -> Unit, 
 
 private val SEX_OPTIONS = listOf("Male", "Female", "Unknown")
 
+/** #1852: the one word for this field on every client. The stored field stays `sex`. */
+internal const val KIN_GENDER_LABEL = "GENDER"
+
+/**
+ * The choices the Gender control offers. A stored value outside the three ("F")
+ * is kept as its own choice, so opening and saving the form never rewrites it.
+ */
+internal fun kinGenderOptions(selected: String): List<String> =
+    if (selected.isNotBlank() && SEX_OPTIONS.none { it == selected }) SEX_OPTIONS + selected else SEX_OPTIONS
+
 /** The age the dialog shows for a stored age (whole years), and diffs against. */
 internal fun ageSeedText(ageYears: Double?): String = ageYears?.toInt()?.toString().orEmpty()
 
@@ -1049,10 +1059,9 @@ private fun KinVetPicker(
 @Composable
 private fun SexRadioGroup(selected: String, onSelect: (String) -> Unit) {
     val type = LocalKinfolkTypography.current
-    // A value the admin wrote outside the three ("F") stays selectable.
-    val options = if (selected.isNotBlank() && SEX_OPTIONS.none { it == selected }) SEX_OPTIONS + selected else SEX_OPTIONS
+    val options = kinGenderOptions(selected)
     Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
-        Text("SEX", style = type.sansMeta)
+        Text(KIN_GENDER_LABEL, style = type.sansMeta)
         Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             options.forEach { opt ->
                 Row(

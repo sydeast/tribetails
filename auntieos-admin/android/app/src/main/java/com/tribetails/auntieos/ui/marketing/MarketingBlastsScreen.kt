@@ -54,6 +54,8 @@ import androidx.compose.ui.platform.testTag
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Marketing blasts (scheduled campaigns), AuntieOS Android.
@@ -152,7 +154,7 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
             verticalArrangement = Arrangement.spacedBy(dims.space5),
         ) {
             DenScreenHeading(
-                kicker = "Care Ops · Marketing blasts",
+                kicker = railKicker(RailScreen.MARKETING_BLASTS),
                 title = "Marketing",
                 accentTail = "blasts",
                 subtitle = "A blast is scheduled. Communicate's broadcast sends immediately.",
