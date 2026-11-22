@@ -31,6 +31,8 @@ export function bellAccessibleName(count: number | null | undefined): string {
 /** Where a tapped row goes. `none` stays on the list, read but not opened. */
 export type NotificationTarget =
   | { kind: 'visit'; visitId: string }
+  /** #1865: a whole booking request, by its batch. */
+  | { kind: 'request'; batchId: string }
   | { kind: 'schedule' }
   | { kind: 'invoice'; invoiceId: string }
   | { kind: 'tale'; taleId: string }
@@ -54,9 +56,10 @@ export type NotificationTarget =
  * A booking row's `targetId` is a VISIT for per-visit events and a BATCH for
  * whole-request events (the request itself, its approval, a decline), and the
  * id alone cannot say which. So the visit is opened only when the row carries
- * `visitId`; a row about a whole request, or one carrying no id this client
- * can place, lands on Schedule rather than on a visit page that says "not
- * found".
+ * `visitId`; a row about a whole request opens that request when it names its
+ * batch (#1865, as MyTribe Android's `NotificationTarget.BookingRequest`
+ * does), and one carrying no id this client can place lands on Schedule
+ * rather than on a visit page that says "not found".
  */
 export function notificationTarget(
   item: Pick<NotificationItemDto, 'targetType' | 'targetId' | 'visitId' | 'batchId'>,
@@ -65,7 +68,9 @@ export function notificationTarget(
   switch (item.targetType) {
     case 'booking': {
       const visitId = (item.visitId ?? '').trim();
-      return visitId ? { kind: 'visit', visitId } : { kind: 'schedule' };
+      if (visitId) return { kind: 'visit', visitId };
+      const batchId = (item.batchId ?? '').trim();
+      return batchId ? { kind: 'request', batchId } : { kind: 'schedule' };
     }
     case 'invoice':
       return id ? { kind: 'invoice', invoiceId: id } : { kind: 'none' };
