@@ -1105,9 +1105,10 @@ private fun formatDuration(sec: Int): String =
 internal fun shortDateTime(
     iso: String,
     currentYear: Int = com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0,
+    zone: kotlinx.datetime.TimeZone = com.tribetails.auntieos.web.util.businessTimeZone(),
 ): String =
     runCatchingCancellable {
         if (iso.length < 16) return@runCatchingCancellable iso
-        AdminTime.dateTimeOfWallClock(iso) ?: iso
+        AdminTime.storedDateTime(iso, zone) ?: AdminTime.dateTimeOfWallClock(iso) ?: iso
     }.getOrDefault(iso)
 

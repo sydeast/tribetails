@@ -52,8 +52,8 @@ class ListDateYearTest {
 
     @Test
     fun inboxAndVisitRowsNameTheYearOutsideThisOne() {
-        assertEquals("Jul 2, 2026 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2026-07-02T14:02:00Z", 2026))
-        assertEquals("Jul 2, 2025 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2025-07-02T14:02:00Z", 2026))
+        assertEquals("Jul 2, 2026 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2026-07-02T14:02:00Z", 2026, java.time.ZoneOffset.UTC))
+        assertEquals("Jul 2, 2025 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2025-07-02T14:02:00Z", 2026, java.time.ZoneOffset.UTC))
         assertEquals("Jul 2, 2025 14:02", shortIso("2025-07-02T14:02:00Z", 2026, java.time.ZoneOffset.UTC))
         assertEquals("soon", shortIso("soon", 2026))
     }

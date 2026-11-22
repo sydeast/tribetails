@@ -1110,13 +1110,18 @@ internal fun duplicateCandidateLabel(r: KinCareReport, currentYear: Int): String
  * "Sep 3, 2025 14:02" (#1828: the admin day and 24-hour clock, always with the
  * year; [currentYear] no longer changes it). Echoes non-ISO text.
  */
-internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
+internal fun kinTaleShortDateTime(
+    iso: String,
+    currentYear: Int,
+    zone: kotlinx.datetime.TimeZone = com.tribetails.auntieos.web.util.businessTimeZone(),
+): String =
     runCatchingCancellable {
         parseLegacyKinTaleStamp(iso)?.let { s ->
             // #1828: the admin day and 24-hour clock, always with the year.
             return@runCatchingCancellable AdminTime.dateTime(s.year, s.month, s.day, s.hour, s.minute)
         }
         if (iso.length < 16) return@runCatchingCancellable iso
-        AdminTime.dateTimeOfWallClock(iso) ?: iso
+        // #1828: an instant reads on the business clock, never its UTC characters.
+        AdminTime.storedDateTime(iso, zone) ?: AdminTime.dateTimeOfWallClock(iso) ?: iso
     }.getOrDefault(iso)
 

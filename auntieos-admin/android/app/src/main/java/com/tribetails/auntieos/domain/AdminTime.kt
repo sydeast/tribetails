@@ -47,6 +47,15 @@ object AdminTime {
     /** "Nov 10, 2026" for a calendar day. */
     fun date(day: LocalDate): String = DATE.format(day)
 
+    /**
+     * A stored stamp as "Nov 10, 2026 22:32" on the business [zone]: an instant is
+     * converted, a zone-less value already is that clock. Null when it is neither.
+     * Printing a UTC instant's own characters moved a 22:30 Chicago visit to the
+     * next day.
+     */
+    fun storedDateTime(raw: String, zone: ZoneId): String? =
+        storedBusinessLocal(raw, zone)?.let { DATE_TIME.format(it) }
+
     /** A `yyyy-MM-dd` day key as "Nov 10, 2026"; anything else comes back as it was. */
     fun dayKeyLabel(key: String): String =
         runCatching { date(LocalDate.parse(key)) }.getOrDefault(key)

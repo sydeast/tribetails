@@ -441,7 +441,7 @@ private fun InboxRow(entry: InboxEntry, onClick: () -> Unit) {
             MetaRow(entry)
         }
         Text(
-            text = shortDateTime(entry.timestamp),
+            text = shortDateTime(entry.timestamp, zone = com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current),
             style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
             color = c.textDim.copy(alpha = 0.7f),
             modifier = Modifier.padding(top = 3.dp),
@@ -648,9 +648,14 @@ private fun formatDuration(sec: Int): String =
 
 /** "Sep 3, 2026 14:02" (#1828: the admin shape, always with the year; [currentYear] no longer changes it). */
 @Suppress("UNUSED_PARAMETER")
-internal fun shortDateTime(iso: String, currentYear: Int = java.time.LocalDate.now().year): String =
+internal fun shortDateTime(
+    iso: String,
+    currentYear: Int = java.time.LocalDate.now().year,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+): String =
     runCatching {
         if (iso.length < 16) return@runCatching iso
+        AdminTime.storedDateTime(iso, zone)?.let { return@runCatching it }
         AdminTime.dateTime(
             iso.substring(0, 4).toInt(), iso.substring(5, 7).toInt(), iso.substring(8, 10).toInt(),
             iso.substring(11, 13).toInt(), iso.substring(14, 16).toInt(),

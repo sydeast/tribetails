@@ -1161,12 +1161,18 @@ private fun visitTimestamp(r: KinCareReport): String {
  * timestamp.
  */
 @Suppress("UNUSED_PARAMETER")
-internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
+internal fun kinTaleShortDateTime(
+    iso: String,
+    currentYear: Int,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+): String =
     runCatching {
         parseLegacyKinTaleStamp(iso)?.let { s ->
             return@runCatching AdminTime.dateTime(s.year, s.month, s.day, s.hour, s.minute)
         }
         if (iso.length < 16) return@runCatching iso
+        // #1828: an instant reads on the business clock, never its UTC characters.
+        AdminTime.storedDateTime(iso, zone)?.let { return@runCatching it }
         AdminTime.dateTime(
             iso.substring(0, 4).toInt(), iso.substring(5, 7).toInt(), iso.substring(8, 10).toInt(),
             iso.substring(11, 13).toInt(), iso.substring(14, 16).toInt(),

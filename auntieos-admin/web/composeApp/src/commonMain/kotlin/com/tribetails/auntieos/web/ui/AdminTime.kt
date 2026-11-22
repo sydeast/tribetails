@@ -43,6 +43,20 @@ object AdminTime {
         return dateTime(y.toInt(), mo.toInt(), d.toInt(), h.toInt(), mi.toInt())
     }
 
+    /**
+     * A stored stamp as "Nov 10, 2026 22:32" on the business [zone]: an instant is
+     * converted, a zone-less value already is that clock. Null when it is neither.
+     * Printing a UTC instant's own characters moved a 22:30 Chicago visit to the
+     * next day.
+     */
+    fun storedDateTime(raw: String, zone: kotlinx.datetime.TimeZone): String? =
+        com.tribetails.auntieos.web.screens.schedule.businessDateTimeOf(raw.trim(), zone)?.let { dateTime(it) }
+
+    /** A stored stamp's business day as "Nov 10, 2026", or null when it has no readable time. */
+    fun storedDay(raw: String, zone: kotlinx.datetime.TimeZone): String? =
+        com.tribetails.auntieos.web.screens.schedule.businessDateTimeOf(raw.trim(), zone)
+            ?.let { date(it.year, it.monthNumber, it.dayOfMonth) }
+
     /** A `yyyy-MM-dd` day key as "Nov 10, 2026"; anything else comes back as it was. */
     fun dayKeyLabel(key: String): String {
         val m = DAY_KEY.matchEntire(key) ?: return key
