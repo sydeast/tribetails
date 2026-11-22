@@ -106,7 +106,7 @@ vi.mock('../api/templateImport', async (orig) => ({
   planSeedTemplateImport,
   importSeedTemplates: vi.fn(),
 }));
-import { Templates } from './Templates';
+import { Templates, titleWithBreaks } from './Templates';
 import { TEMPLATE_BANK_EMPTY_COPY } from '../lib/templateFormat';
 
 function tpl(over: Partial<TemplateSummary>): TemplateSummary {
@@ -934,5 +934,19 @@ describe('#953 Old format badge', () => {
     const card = (await screen.findByText('Visual one')).closest('li')!;
     expect(within(card).queryByText('Old format')).toBeNull();
     expect(within(card).queryByText('Not editable here')).toBeNull();
+  });
+});
+
+describe('titleWithBreaks (#1889)', () => {
+  it('gives a key shown as a title a break after each separator, and keeps its words', () => {
+    const { container } = render(<span>{titleWithBreaks('security.failedLogin.attempts.operator')}</span>);
+    expect(container.querySelectorAll('wbr')).toHaveLength(3);
+    expect(container.textContent).toBe('security.failedLogin.attempts.operator');
+  });
+
+  it('leaves a title with spaces as it is', () => {
+    const { container } = render(<span>{titleWithBreaks('Visit reminder v1.2')}</span>);
+    expect(container.querySelectorAll('wbr')).toHaveLength(0);
+    expect(container.textContent).toBe('Visit reminder v1.2');
   });
 });

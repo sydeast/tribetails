@@ -517,7 +517,7 @@ private fun TemplateCard(
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(tpl.title, style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+        Text(titleWithBreaks(tpl.title), style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
 
         // Category pill + templateId key (the model carries both).
         if (!tpl.category.isNullOrBlank() || tpl.templateId.isNotBlank()) {
@@ -1002,6 +1002,15 @@ private fun TemplateEditorOverlay(
 /** #1614: "Subject is required." once the operator has touched the field and left it blank. */
 internal fun requiredFieldHint(label: String, value: String, touched: Boolean): String? =
     if (touched && value.isBlank()) "$label is required." else null
+
+/**
+ * #1889: a title that is really a key ("security.failedLogin.attempts.operator")
+ * broke mid-word. A zero-width space after each separator lets it wrap between
+ * its parts. Display only; a title with spaces already wraps at them. Pure.
+ */
+internal fun titleWithBreaks(title: String): String =
+    if (title.trim().any { it.isWhitespace() }) title
+    else title.replace(Regex("([._-])(?=.)"), "$1\u200B")
 
 /**
  * The notice after a template is saved (#1747): its title, or "the untitled

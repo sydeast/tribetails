@@ -653,7 +653,7 @@ export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }:
                     className="templates__search-input"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search templates by title or key…"
+                    placeholder="Search by title or key…"
                     aria-label="Search templates by title or key"
                   />
                   {/* The mock's `.kbd` span, and it is honest: the binding is
@@ -737,6 +737,15 @@ export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }:
 export function keyWithBreaks(id: string): ReactNode[] {
   return id.split(/(?<=[._-])/).flatMap((part, i) => (i === 0 ? [part] : [<wbr key={i} />, part]));
 }
+
+/**
+ * #1889: a template with no title of its own shows its key as the title, and
+ * the title line broke it mid-word. A title with spaces already wraps at them.
+ */
+export function titleWithBreaks(title: string): ReactNode {
+  return /\s/.test(title.trim()) ? title : keyWithBreaks(title);
+}
+
 interface TemplateCardProps {
   tpl: TemplateSummary;
   /**
@@ -802,7 +811,7 @@ function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
   // in the `title` attribute, and opening the card puts it in the editor.
   const body = (
     <>
-      <span className="templates__card-name">{templateRowTitle(tpl)}</span>
+      <span className="templates__card-name">{titleWithBreaks(templateRowTitle(tpl))}</span>
 
       <span className="templates__card-meta">
         {category ? <StatusPill label={category} tone="purple" size="compact" /> : null}
