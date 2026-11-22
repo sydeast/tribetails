@@ -952,4 +952,25 @@ describe('KinfolkEdit: the first press of Save always lands (#1851)', () => {
     expect(fireEvent.mouseDown(save)).toBe(false);
     expect(save.closest('[data-testid="kfedit-save-hold"]')).not.toBeNull();
   });
+  it.each([['Enter', '{Enter}'], ['Space', ' ']])('Tab reaches Save and %s presses it', async (_name, key) => {
+    mount();
+    const first = await screen.findByLabelText('First name');
+    await userEvent.clear(first);
+    const save = screen.getByRole('button', { name: 'Save changes' });
+    save.focus();
+    expect(save).toHaveFocus();
+    await userEvent.keyboard(key);
+    // The keyboard press ran the save: the empty name is refused and focused.
+    await waitFor(() => expect(first).toHaveFocus());
+    expect(first).toHaveAttribute('aria-invalid', 'true');
+  });
+  it('Tab moves from the last control to Save with the guard in place', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    const save = screen.getByRole('button', { name: 'Save changes' });
+    const row = save.closest('.kfedit__actions-right') as HTMLElement;
+    within(row).getByRole('button', { name: 'Cancel' }).focus();
+    await userEvent.tab();
+    expect(save).toHaveFocus();
+  });
 });
