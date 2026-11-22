@@ -435,6 +435,8 @@ class BusinessRulesPanelsTest {
         assertEquals("Remind kinfolk 24 to 48 hours before a visit", VISIT_REMINDER_TOGGLE_TITLE)
         assertTrue(VISIT_REMINDER_NOTE.contains("$VISIT_REMINDER_TIMING each visit"))
         assertFalse(VISIT_REMINDER_TOGGLE_DESCRIPTION.contains("day before"))
+        // #1884: the switch says it decides, and what the other one is for.
+        assertTrue(VISIT_REMINDER_TOGGLE_DESCRIPTION.contains("none go out, whatever Notifications says"))
     }
 
     @Test

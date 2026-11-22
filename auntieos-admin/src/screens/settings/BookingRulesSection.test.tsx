@@ -6,7 +6,7 @@ import { DEFAULT_BUSINESS_SETTINGS, mergeBusinessSettings, type BusinessSettings
 import { BookingRulesSection, bookingRulesPatch, TIME_BLOCKS_NEED_A_BLOCK } from './BookingRulesSection';
 import { VisitsTrackingSection, visitsTrackingPatch } from './VisitsTrackingSection';
 import { NotificationScheduleSection } from './NotificationScheduleSection';
-import { VISIT_REMINDER_TIMING } from '../../lib/businessOperations';
+import { VISIT_REMINDER_SWITCH_NOTE, VISIT_REMINDER_TIMING } from '../../lib/businessOperations';
 
 /**
  * ISSUE #519. Each case here names a field the three admin clients decoded and
@@ -514,6 +514,8 @@ describe('BookingRulesSection, adding a block (#1612)', () => {
 describe('visit reminder timing reads the same in both sections (#1612)', () => {
   it('states one timing under Booking rules and under Notifications', () => {
     const { unmount } = render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    // #1884: the switch says it decides, and what the Notifications row is for.
+    expect(VISIT_REMINDER_SWITCH_NOTE).toContain('none go out, whatever Notifications says');
     expect(screen.getByText(`Remind kinfolk ${VISIT_REMINDER_TIMING} a visit`)).toBeInTheDocument();
     unmount();
     render(<NotificationScheduleSection data={settings()} onSave={onSave} />);
