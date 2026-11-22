@@ -612,7 +612,7 @@ fun HomeScreen(
                                 )
                             }
                             DashKey.UNREAD_MESSAGES -> DenPanel(
-                                title = "Unread client messages",
+                                title = "Unread Kinfolk messages",
                                 subtitle = "Threads waiting on a reply, newest first.",
                                 modifier = Modifier.fillMaxWidth(),
                             ) {

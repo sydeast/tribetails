@@ -132,7 +132,7 @@ describe('Schedule, a visit under way', () => {
     expect(within(card).getByRole('heading', { level: 2 })).toHaveTextContent('Auntie Maya is at your place with Biscuit, Miso');
     expect(within(card).getByText('VISIT IN PROGRESS')).toBeInTheDocument();
     expect(within(card).getByText('Biscuit, Miso', { selector: 'b' })).toBeInTheDocument();
-    expect(within(card).queryByText('Your kin')).toBeNull();
+    expect(within(card).queryByText('Your Kin')).toBeNull();
     expect(await within(card).findByText(/Arrived 11:16 PM/)).toBeInTheDocument();
     expect(card.querySelector('a.live-open')).toHaveAttribute('data-params', JSON.stringify({ visitId: 'v1' }));
     expect(mocks.breadcrumbsFor).toHaveBeenCalledWith('vis_v1');
@@ -186,7 +186,29 @@ describe('Schedule, a visit under way', () => {
     renderWith({ ...visit('active', 'active'), kinNames: [] }, true);
     const card = await screen.findByTestId('live-visit');
     expect(within(card).getByRole('heading', { level: 2 })).toHaveTextContent('Auntie Maya is at your place');
-    expect(within(card).getByText('Your kin')).toBeInTheDocument();
+    expect(within(card).getByText('Your Kin')).toBeInTheDocument();
+  });
+
+  // #1835: "the moment they wraps up", a lower-case "Your kin" and "Waiting for the first GPS ping".
+  it('#1835: the arrived card reads in plain, correct words, with or without a name on record', async () => {
+    renderWith({ ...visit('active', 'active'), auntieDisplayName: null as unknown as string }, true);
+    const card = await screen.findByTestId('live-visit');
+    expect(card).toHaveTextContent('the moment your Auntie wraps up.');
+    expect(card).not.toHaveTextContent(/they wraps/);
+    expect(within(card).getByText('The route shows here as your Auntie moves.')).toBeInTheDocument();
+    expect(card).not.toHaveTextContent(/GPS ping/);
+  });
+
+  it('#1835: a named Auntie wraps up by name', async () => {
+    renderWith(visit('active', 'active'), true);
+    const card = await screen.findByTestId('live-visit');
+    expect(card).toHaveTextContent('the moment Auntie Maya wraps up.');
+  });
+
+  it('#1835: on the way, the same card names her the same way', async () => {
+    renderWith(visit('enRoute', 'enRoute'), true);
+    const card = await screen.findByTestId('live-visit');
+    expect(card).toHaveTextContent('starts when Auntie Maya arrives.');
   });
 
   it('the replay read failing does not take the card or the list away', async () => {

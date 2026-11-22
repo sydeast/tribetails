@@ -1301,7 +1301,8 @@ export async function requestBookingHandler(
       actorUid: uid,
       targetUid: batchId,
       targetCollection: `families/${kinfolkId}/bookings/${batchId}`,
-      description: `Kinfolk submitted ${normalized.length} visit(s) (${pattern})`,
+      // #1818: words. The pattern was its stored key ("(individual)").
+      description: (await import('../lib/activityWords.js')).visitsRequestedWords(normalized.length, pattern),
       payload: { kinfolkId, batchId, count: normalized.length, pattern, requestBatchId: batchId },
     }).catch((err) => {
       logEvent({

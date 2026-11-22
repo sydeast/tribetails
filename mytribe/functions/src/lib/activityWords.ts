@@ -16,16 +16,15 @@
  */
 
 import { invoiceLeadName, invoiceName } from './invoiceNaming';
+import { brandWords } from './auditEvents';
 
-/** `account.welcome.kinfolk` as "Account welcome kinfolk": the last resort for a key with no label. */
+/**
+ * `account.welcome.kinfolk` as "Account welcome Kinfolk": the last resort for a
+ * key with no label. #1881: brand words keep their casing ("KinCare booking
+ * confirm", never "Kincare booking confirm").
+ */
 export function humanizeKey(raw: string): string {
-  const words = raw
-    .trim()
-    .split(/[._\-\s]+/)
-    .filter((w) => w !== '')
-    .join(' ')
-    .toLowerCase();
-  return words === '' ? '' : words.charAt(0).toUpperCase() + words.slice(1);
+  return brandWords(raw);
 }
 
 /** How a channel reads in a sentence. */
@@ -367,6 +366,52 @@ export function visitsCreatedWords(count: number, pattern: string): string {
   const p = pattern.trim();
   const words = PATTERN_WORDS[p] ?? humanizeKey(p).toLowerCase();
   return `Created ${count} ${count === 1 ? 'visit' : 'visits'}${words === '' ? '' : ` (${words})`}`;
+}
+
+/**
+ * #1818: the lines that carried no sentence, so the Activity Log printed
+ * "<KEY> uid=<id>". Counts and invoice numbers only: the household, the visit
+ * and the request stay on the entry's own fields.
+ */
+function visitCount(n: number): string {
+  return `${n} ${n === 1 ? 'visit' : 'visits'}`;
+}
+function ofVisits(done: number, failed: number): string {
+  return failed > 0 ? `${done} of ${visitCount(done + failed)}; ${failed} could not be changed` : visitCount(done);
+}
+/** `Approved a visit request: 3 visits`, or `... 2 of 3 visits; 1 could not be changed`. */
+export function bookingSeriesApprovedWords(done: number, failed: number): string {
+  return `Approved a visit request: ${ofVisits(done, failed)}`;
+}
+/** `Cancelled a visit series: 4 visits`. */
+export function bookingSeriesCancelledWords(done: number, failed: number): string {
+  return `Cancelled a visit series: ${ofVisits(done, failed)}`;
+}
+/** `Created a visit`, or `Recorded a past visit` for one entered after the fact. */
+export function visitCreatedWords(recordedAfterTheFact: boolean): string {
+  return recordedAfterTheFact ? 'Recorded a past visit' : 'Created a visit';
+}
+/** `Kinfolk asked for 2 visits (weekly)`. */
+export function visitsRequestedWords(count: number, pattern: string): string {
+  const p = pattern.trim();
+  const words = PATTERN_WORDS[p] ?? humanizeKey(p).toLowerCase();
+  return `Kinfolk asked for ${visitCount(count)}${words === '' ? '' : ` (${words})`}`;
+}
+/** `Created invoice 1042`, or `Created an invoice with no number`. */
+export function invoiceCreatedWords(invoiceNumber: unknown): string {
+  return `Created ${invoiceName(invoiceNumber)}`;
+}
+/** `Invoice 1042 paid by card`. */
+export function cardPaymentWords(invoiceNumber: unknown): string {
+  return `${invoiceLeadName(invoiceNumber)} paid by card`;
+}
+/** `A card payment failed on invoice 1042`. */
+export function cardPaymentFailedWords(invoiceNumber: unknown): string {
+  return `A card payment failed on ${invoiceName(invoiceNumber)}`;
+}
+/** A KinTale share link that ran out. */
+export function shareLinkExpiredWords(): string {
+  return 'A KinTale share link expired';
 }
 
 /** The KinTale triage callables. The KinTale is the entry's target. */

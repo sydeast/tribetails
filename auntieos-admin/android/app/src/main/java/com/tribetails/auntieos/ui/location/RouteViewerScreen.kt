@@ -524,7 +524,7 @@ internal fun buildRouteShareSummary(
         appendLine("Distance:   ${"%.2f".format(km)} km")
         appendLine("Duration:   ${minutes} min")
         appendLine("Avg speed:  ${"%.1f".format(kmh)} km/h")
-        if (route.visitVerified) appendLine("Verified at client home: yes")
+        if (route.visitVerified) appendLine("Verified at the household's home: yes")
         if (route.arrivalTime.isNotBlank())   appendLine("Arrived:    ${route.arrivalTime}")
         if (route.departureTime.isNotBlank()) appendLine("Departed:   ${route.departureTime}")
         if (checkpoints.isNotEmpty()) {

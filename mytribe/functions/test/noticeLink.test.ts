@@ -52,6 +52,13 @@ describe("noticeLink: a household's copy opens its item in MyTribe", () => {
       `${PORTAL_URL}/schedule/v1`,
     );
   });
+
+  it('#1865: a whole booking request, the confirmation the household gets when it is approved', () => {
+    expect(
+      household('kincare.booking.confirm', { kinfolkId: 'fam1', batchId: 'b1', bookingId: 'b1' }, 'booking', 'b1'),
+    ).toBe(`${PORTAL_URL}/schedule/booking/b1`);
+  });
+
   it('a KinTale', () => {
     expect(household('kintale.published', { kinfolkId: 'fam1', taleId: 't1' }, 'kintale', 't1')).toBe(
       `${PORTAL_URL}/kintales?tale=t1`,

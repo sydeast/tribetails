@@ -349,7 +349,7 @@ fun CoveragePackageScreen(
                 kicker = "Care Ops · Pricing",
                 title = "Coverage",
                 accentTail = "packages.",
-                subtitle = "Set this client's rules, then build packages: mix any visit lengths, pick which nights get an overnight. Lengths and prices come from your KinCare types in Settings.",
+                subtitle = "Set this household's rules, then build packages: mix any visit lengths, pick which nights get an overnight. Lengths and prices come from your KinCare types in Settings.",
             )
 
             uiState.error?.let { msg ->
@@ -365,7 +365,7 @@ fun CoveragePackageScreen(
             }
 
             // ── coverage rules ───────────────────────────────────────────────
-            DenPanel(title = "Coverage rules for this client", subtitle = "Per-client: they travel with this quote, not with your KinCare types. Seed the suggestions and gap warnings.") {
+            DenPanel(title = "Coverage rules for this household", subtitle = "Per household: they travel with this quote, not with your KinCare types. Seed the suggestions and gap warnings.") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         TimeField(label = "Day starts", value = rules.wakeStart, onChange = { v -> patchRules { it.copy(wakeStart = v) } }, modifier = Modifier.weight(1f))
@@ -444,7 +444,7 @@ fun CoveragePackageScreen(
             // ── coverage window ──────────────────────────────────────────────
             DenPanel(title = "Coverage window", subtitle = "The stay's dates. Packages price across this range.") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AuntieField(value = clientName, onValueChange = { clientName = it }, label = "Client (optional)", placeholder = "Kinfolk name", modifier = Modifier.fillMaxWidth())
+                    AuntieField(value = clientName, onValueChange = { clientName = it }, label = "Kinfolk (optional)", placeholder = "Kinfolk name", modifier = Modifier.fillMaxWidth())
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         DateField(label = "Start", value = startDate, onClick = { datePickerFor = DateTarget.START }, modifier = Modifier.weight(1f))
                         DateField(label = "End", value = endDate, onClick = { datePickerFor = DateTarget.END }, error = dateError, modifier = Modifier.weight(1f))
@@ -466,7 +466,7 @@ fun CoveragePackageScreen(
             // ── packages ─────────────────────────────────────────────────────
             DenPanel(
                 title = "Packages",
-                subtitle = "Lean, Balance and Premium are built from this client's rules the moment a quote opens; build your own beside them. Mix any visit lengths, a 15-min lunch check-in with a 60-min evening, however you like.",
+                subtitle = "Lean, Balance and Premium are built from this household's rules the moment a quote opens; build your own beside them. Mix any visit lengths, a 15-min lunch check-in with a 60-min evening, however you like.",
                 trailing = { PrimaryButton(label = "New package", onClick = { newPackage("Package ${packages.size + 1}", visitsFromPinned(rules.pinnedTimes)) }, leading = { Icon(Lucide.Plus, contentDescription = null, tint = c.background, modifier = Modifier.size(14.dp)) }) },
             ) {
                 if (suggestions.isNotEmpty()) {
@@ -767,7 +767,7 @@ private fun DayDetailRow(
         }
         Text(
             if (row.isOvernight && row.overnightStartMin != null) "Overnight — ${row.overnightLabel} from ${minutesToTime(row.overnightStartMin.toDouble())}"
-            else if (row.canOvernight) "No overnight" else "Client returns — no overnight",
+            else if (row.canOvernight) "No overnight" else "Household home, no overnight",
             style = AuntieTheme.typography.bodySmall, color = c.textDim,
         )
 
@@ -896,4 +896,4 @@ private fun printQuote(context: Context, clientName: String, quote: String) {
 internal const val PINNED_VISITS_LABEL = "Pinned visits"
 
 /** #1595: the pinned-visits info tip. It used to run on after the label as standing copy. */
-internal const val PINNED_VISITS_TIP = "This client's non-negotiables. New blank packages start with these."
+internal const val PINNED_VISITS_TIP = "This household's non-negotiables. New blank packages start with these."

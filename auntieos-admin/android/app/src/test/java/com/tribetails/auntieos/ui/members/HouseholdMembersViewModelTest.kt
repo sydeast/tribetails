@@ -229,7 +229,7 @@ class HouseholdMembersViewModelTest {
 
             val s = vm.uiState.value
             assertFalse(s.members.single().permissions.billingFull)
-            assertTrue(s.permissionError!!.contains("Could not save the access for marcus@example.com"))
+            assertTrue(s.permissionError!!.contains("Could not save the access for Spouse"))
             assertTrue(s.permissionError.contains("Admin claim required"))
             assertNull(s.savingPermission)
         }
@@ -246,7 +246,9 @@ class HouseholdMembersViewModelTest {
         advanceUntilIdle()
 
         assertTrue(vm.uiState.value.members.single().permissions.kinEdit)
-        assertTrue(vm.uiState.value.toast!!.contains("kin_edit"))
+        // #1853: the permission in words, never its stored key.
+        assertTrue(vm.uiState.value.toast!!.contains("Granted edit kin for Spouse"))
+        assertFalse(vm.uiState.value.toast!!.contains("kin_edit"))
     }
 
     @Test fun `a second toggle is refused while one is in flight`() = runTest(testDispatcher) {
@@ -412,25 +414,44 @@ class HouseholdMembersViewModelTest {
         assertEquals("P", householdInitial("Pruitt"))
         assertEquals("F", householdInitial("fam1"))
     }
-    @Test fun `the where line is the id alone until the roster is read, never a zero count`() {
-        assertEquals("familyId: fam1", whereLine("fam1", HouseholdMembersUiState()))
-        assertEquals(
-            "familyId: fam1",
-            whereLine("fam1", HouseholdMembersUiState(membersError = "boom")),
-        )
+
+    @Test fun `the where line waits for both reads, never a zero count, and never an id or stored key`() {
+        assertNull(whereLine(HouseholdMembersUiState()))
+        assertNull(whereLine(HouseholdMembersUiState(membersError = "boom")))
         val primary = member(uid = "p1").copy(role = MembersRepository.MemberRole.PRIMARY)
+        assertNull(whereLine(HouseholdMembersUiState(members = listOf(primary), membersLoaded = true)))
         assertEquals(
-            "familyId: fam1 · 1 member · 1 PRIMARY, 0 SECONDARY",
-            whereLine("fam1", HouseholdMembersUiState(members = listOf(primary), membersLoaded = true)),
+            "1 person · 1 primary, 0 secondary",
+            whereLine(HouseholdMembersUiState(members = listOf(primary), membersLoaded = true, peopleLoaded = true)),
         )
         assertEquals(
-            "familyId: fam1 · 2 members · 1 PRIMARY, 1 SECONDARY",
+            "2 people · 1 primary, 1 secondary",
             whereLine(
-                "fam1",
-                HouseholdMembersUiState(members = listOf(primary, member()), membersLoaded = true),
+                HouseholdMembersUiState(members = listOf(primary, member()), membersLoaded = true, peopleLoaded = true),
             ),
         )
     }
+
+    /** #1844: the header counted 0 secondary above a panel that listed one with no portal account. */
+    @Test fun `the where line counts a secondary with no portal account, as the panel does`() {
+        val primary = member(uid = "p1").copy(role = MembersRepository.MemberRole.PRIMARY)
+        val state = HouseholdMembersUiState(
+            members = listOf(primary),
+            membersLoaded = true,
+            peopleLoaded = true,
+            people = listOf(
+                MembersRepository.SecondaryPerson("p9", "Rae East", null, null, MembersRepository.PersonAccess.NONE, null),
+            ),
+        )
+        assertEquals("2 people · 1 primary, 1 secondary", whereLine(state))
+        assertEquals("1 person", secondaryMeta(state))
+    }
+
+    @Test fun `a permission toast names the permission in words`() {
+        assertEquals("full billing", permissionWords(MembersRepository.PermissionKey.BILLING_FULL))
+        assertEquals("edit kin", permissionWords(MembersRepository.PermissionKey.KIN_EDIT))
+    }
+
     @Test fun `member capsules take the mock tints, title case, purple primary and teal secondary`() {
         assertEquals("Active", memberStatusLabel(MembersRepository.MemberStatus.ACTIVE))
         assertEquals("Suspended", memberStatusLabel(MembersRepository.MemberStatus.SUSPENDED))
@@ -444,8 +465,8 @@ class HouseholdMembersViewModelTest {
         MembersRepository.InviteStatus.entries.forEach { status ->
             assertEquals(status.name, invitePillTone(status), inviteStatusTone(status))
         }
-        assertEquals("PENDING / EMAIL_SENT · 2", inviteGroupNote(INVITE_GROUPS[0], 2))
-        assertEquals("ACCEPTED · 1", inviteGroupNote(INVITE_GROUPS[1], 1))
+        // #1853: the count alone, never the stored status keys.
+        assertEquals("2", inviteGroupNote(2))
     }
 
     // ── THERE IS NO CONTACTS LIST (ruling 2026-09-27, #829) ──────────────────
@@ -499,11 +520,11 @@ class HouseholdMembersViewModelTest {
     }
 
     @Test fun `the panel note counts secondaries, and only once both reads land`() {
-        assertNull(secondaryMeta(HouseholdMembersUiState(), 0))
-        assertNull(secondaryMeta(HouseholdMembersUiState(membersLoaded = true), 1))
+        assertNull(secondaryMeta(HouseholdMembersUiState()))
+        assertNull(secondaryMeta(HouseholdMembersUiState(membersLoaded = true, members = listOf(member()))))
         assertEquals(
-            "1 of role: SECONDARY",
-            secondaryMeta(HouseholdMembersUiState(membersLoaded = true, peopleLoaded = true), 1),
+            "1 person",
+            secondaryMeta(HouseholdMembersUiState(membersLoaded = true, peopleLoaded = true, members = listOf(member()))),
         )
     }
 
@@ -516,13 +537,14 @@ class HouseholdMembersViewModelTest {
         val state = HouseholdMembersUiState(
             membersLoaded = true,
             peopleLoaded = true,
+            members = listOf(member(uid = "u9")),
             people = listOf(
                 MembersRepository.SecondaryPerson("p1", "Rae East", null, null, MembersRepository.PersonAccess.NONE, null),
                 MembersRepository.SecondaryPerson("p2", "Jo Park", null, null, MembersRepository.PersonAccess.INVITED, null),
                 MembersRepository.SecondaryPerson("p3", "Ann Doe", null, null, MembersRepository.PersonAccess.ACTIVE, "u9"),
             ),
         )
-        assertEquals("3 of role: SECONDARY", secondaryMeta(state, 1))
+        assertEquals("3 people", secondaryMeta(state))
     }
 
     // ── secondary kinfolk person records (2026-09-27 Q3) ────────────────────

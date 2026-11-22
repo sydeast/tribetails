@@ -128,6 +128,9 @@ export function NotificationsList() {
       case 'visit':
         void navigate({ to: '/schedule/$visitId', params: { visitId: target.visitId } });
         break;
+      case 'request':
+        void navigate({ to: '/schedule/booking/$batchId', params: { batchId: target.batchId } });
+        break;
       case 'schedule':
         void navigate({ to: '/schedule' });
         break;

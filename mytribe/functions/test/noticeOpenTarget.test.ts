@@ -22,10 +22,20 @@ describe('noticeOpenTarget, a household copy (#2259)', () => {
     expect(open.data).toEqual({ targetType: 'booking', targetId: 'v1', visitId: 'v1', batchId: 'b1' });
   });
 
-  it('a notice about a whole request opens Schedule on the web and names the request for Android', () => {
+  it('#1865: a notice about a whole request opens that request on the web and names it for Android', () => {
     const open = household('kincare.request.declined', 'booking', 'b7', { batchId: 'b7' });
-    expect(open.route).toBe('/schedule');
+    expect(open.route).toBe('/schedule/booking/b7');
     expect(open.data).toEqual({ targetType: 'booking', targetId: 'b7', batchId: 'b7' });
+    const confirmed = household('kincare.booking.confirm', 'booking', 'b8', { kinfolkId: 'fam1', batchId: 'b8', bookingId: 'b8' });
+    expect(confirmed.route).toBe('/schedule/booking/b8');
+  });
+
+  it('a booking notice that names neither a visit nor a request still opens Schedule', () => {
+    expect(household('kincare.request.declined', 'booking', 'b7').route).toBe('/schedule');
+  });
+
+  it('#1865: a request id stays one path part', () => {
+    expect(householdRouteFor('booking', '', '', '../account?x=1')).toBe('/schedule/booking/..%2Faccount%3Fx%3D1');
   });
 
   it('a KinTale notice opens that KinTale, and comments across several open the KinTales list', () => {
@@ -74,7 +84,7 @@ describe('noticeOpenTarget, a household copy (#2259)', () => {
         expect(open.data['targetType'] ?? '', `${key} ${targetType}`).toBe(item.targetType);
         expect(open.data['targetId'] ?? '', `${key} ${targetType}`).toBe(item.targetId);
         expect(open.route, `${key} ${targetType}`).toBe(
-          householdRouteFor(item.targetType, item.targetId, item.visitId ?? ''),
+          householdRouteFor(item.targetType, item.targetId, item.visitId ?? '', item.batchId ?? ''),
         );
       }
     }

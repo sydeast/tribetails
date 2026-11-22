@@ -28,7 +28,12 @@ import {
   unstampedStateInfo,
   type InvoiceAction,
 } from '../lib/invoiceFormat';
-import { checkInvoiceTotal, formatCentsUsd, storedTotalSourceLabel } from '../lib/invoiceReconcile';
+import {
+  INVOICE_TOTAL_MISMATCH_TITLE,
+  checkInvoiceTotal,
+  formatCentsUsd,
+  invoiceTotalMismatchText,
+} from '../lib/invoiceReconcile';
 import { APP_ONLY_NOTE, lastReminderLabel, reminderOutcomeMessage } from '../lib/invoiceReminder';
 import {
   sendInvoiceReminder,
@@ -662,7 +667,7 @@ interface InvoiceDetailProps {
  */
 const INVOICE_HEADER_TEXT_LIMITS = {
   kinfolkName: { label: 'Household', max: 200 },
-  client: { label: 'Client', max: 200 },
+  client: { label: 'Kinfolk', max: 200 },
   address: { label: 'Address', max: 500 },
   discount: { label: 'Discount note', max: 200 },
 } as const;
@@ -2146,18 +2151,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             which number is the true one, so the banner's whole job is to make
             sure they are looking at both. See lib/invoiceReconcile.ts. */}
         {totalCheck.disagrees && totalCheck.storedTotalCents !== null && (
-          <Banner tone="error" title="This invoice disagrees with itself">
+          <Banner tone="error" title={INVOICE_TOTAL_MISMATCH_TITLE}>
             <p>
-              The line items below add up to{' '}
-              <strong>{formatCentsUsd(totalCheck.derivedTotalCents)}</strong>, but{' '}
-              {storedTotalSourceLabel(totalCheck.storedFrom!)} says{' '}
-              <strong>{formatCentsUsd(totalCheck.storedTotalCents)}</strong>.
-            </p>
-            <p>
-              Nothing has been changed to make them match, and nothing will be. The household is
-              billed the stored figure. This can happen when an invoice is written outside the
-              normal edit path. Re-saving the line items below will recompute the stored total from
-              them, if the lines are the version you want to keep.
+              {invoiceTotalMismatchText(
+                totalCheck.derivedTotalCents,
+                totalCheck.storedTotalCents,
+                canEdit && moneyEditable,
+              )}
             </p>
           </Banner>
         )}
@@ -2359,13 +2359,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 />
               </label>
               <label className="invoice-detail__field">
-                <span className="invoice-detail__field-label">Client</span>
+                <span className="invoice-detail__field-label">Kinfolk</span>
                 <input
                   className="invoice-detail__field-input"
                   value={editing.client}
                   onChange={(e) => setEditing({ ...editing, client: e.target.value })}
                   disabled={busy}
-                  aria-label="Invoice client"
+                  aria-label="Invoice Kinfolk"
                 />
               </label>
               <label className="invoice-detail__field">
