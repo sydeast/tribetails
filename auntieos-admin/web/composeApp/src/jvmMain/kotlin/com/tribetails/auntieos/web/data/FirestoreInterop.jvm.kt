@@ -306,6 +306,10 @@ internal actual fun platformInvoicesStream(): Flow<FirestoreResult<List<Invoice>
 // screen says it cannot tell, which is the honest answer there too.
 internal actual suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject? =
     if (JvmFirestoreFixtures.invoices != null) null else JvmFirestoreRest.getDocPlain("invoices", invoiceId)
+// #1871: a fixture run reads its own fixture back, as the server would.
+internal actual suspend fun platformInvoiceDoc(invoiceId: String): Invoice? =
+    JvmFirestoreFixtures.invoices?.firstOrNull { it._id == invoiceId }
+        ?: if (JvmFirestoreFixtures.invoices != null) null else JvmFirestoreRest.getDoc<Invoice>("invoices", invoiceId)
 internal actual suspend fun platformVisitStepNoticeDoc(noticeId: String): kotlinx.serialization.json.JsonObject? =
     if (JvmFirestoreFixtures.sessions != null) null else JvmFirestoreRest.getDocPlain("visit_step_notices", noticeId)
 internal actual fun platformActivityStream(): Flow<FirestoreResult<List<ActivityLogEntry>>> =

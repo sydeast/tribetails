@@ -175,6 +175,19 @@ class InvoiceRepository(
     }.onFailure { AuntieLog.e("Failed to get invoice $invoiceId", it) }
 
     /**
+     * #1871: one invoice FROM THE SERVER, right after an edit was saved.
+     * Source.SERVER, never the cache: the cached copy is the one from before the
+     * press. Null when the read fails or the invoice is gone.
+     */
+    suspend fun readInvoiceFromServer(invoiceId: String): Invoice? =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            firestore.collection("invoices").document(invoiceId)
+                .get(com.google.firebase.firestore.Source.SERVER).await()
+                .toObject(Invoice::class.java)
+        }.onFailure { AuntieLog.w("Re-read after edit failed for invoice $invoiceId", it) }.getOrNull()
+
+    /**
      * #1567: re-reads one invoice FROM THE SERVER after a send got no answer, and
      * returns the marks [com.tribetails.auntieos.domain.sendOutcomeAfterSilence]
      * compares. Source.SERVER, never the cache: the cached copy is the one from

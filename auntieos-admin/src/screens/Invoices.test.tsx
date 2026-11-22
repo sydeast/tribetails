@@ -84,7 +84,12 @@ const {
   listUninvoicedSessions,
   setSessionDoNotInvoice,
   previewInvoiceNotice,
+  updateInvoice,
+  readInvoiceFromServer,
 } = vi.hoisted(() => ({
+  updateInvoice: vi.fn(),
+  // #1871: the server read after an edit. Never left to reach the network.
+  readInvoiceFromServer: vi.fn(),
   createInvoice: vi.fn(),
   createQuote: vi.fn(),
   sendInvoiceReminder: vi.fn(),
@@ -126,9 +131,33 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   listUninvoicedSessions,
   setSessionDoNotInvoice,
   previewInvoiceNotice,
+  updateInvoice,
 }));
+vi.mock('../api/invoiceServerRead', () => ({ readInvoiceFromServer }));
 
-import { Invoices } from './Invoices';
+import { Invoices, fresherInvoice } from './Invoices';
+
+function fakeStamp(ms: number): Timestamp {
+  return { toMillis: () => ms } as unknown as Timestamp;
+}
+
+describe('#1871 fresherInvoice', () => {
+  const at = (ms: number | null, total: number) =>
+    ({ _id: 'inv1', total, ...(ms === null ? {} : { updatedAt: fakeStamp(ms) }) }) as unknown as InvoiceEntry;
+  it('keeps the saved copy while the listener is older', () => {
+    expect(fresherInvoice(at(1000, 25), at(2000, 1025))?.total).toBe(1025);
+  });
+  it('hands back to the listener once it has caught up, or moved past', () => {
+    expect(fresherInvoice(at(2000, 1025), at(2000, 1025))?.total).toBe(1025);
+    expect(fresherInvoice(at(3000, 1050), at(2000, 1025))?.total).toBe(1050);
+  });
+  it('uses whichever copy exists, and trusts the listener when the saved copy has no stamp', () => {
+    expect(fresherInvoice(undefined, at(2000, 1025))?.total).toBe(1025);
+    expect(fresherInvoice(at(1000, 25), undefined)?.total).toBe(25);
+    expect(fresherInvoice(at(1000, 25), at(null, 1025))?.total).toBe(25);
+    expect(fresherInvoice(at(null, 25), at(2000, 1025))?.total).toBe(1025);
+  });
+});
 
 /** #1827: the scope and coverage sentences live in an info tip, not under a title. */
 const inTip = (text: string) => (_: string, el: Element | null) =>
@@ -510,6 +539,49 @@ describe('Invoices screen', () => {
       expect(reload).not.toHaveBeenCalled();
       await userEvent.click(screen.getByRole('button', { name: /close/i }));
       expect(reload).toHaveBeenCalledTimes(1);
+    });
+    it('#1871: after Save changes the sheet and the row show the saved figures with no listener update', async () => {
+      // The walk: Qty 1 at $25.00 edited to Qty 41. The listener never delivers
+      // the edit here, which is what 15 to 25 seconds of lag looks like to a test.
+      const before = entry({ total: 25, amountDue: 25, updatedAt: fakeStamp(1000) } as Partial<InvoiceEntry>);
+      usePagedCollection.mockReturnValue(paged([before]));
+      liveDoc(before);
+      updateInvoice.mockResolvedValue({ subtotalCents: 102500, totalCents: 102500, amountDueCents: 102500 });
+      let answer: (doc: InvoiceEntry) => void = () => undefined;
+      readInvoiceFromServer.mockImplementation(
+        () =>
+          new Promise<InvoiceEntry>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      render(<Invoices />);
+      await userEvent.click(screen.getByRole('button', { name: /1042/i }));
+      const sheet = await screen.findByRole('dialog');
+      await userEvent.click(within(sheet).getByRole('button', { name: /^edit$/i }));
+      await userEvent.type(within(sheet).getByLabelText('Invoice address'), '12 Elm St');
+      await userEvent.click(within(sheet).getByRole('button', { name: /save changes/i }));
+      await waitFor(() => expect(readInvoiceFromServer).toHaveBeenCalledWith('inv1'));
+      // Saved but not yet re-read: the sheet does not say "Done" over old figures.
+      expect(within(sheet).queryByText('Invoice updated.')).toBeNull();
+      answer(
+        entry({ total: 1025, amountDue: 1025, address: '12 Elm St', updatedAt: fakeStamp(2000) } as Partial<InvoiceEntry>),
+      );
+      expect(await within(sheet).findByText('Invoice updated.')).toBeInTheDocument();
+      expect(within(billedTotal()).getByText('$1,025.00')).toBeInTheDocument();
+    });
+    it('#1871: a failed re-read says the save landed without calling the old figures updated', async () => {
+      usePagedCollection.mockReturnValue(paged([entry({ total: 25, amountDue: 25 })]));
+      liveDoc(entry({ total: 25, amountDue: 25 }));
+      updateInvoice.mockResolvedValue({ subtotalCents: 2500, totalCents: 2500, amountDueCents: 2500 });
+      readInvoiceFromServer.mockResolvedValue(null);
+      render(<Invoices />);
+      await userEvent.click(screen.getByRole('button', { name: /1042/i }));
+      const sheet = await screen.findByRole('dialog');
+      await userEvent.click(within(sheet).getByRole('button', { name: /^edit$/i }));
+      await userEvent.type(within(sheet).getByLabelText('Invoice address'), '12 Elm St');
+      await userEvent.click(within(sheet).getByRole('button', { name: /save changes/i }));
+      expect(await within(sheet).findByText('Invoice saved. Close and reopen it to see the new figures.')).toBeInTheDocument();
+      expect(within(sheet).queryByText('Invoice updated.')).toBeNull();
     });
     it('a send seen by the live copy re-reads the page on close', async () => {
       usePagedCollection.mockReturnValue(paged([entry({ status: 'draft', editScope: 'all' })]));

@@ -24,6 +24,26 @@ fun invoiceDetailStateFor(
     }
 }
 
+/**
+ * #1871: an edit just saved. [before] is the copy the sheet showed when Save
+ * was pressed; [after] is the invoice read back from the server once the save
+ * was confirmed.
+ */
+data class SavedInvoiceEdit(val before: Invoice, val after: Invoice)
+
+/**
+ * #1871: what the sheet shows. The invoices stream polls, so for up to a poll
+ * after a save it still hands back the copy from before the edit. While it does,
+ * the saved copy stands in; as soon as the stream says anything else, the
+ * stream is the newer word (the edit itself, or a later payment or send).
+ */
+fun invoiceShownAfterEdit(stream: Invoice, saved: SavedInvoiceEdit?): Invoice =
+    if (saved != null && saved.after._id == stream._id && stream == saved.before) saved.after else stream
+
+/** #1871: never "updated" above figures that could not be read back. */
+fun invoiceEditedNotice(figuresShown: Boolean): String =
+    if (figuresShown) "Invoice updated." else "Invoice saved. Close and reopen it to see the new figures."
+
 // #1199: the detail badge used to come from an `invoiceStatusFor` here that
 // returned PAID whenever `amountDue <= 0`. It now reads the stored stamp, in
 // InvoiceDetailStatus.kt (`invoiceDetailBadgeFor`).
