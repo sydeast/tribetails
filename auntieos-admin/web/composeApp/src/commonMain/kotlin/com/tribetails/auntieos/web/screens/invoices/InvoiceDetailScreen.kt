@@ -195,7 +195,9 @@ fun InvoiceDetailScreen(
                     // `before` is the STREAM's copy, so a second edit inside one
                     // poll still compares against what the stream is holding.
                     val before = state.invoice
-                    client.invoiceFromServer(invoiceId)?.let { savedEdit = SavedInvoiceEdit(before, it) }
+                    val after = client.invoiceFromServer(invoiceId)
+                    if (after != null) savedEdit = SavedInvoiceEdit(before, after)
+                    after != null
                 },
             )
         }
@@ -207,8 +209,8 @@ private fun InvoiceDetailBody(
     invoice: Invoice,
     client: FirestoreClient,
     onOpenVisit: ((String) -> Unit)?,
-    /** #1871: re-reads the invoice after a saved edit; awaited before "Invoice updated." shows. */
-    onEdited: suspend () -> Unit = {},
+    /** #1871: re-reads the invoice after a saved edit, before the notice shows. False when it could not. */
+    onEdited: suspend () -> Boolean = { true },
 ) {
     val c = AuntieTheme.colors
     val todayKey = businessTodayIso()
@@ -444,10 +446,10 @@ private fun InvoiceDetailBody(
             when (val r = client.updateInvoice(invoice._id, patch)) {
                 is WriteResult.Ok -> {
                     // #1871: the saved figures first, then the word that it is done.
-                    onEdited()
+                    val figuresShown = onEdited()
                     savingInvoiceEdit = false
                     invoiceEdit = null
-                    showToast("Invoice updated.", false)
+                    showToast(invoiceEditedNotice(figuresShown), false)
                 }
                 is WriteResult.Err -> {
                     savingInvoiceEdit = false

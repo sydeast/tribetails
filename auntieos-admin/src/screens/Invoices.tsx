@@ -484,10 +484,12 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   const savedRow =
     savedCopy !== null && savedCopy._id === selectedId ? savedCopy : undefined;
   const currentRow = fresherInvoice(liveRow, savedRow);
-  const refreshAfterEdit = useCallback(async () => {
-    if (selectedId === null) return;
+  const refreshAfterEdit = useCallback(async (): Promise<boolean> => {
+    if (selectedId === null) return false;
     const fetched = await readInvoiceFromServer(selectedId);
-    if (fetched !== null) setSavedCopy(fetched);
+    if (fetched === null) return false;
+    setSavedCopy(fetched);
+    return true;
   }, [selectedId]);
   const selectedRaw = currentRow ?? selectedRow ?? deepLinkedRow;
   const selected = selectedRaw === undefined ? undefined : normalizeInvoice(selectedRaw);

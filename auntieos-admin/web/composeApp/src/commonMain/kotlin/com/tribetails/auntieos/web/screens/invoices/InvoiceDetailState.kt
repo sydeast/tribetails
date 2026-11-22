@@ -40,6 +40,10 @@ data class SavedInvoiceEdit(val before: Invoice, val after: Invoice)
 fun invoiceShownAfterEdit(stream: Invoice, saved: SavedInvoiceEdit?): Invoice =
     if (saved != null && saved.after._id == stream._id && stream == saved.before) saved.after else stream
 
+/** #1871: never "updated" above figures that could not be read back. */
+fun invoiceEditedNotice(figuresShown: Boolean): String =
+    if (figuresShown) "Invoice updated." else "Invoice saved. Close and reopen it to see the new figures."
+
 // #1199: the detail badge used to come from an `invoiceStatusFor` here that
 // returned PAID whenever `amountDue <= 0`. It now reads the stored stamp, in
 // InvoiceDetailStatus.kt (`invoiceDetailBadgeFor`).

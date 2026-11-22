@@ -15,16 +15,29 @@ import type { InvoiceEntry } from './invoices';
  * `getDocFromServer`, never the cache: the cached copy is the one from before
  * the press. Null when the read fails, the invoice is gone, or it is outside a
  * test admin's sandbox (the same belt `useDocById` applies); the caller then
- * falls back to the listener, which is what it had before.
+ * falls back to the listener and says the figures have not loaded. Gives up
+ * after {@link READ_BACK_WAIT_MS}: the save is already done, so a stalled read
+ * must not hold the sheet on "Saving".
  */
+export const READ_BACK_WAIT_MS = 8000;
+
 export async function readInvoiceFromServer(invoiceId: string): Promise<InvoiceEntry | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const snap = await getDocFromServer(doc(db, 'invoices', invoiceId));
+    const snap = await Promise.race([
+      getDocFromServer(doc(db, 'invoices', invoiceId)),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), READ_BACK_WAIT_MS);
+      }),
+    ]);
+    if (snap === null) return null;
     if (!snap.exists()) return null;
     const data = snap.data() as Record<string, unknown>;
     if (!isVisibleInTestScope('invoices', snap.id, data)) return null;
     return { ...data, _id: snap.id } as unknown as InvoiceEntry;
   } catch {
     return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }

@@ -165,6 +165,9 @@ data class InvoiceDetailUiState(
     val savingInvoiceEdit: Boolean = false,
 )
 
+/** #1871: the save landed but the new figures could not be read back. */
+internal const val INVOICE_SAVED_FIGURES_PENDING = "Invoice saved. Close and reopen it to see the new figures."
+
 /**
  * W4-1: this screen is invoice work, so it injects [InvoiceRepository] directly
  * rather than reaching through a facade. [repository] is still here for the
@@ -1371,17 +1374,15 @@ class InvoiceDetailViewModel(
                 .onSuccess {
                     // #1871: the saved invoice is read back BEFORE "Invoice
                     // updated." shows, so the toast never sits over the old
-                    // quantity and total. A failed re-read keeps the old copy,
-                    // still confirms the save, and is logged.
-                    val refreshed = invoiceRepository.getInvoiceById(invoice.id)
-                        .onFailure { AuntieLog.e("Re-read after edit failed for invoice ${invoice.id}", it) }
-                        .getOrNull()
+                    // quantity and total. A failed re-read keeps the old copy
+                    // and says the save landed without calling it updated.
+                    val refreshed = invoiceRepository.readInvoiceFromServer(invoice.id)
                     _uiState.value = _uiState.value.copy(
                         invoice = refreshed ?: _uiState.value.invoice,
                         savingInvoiceEdit = false,
                         invoiceEdit = null,
                         invoiceEditError = null,
-                        toastMessage = "Invoice updated.",
+                        toastMessage = if (refreshed != null) "Invoice updated." else INVOICE_SAVED_FIGURES_PENDING,
                         toastVisible = true,
                         toastIsError = false,
                     )

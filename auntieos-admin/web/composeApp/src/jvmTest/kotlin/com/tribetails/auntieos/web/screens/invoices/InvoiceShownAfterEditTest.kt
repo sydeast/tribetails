@@ -43,6 +43,12 @@ class InvoiceShownAfterEditTest {
     }
 
     @Test
+    fun `the notice never says updated over figures it could not read`() {
+        assertEquals("Invoice updated.", invoiceEditedNotice(figuresShown = true))
+        assertEquals("Invoice saved. Close and reopen it to see the new figures.", invoiceEditedNotice(figuresShown = false))
+    }
+
+    @Test
     fun `the read back returns the stored invoice, or null when it is gone`() = runBlocking {
         JvmFirestoreFixtures.invoices = listOf(after)
         assertEquals(1025.0, FirestoreClient().invoiceFromServer("inv1")?.total)

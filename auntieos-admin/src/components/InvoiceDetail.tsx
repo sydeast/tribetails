@@ -653,10 +653,12 @@ interface InvoiceDetailProps {
    */
   initialAction?: InvoiceAction;
   /**
-   * #1871: awaited after a saved edit and before "Invoice updated." shows, so
-   * the parent can put the saved figures in `invoice` first. Never throws.
+   * #1871: awaited after a saved edit and before the notice shows, so the
+   * parent can put the saved figures in `invoice` first. True when it did;
+   * false when they could not be read, and the sheet must not say "updated"
+   * above the old figures.
    */
-  onEdited?: () => Promise<void>;
+  onEdited?: () => Promise<boolean>;
   onClose: () => void;
 }
 
@@ -924,6 +926,9 @@ export function writeOffConfirmText(household: string, invoiceNumber: string, ow
   return `Write off ${formatCentsUsd(owedCents)} on ${which} for ${household}? The household will no longer be asked to pay it, and it stops counting as outstanding. It is not recorded as a payment or as account credit, and it cannot be undone.`;
 }
 /** #2090: the notice once the balance is written off. */
+/** #1871: the save landed but the new figures could not be read back, so the sheet still holds the old ones. */
+export const INVOICE_SAVED_FIGURES_PENDING = 'Invoice saved. Close and reopen it to see the new figures.';
+
 export function writeOffNoticeText(writtenOffCents: number): string {
   return `Balance of ${formatCentsUsd(writtenOffCents)} written off. The household is no longer asked to pay it, and the invoice can be archived now.`;
 }
@@ -1423,11 +1428,11 @@ export function InvoiceDetail({ invoice, initialAction, onEdited, onClose }: Inv
     try {
       await updateInvoice(invoice._id, patch);
       // #1871: the new figures first, then the word that the save is done.
-      await onEdited?.().catch(() => undefined);
+      const figuresShown = onEdited === undefined ? true : await onEdited().catch(() => false);
       setBusy(false);
       setEditing(null);
-      setNoticeIncomplete(false);
-      setNotice('Invoice updated.');
+      setNoticeIncomplete(!figuresShown);
+      setNotice(figuresShown ? 'Invoice updated.' : INVOICE_SAVED_FIGURES_PENDING);
       // A line-item edit recomputes the balance server-side, so the "Still owed"
       // figure in the payments panel is now describing the invoice as it was.
       reloadLedger();
@@ -2182,7 +2187,7 @@ export function InvoiceDetail({ invoice, initialAction, onEdited, onClose }: Inv
              that produced mark 10 read the green before it read the words. */
           <Banner
             tone={noticeIncomplete ? 'warning' : 'success'}
-            title={noticeIncomplete ? 'Done, but not all of it' : 'Done'}
+            title={notice === INVOICE_SAVED_FIGURES_PENDING ? 'Saved' : noticeIncomplete ? 'Done, but not all of it' : 'Done'}
           >
             {notice}
             {pdfLink && (

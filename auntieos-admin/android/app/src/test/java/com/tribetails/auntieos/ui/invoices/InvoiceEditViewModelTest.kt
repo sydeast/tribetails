@@ -52,6 +52,10 @@ class InvoiceEditViewModelTest {
         Dispatchers.setMain(testDispatcher)
         coEvery { invoiceRepository.getInvoiceLedger(any()) } returns Result.success(TestFixtures.emptyInvoiceLedger())
         coEvery { repository.getBusinessSettings() } returns Result.success(BusinessSettings())
+        // #1871: the read after a save answers with whatever the test stored.
+        coEvery { invoiceRepository.readInvoiceFromServer(any()) } coAnswers {
+            invoiceRepository.getInvoiceById(firstArg()).getOrNull()
+        }
         viewModel = InvoiceDetailViewModel(repository, invoiceRepository, mockk(relaxed = true))
     }
 
@@ -138,7 +142,7 @@ class InvoiceEditViewModelTest {
         viewModel.loadInvoice("inv1")
         advanceUntilIdle()
         val reread = kotlinx.coroutines.CompletableDeferred<Result<Invoice>>()
-        coEvery { invoiceRepository.getInvoiceById("inv1") } coAnswers { reread.await() }
+        coEvery { invoiceRepository.readInvoiceFromServer("inv1") } coAnswers { reread.await().getOrNull() }
         coEvery { invoiceRepository.updateInvoice("inv1", any()) } returns Result.success(ok)
 
         viewModel.openInvoiceEdit()
@@ -157,15 +161,15 @@ class InvoiceEditViewModelTest {
     }
 
     @Test
-    fun `#1871 a failed re-read still confirms the save and keeps the copy it had`() = runTest {
+    fun `#1871 a failed re-read says saved, never updated, over the copy it had`() = runTest {
         load(invoice("all"))
-        coEvery { invoiceRepository.getInvoiceById("inv1") } returns Result.failure(RuntimeException("offline"))
+        coEvery { invoiceRepository.readInvoiceFromServer("inv1") } returns null
         coEvery { invoiceRepository.updateInvoice("inv1", any()) } returns Result.success(ok)
         viewModel.openInvoiceEdit()
         viewModel.updateInvoiceEdit(viewModel.uiState.value.invoiceEdit!!.copy(dueDate = "2026-10-30"))
         viewModel.saveInvoiceEdit()
         advanceUntilIdle()
-        assertEquals("Invoice updated.", viewModel.uiState.value.toastMessage)
+        assertEquals(INVOICE_SAVED_FIGURES_PENDING, viewModel.uiState.value.toastMessage)
         assertEquals(40.0, viewModel.uiState.value.invoice?.total)
     }
 

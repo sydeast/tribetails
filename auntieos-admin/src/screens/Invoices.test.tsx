@@ -565,7 +565,7 @@ describe('Invoices screen', () => {
       expect(await within(sheet).findByText('Invoice updated.')).toBeInTheDocument();
       expect(within(billedTotal()).getByText('$1,025.00')).toBeInTheDocument();
     });
-    it('#1871: a failed re-read still confirms the save and leaves the listener in charge', async () => {
+    it('#1871: a failed re-read says the save landed without calling the old figures updated', async () => {
       usePagedCollection.mockReturnValue(paged([entry({ total: 25, amountDue: 25 })]));
       liveDoc(entry({ total: 25, amountDue: 25 }));
       updateInvoice.mockResolvedValue({ subtotalCents: 2500, totalCents: 2500, amountDueCents: 2500 });
@@ -576,8 +576,8 @@ describe('Invoices screen', () => {
       await userEvent.click(within(sheet).getByRole('button', { name: /^edit$/i }));
       await userEvent.type(within(sheet).getByLabelText('Invoice address'), '12 Elm St');
       await userEvent.click(within(sheet).getByRole('button', { name: /save changes/i }));
-      expect(await within(sheet).findByText('Invoice updated.')).toBeInTheDocument();
-      expect(within(billedTotal()).getByText('$25.00')).toBeInTheDocument();
+      expect(await within(sheet).findByText('Invoice saved. Close and reopen it to see the new figures.')).toBeInTheDocument();
+      expect(within(sheet).queryByText('Invoice updated.')).toBeNull();
     });
     it('a send seen by the live copy re-reads the page on close', async () => {
       usePagedCollection.mockReturnValue(paged([entry({ status: 'draft', editScope: 'all' })]));
