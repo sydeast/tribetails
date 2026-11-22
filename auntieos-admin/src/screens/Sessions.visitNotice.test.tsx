@@ -62,6 +62,12 @@ vi.mock('../lib/sessionSeat', async (orig) => ({
   currentSessionSeat,
 }));
 vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
+// #1815: the board repeats the clock's finished sentence in a toast.
+const { showToast } = vi.hoisted(() => ({ showToast: vi.fn() }));
+vi.mock('../components/Toast', async (orig) => ({
+  ...(await orig<typeof import('../components/Toast')>()),
+  useToast: () => ({ showToast, dismissToast: vi.fn() }),
+}));
 import { Sessions } from './Sessions';
 import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
 import { invalidateSharedLoad } from '../lib/useSharedOneShot';
@@ -120,6 +126,7 @@ beforeEach(() => {
   call.mockReset().mockImplementation(staffOnlyCall);
   previewVisitNotification.mockReset().mockResolvedValue({ willNotify: true, reason: null });
   patchVisitLifecycle.mockReset();
+  showToast.mockReset();
   usePagedCollection.mockReset().mockReturnValue(paged([entry()]));
   roster([{ _id: 'kfDre', firstName: 'Dre', lastName: 'East', uid: 'uidDre' }]);
 });
@@ -238,6 +245,112 @@ describe('the outcome survives the card moving to Active', () => {
         'Marked on the way. Dre East was not notified, because they have no portal account.',
       ),
     ).toBeInTheDocument();
+  });
+});
+
+// #1815: the walk tapped OMW at the bottom of a long board. The card moved to
+// Active, 16 cards above, and the sentence saying the household was not told
+// landed out of view, with no toast.
+describe('the finished sentence is said again where the operator is looking (#1815)', () => {
+  it('toasts what the household was told once the push settles, not while it is checking', async () => {
+    let settle: (v: { notified: boolean; notifySkipped: string | null }) => void = () => {};
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 'dre1',
+      action: 'ON_MY_WAY',
+      from: 'SCHEDULED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notification: new Promise((r) => (settle = r)),
+    });
+
+    const view = render(<Sessions onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /^OMW$/ }));
+    await user.click(screen.getByRole('button', { name: /yes, mark it on the way/i }));
+    expect(await screen.findByText(/Checking whether Dre East was told\./)).toBeInTheDocument();
+    expect(showToast).not.toHaveBeenCalled();
+
+    // The card leaves Upcoming before the push settles.
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'ON_MY_WAY', startTime: at(0, 14) })]));
+    view.rerender(<Sessions onSelect={vi.fn()} />);
+    await reactAct(async () => {
+      settle({ notified: false, notifySkipped: 'household_has_no_portal_account' });
+    });
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]).toMatch(/Dre East was not notified, because they have no portal account\.$/);
+    expect(showToast.mock.calls[0]?.[1]).toMatchObject({ tone: 'info' });
+  });
+
+  it('says nothing when a newer tap has already replaced the sentence', async () => {
+    let settle: (v: { notified: boolean; notifySkipped: string | null }) => void = () => {};
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 'dre1',
+      action: 'ON_MY_WAY',
+      from: 'SCHEDULED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notification: new Promise((r) => (settle = r)),
+    });
+    render(<Sessions onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /^OMW$/ }));
+    await user.click(screen.getByRole('button', { name: /yes, mark it on the way/i }));
+    await screen.findByText(/Checking whether Dre East was told\./);
+    // A new confirm on the same visit clears the old sentence.
+    await user.click(screen.getByRole('button', { name: /^OMW$/ }));
+    await reactAct(async () => {
+      settle({ notified: true, notifySkipped: null });
+    });
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('says nothing when the server has no answer about the household', async () => {
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 'dre1',
+      action: 'ON_MY_WAY',
+      from: 'SCHEDULED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
+    });
+    render(<Sessions onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /^OMW$/ }));
+    await user.click(screen.getByRole('button', { name: /yes, mark it on the way/i }));
+    await reactAct(async () => {
+      await Promise.resolve();
+    });
+    expect(patchVisitLifecycle).toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('an undo toasts its finished sentence, never its checking line', async () => {
+    let settleUndone: (v: null) => void = () => {};
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'ARRIVED', startTime: at(0, 14), arrivedAt: at(0, 14) })]),
+    );
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 'dre1',
+      action: 'UNDO_ARRIVAL',
+      from: 'ARRIVED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      // The server's notice step has nothing to say about an undo.
+      notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
+      undone: new Promise((r) => (settleUndone = r)),
+    });
+    render(<Sessions onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /^Undo arrived$/ }));
+    await user.click(screen.getByRole('button', { name: /yes, undo the arrival/i }));
+    await reactAct(async () => {
+      await Promise.resolve();
+    });
+    expect(patchVisitLifecycle).toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+
+    await reactAct(async () => {
+      settleUndone(null);
+    });
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0]).not.toMatch(/checking/i);
   });
 });
 

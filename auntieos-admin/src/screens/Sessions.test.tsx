@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+// #1815: the board repeats the clock's finished sentence in a toast.
+const { showToast } = vi.hoisted(() => ({ showToast: vi.fn() }));
+vi.mock('../components/Toast', async (orig) => ({
+  ...(await orig<typeof import('../components/Toast')>()),
+  useToast: () => ({ showToast, dismissToast: vi.fn() }),
+}));
+
 import userEvent from '@testing-library/user-event';
 import { type SessionEntry } from '../api/sessions';
 import { type Kin, type Kinfolk } from '../api/directory';
