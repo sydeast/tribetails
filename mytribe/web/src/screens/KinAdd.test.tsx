@@ -129,7 +129,7 @@ describe('KinAdd', () => {
     renderScreen();
 
     await user.type(screen.getByLabelText(/^Name/i), 'Rex');
-    await user.selectOptions(screen.getByLabelText('Sex'), 'Female');
+    await user.selectOptions(screen.getByLabelText('Gender'), 'Female');
     await user.type(screen.getByLabelText('Weight'), '40 lbs');
     await user.type(screen.getByLabelText('Color / markings'), 'Brindle');
     await user.click(screen.getByLabelText(/Spayed \/ neutered/));
