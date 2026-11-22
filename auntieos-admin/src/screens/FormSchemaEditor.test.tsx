@@ -132,13 +132,13 @@ describe('validateField (pure)', () => {
 describe('schemaMetaErrors (pure)', () => {
   it('keeps id and name problems on the schema step', () => {
     expect(schemaMetaErrors({ id: '', name: '' })).toEqual([
-      'Schema id is required.',
+      'Short name is required.',
       'Schema name is required.',
     ]);
   });
   it('rejects a schema id that fails the backend regex', () => {
     expect(schemaMetaErrors({ id: '1bad', name: 'X' })).toEqual(
-      expect.arrayContaining([expect.stringMatching(/schema id must start with a letter/i)]),
+      expect.arrayContaining([expect.stringMatching(/short name must start with a letter/i)]),
     );
   });
   it('is empty for a valid id and name', () => {
@@ -196,7 +196,7 @@ describe('sectionErrors / sectionListErrors (pure)', () => {
 
 describe('validateSchema (pure)', () => {
   it('requires a schema id', () => {
-    expect(validateSchema({ id: '', name: 'X', sections: [section()] })).toContain('Schema id is required.');
+    expect(validateSchema({ id: '', name: 'X', sections: [section()] })).toContain('Short name is required.');
   });
   it('requires a schema name', () => {
     expect(validateSchema({ id: 'ok', name: '', sections: [section()] })).toContain('Schema name is required.');
@@ -287,7 +287,7 @@ async function goToStep(label: 'Schema' | 'Sections' | 'Review') {
  * section and add one field to it, never call "Add section".
  */
 async function fillValidSchema() {
-  await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
+  await userEvent.type(screen.getByLabelText(/short name/i), 'newSchema');
   await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
   await goToStep('Sections');
   await userEvent.type(screen.getByLabelText(/section title/i), 'Basics');
@@ -308,12 +308,12 @@ describe('FormSchemaEditor: the workflow modal', () => {
 
   it('keeps the schema fields and the sections list on separate steps, so the other is not in the DOM', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.getByLabelText(/schema id/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/short name/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add field/i })).toBeNull();
 
     await goToStep('Sections');
     expect(screen.getByRole('button', { name: /add field/i })).toBeInTheDocument();
-    expect(screen.queryByLabelText(/schema id/i)).toBeNull();
+    expect(screen.queryByLabelText(/short name/i)).toBeNull();
   });
 
   it('keeps what was typed when the operator leaves the step and comes back', async () => {
@@ -329,13 +329,13 @@ describe('FormSchemaEditor: the workflow modal', () => {
     // Nothing is claimed about a form nobody has typed in yet (see the pristine
     // describe below); one keystroke on the schema step is what puts its own
     // problems on the rail.
-    await userEvent.type(screen.getByLabelText(/schema id/i), 'x');
+    await userEvent.type(screen.getByLabelText(/short name/i), 'x');
     expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName(
       '1 Schema 1 thing to fix',
     );
 
-    await userEvent.clear(screen.getByLabelText(/schema id/i));
-    await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
+    await userEvent.clear(screen.getByLabelText(/short name/i));
+    await userEvent.type(screen.getByLabelText(/short name/i), 'newSchema');
     await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
     expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema');
   });
@@ -364,12 +364,12 @@ describe('FormSchemaEditor: the workflow modal', () => {
   it('draws the mock schema step: required marks, the locked-id note, the mock placeholders, a two-line description', async () => {
     getFormSchema.mockResolvedValue(schema());
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    const idInput = await screen.findByLabelText(/schema id/i);
+    const idInput = await screen.findByLabelText(/short name/i);
     expect(idInput).toBeDisabled();
     expect(idInput).toHaveAttribute('placeholder', 'tribeProfile');
     // The mock's "(immutable once persisted)" note sits inside the label, so
     // the control's own name says the id is locked.
-    expect(idInput).toHaveAccessibleName('Schema id (immutable once persisted)');
+    expect(idInput).toHaveAccessibleName('Short name (fixed once saved)');
     expect(screen.getByLabelText(/^name$/i)).toHaveAttribute('placeholder', 'Tribe Profile');
     const description = screen.getByLabelText(/^description$/i);
     expect(description.tagName).toBe('TEXTAREA');
@@ -448,7 +448,7 @@ describe('FormSchemaEditor: the workflow modal', () => {
   it('marks the card, not only the input, when one of its fields is invalid', async () => {
     getFormSchema.mockResolvedValue(schema());
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     expect(document.querySelector('.fse__field-card--invalid')).toBeNull();
     await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'multiselect' }));
@@ -504,7 +504,7 @@ describe('FormSchemaEditor: sections', () => {
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     const before = screen.getAllByLabelText(/section title/i) as HTMLInputElement[];
     expect(before.map((i) => i.value)).toEqual(['Sec A', 'Sec B']);
@@ -519,7 +519,7 @@ describe('FormSchemaEditor: sections', () => {
 describe('FormSchemaEditor: create mode', () => {
   it('seeds a blank schema with one blank section and does not call getFormSchema', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
-    expect(await screen.findByLabelText(/schema id/i)).toHaveValue('');
+    expect(await screen.findByLabelText(/short name/i)).toHaveValue('');
     expect(getFormSchema).not.toHaveBeenCalled();
     await goToStep('Sections');
     expect(screen.getAllByLabelText(/section title/i)).toHaveLength(1);
@@ -539,7 +539,7 @@ describe('FormSchemaEditor: create mode', () => {
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled();
 
     await goToStep('Schema');
-    await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
+    await userEvent.type(screen.getByLabelText(/short name/i), 'newSchema');
     await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
     await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled(); // section title + field still missing
@@ -666,7 +666,7 @@ describe('FormSchemaEditor: a new schema is not accused of being empty', () => {
   it('opens quiet: no banner on the step, no flag on the rail, no counter beside Next', () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.queryByText('Fix on this step')).toBeNull();
-    expect(screen.queryByText('Schema id is required.')).toBeNull();
+    expect(screen.queryByText('Short name is required.')).toBeNull();
     expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema');
     expect(screen.getByRole('button', { name: /^2 Sections/ })).toHaveAccessibleName('2 Sections');
     expect(screen.queryByRole('button', { name: /left to fix/ })).toBeNull();
@@ -684,7 +684,7 @@ describe('FormSchemaEditor: a new schema is not accused of being empty', () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/^name$/i), 'Tribe Profile');
 
-    expect(screen.getByText('Schema id is required.')).toBeInTheDocument();
+    expect(screen.getByText('Short name is required.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema 1 thing to fix');
     // The sections step is still untouched, so its problems would be describing
     // nothing the operator has done.
@@ -714,7 +714,7 @@ describe('FormSchemaEditor: a new schema is not accused of being empty', () => {
     expect(onSaved).not.toHaveBeenCalled();
     // Landed on the earliest problem in reading order, with it named.
     expect(screen.getByRole('heading', { name: 'Schema', level: 3 })).toBeInTheDocument();
-    expect(screen.getByText('Schema id is required.')).toBeInTheDocument();
+    expect(screen.getByText('Short name is required.')).toBeInTheDocument();
     // Section title required + at least one field required.
     expect(screen.getByRole('button', { name: /^2 Sections/ })).toHaveAccessibleName('2 Sections 2 things to fix');
     expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('4 things left to fix');
@@ -736,7 +736,7 @@ describe('FormSchemaEditor: edit mode', () => {
   it('shows the version on the review step, the mock subtitle line moved into the wizard', async () => {
     getFormSchema.mockResolvedValue(schema({ version: 3 }));
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Review');
     expect(screen.getByText('Version')).toBeInTheDocument();
     expect(screen.getByText('v3')).toBeInTheDocument();
@@ -748,7 +748,7 @@ describe('FormSchemaEditor: edit mode', () => {
 
     expect(await screen.findByDisplayValue('Tribe Profile')).toBeInTheDocument();
     expect(getFormSchema).toHaveBeenCalledWith('tribeProfile');
-    expect(screen.getByLabelText(/schema id/i)).toBeDisabled();
+    expect(screen.getByLabelText(/short name/i)).toBeDisabled();
     await goToStep('Sections');
     expect(screen.getByDisplayValue('firstName')).toBeInTheDocument();
   });
@@ -784,7 +784,7 @@ describe('FormSchemaEditor: edit mode', () => {
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     expect(screen.queryByText(/sections merged/i)).toBeNull();
 
     await goToStep('Sections');
@@ -812,7 +812,7 @@ describe('FormSchemaEditor: edit mode', () => {
     );
     saveFormSchema.mockResolvedValue({ id: 'tribeProfile', version: 4 });
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
 
     // One small edit, in section B only.
@@ -841,7 +841,7 @@ describe('FormSchemaEditor: edit mode', () => {
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     expect(screen.queryByText(/duplicate/i)).toBeNull();
     await goToStep('Review');
@@ -861,7 +861,7 @@ describe('FormSchemaEditor: edit mode', () => {
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     // Appears twice: inline on the second field card, and again in the step's
     // aggregate "Fix on this step" banner (an edit-mode record is not
@@ -882,7 +882,7 @@ describe('FormSchemaEditor: edit mode', () => {
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     await userEvent.click(screen.getByRole('button', { name: /remove field a/i }));
     expect(screen.queryByDisplayValue('a')).toBeNull();
@@ -902,7 +902,7 @@ describe('FormSchemaEditor: edit mode', () => {
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     const keyInputsBefore = screen.getAllByLabelText(/^key$/i) as HTMLInputElement[];
     expect(keyInputsBefore.map((i) => i.value)).toEqual(['a', 'b']);
@@ -916,7 +916,7 @@ describe('FormSchemaEditor: edit mode', () => {
   it('shows an options input only for select/multiselect, required by validation', async () => {
     getFormSchema.mockResolvedValue(schema());
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     expect(screen.queryByLabelText(/options/i)).toBeNull();
 
@@ -939,7 +939,7 @@ describe('FormSchemaEditor: edit mode', () => {
     getFormSchema.mockResolvedValue(schema());
     saveFormSchema.mockResolvedValue({ id: 'tribeProfile', version: 4 });
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'select' }));
 
@@ -965,7 +965,7 @@ describe('FormSchemaEditor: edit mode', () => {
   it('commits the options field on Enter as well as on blur', async () => {
     getFormSchema.mockResolvedValue(schema());
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Sections');
     await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'select' }));
 
@@ -981,7 +981,7 @@ describe('FormSchemaEditor: edit mode', () => {
       () => new Promise((resolve) => { resolveSave = resolve; }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await screen.findByLabelText(/schema id/i);
+    await screen.findByLabelText(/short name/i);
     await goToStep('Review');
 
     await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
@@ -1118,7 +1118,7 @@ describe('FormSchemaEditor: on-screen checks match the server (#2074)', () => {
   });
   it('marks the label input and keeps Save off while the label holds <b>', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await userEvent.type(screen.getByLabelText(/schema id/i), 'qaR1Schema');
+    await userEvent.type(screen.getByLabelText(/short name/i), 'qaR1Schema');
     await userEvent.type(screen.getByLabelText(/^name$/i), 'QA-R1 schema');
     await goToStep('Sections');
     await userEvent.type(screen.getByLabelText(/section title/i), 'QA-R1 section');

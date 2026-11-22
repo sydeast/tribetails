@@ -17,10 +17,11 @@ import {
   mergeByCreatedDesc,
   reportsNewestFirst,
   rowFromDraft,
+  shownMs,
   rowFromReport,
   type KinTaleListRow,
 } from './kinTaleList';
-import { kinTaleState } from './kinTaleFormat';
+import { kinTaleState, kinTaleWhen } from './kinTaleFormat';
 import type { KinTaleEntry } from '../api/kinTales';
 import type { GeneratedDraftRow } from '../api/drafts';
 
@@ -469,5 +470,65 @@ describe('a Communicate draft that went out is listed as Sent (#2440)', () => {
   it('an approved draft of a type that is never sent from here is not called Sent', () => {
     expect(stateOf({ communicationType: 'social_post', status: 'approved' })).toBe('unknown');
     expect(stateOf({ communicationType: 'blog_post', status: 'approved' })).toBe('unknown');
+  });
+});
+/**
+ * #1856: KinTales > All (archive) > Sent ran its 2025 rows oldest first, with a
+ * 2026 row among them. The rows were ordered on `createdAt` while each row's
+ * date label reads visitDate first, and a migrated report's `createdAt` is the
+ * day it was copied over. The copier stamped the oldest visit last, so newest
+ * `createdAt` first came out as oldest visit first.
+ */
+describe('the list runs in the order its date labels read (#1856)', () => {
+  // Visit dates from the walk, each with a migration-time `createdAt` that
+  // climbs as the visit date falls, the shape that put them oldest first.
+  const migrated = [
+    { _id: 'aug06a', visitDate: '2025-08-06T18:38:00', createdAt: '2026-04-05T10:00:01.000Z' },
+    { _id: 'aug06b', visitDate: '2025-08-06T19:56:00', createdAt: '2026-04-05T10:00:00.000Z' },
+    { _id: 'aug10', visitDate: '2025-08-10T11:59:00', createdAt: '2026-04-04T23:00:00.000Z' },
+    { _id: 'apr04', visitDate: '2026-04-04T16:09:00', createdAt: '2026-04-04T22:00:00.000Z' },
+    { _id: 'aug27', visitDate: '2025-08-27T09:00:00', createdAt: '2026-04-04T21:00:00.000Z' },
+    { _id: 'aug29', visitDate: '2025-08-29T09:00:00', createdAt: '2026-04-04T20:00:00.000Z' },
+  ].map((r) => report({ ...r, status: 'SENT' }));
+  const recent = [
+    report({ _id: 'nov11', visitDate: '2026-11-11T08:00:00', createdAt: '2026-11-11T09:00:00.000Z' }),
+    report({ _id: 'jul01', visitDate: '2026-07-01T08:00:00', createdAt: '2026-07-01T09:00:00.000Z' }),
+  ];
+  it('orders by the date the label shows, newest first, every 2026 row above every 2025 row', () => {
+    const ordered = reportsNewestFirst([...migrated, ...recent]).map((r) => r._id);
+    expect(ordered).toEqual(['nov11', 'jul01', 'apr04', 'aug29', 'aug27', 'aug10', 'aug06b', 'aug06a']);
+  });
+  it('the label and the order never disagree, drafts merged in included', () => {
+    const drafts = [rowFromDraft(draft({ _id: 'd-sep', createdOn: '2025-09-15T12:00:00.000Z' }))];
+    const rows = kinTaleListRows([...migrated, ...recent], [], { startIso: null, kinfolkId: '' });
+    const merged = mergeByCreatedDesc(rows, drafts);
+    const times = merged.map((r) => shownMs(r));
+    for (let i = 1; i < times.length; i += 1) {
+      expect(times[i]!).toBeLessThanOrEqual(times[i - 1]!);
+    }
+    // The draft dated Sep 2025 lands between the 2026 rows and the Aug 2025 ones.
+    expect(merged.map((r) => r._id).indexOf('generated_drafts/d-sep')).toBe(3);
+    // Each row's label is the instant it was ordered on.
+    const label = (r: KinTaleListRow) =>
+      kinTaleWhen({
+        visitDate: r.visitDate ?? '',
+        arrivedAt: r.arrivedAt ?? '',
+        sentAt: r.sentAt ?? '',
+        createdAt: r.createdAt ?? '',
+      });
+    expect(label(merged[2]!)).toBe(
+      kinTaleWhen({ visitDate: '2026-04-04T16:09:00', arrivedAt: '', sentAt: '', createdAt: '' }),
+    );
+  });
+  it('shownMs takes the first non-blank of visitDate, arrivedAt, sentAt, createdAt', () => {
+    expect(shownMs({ createdAt: '2026-01-01T00:00:00.000Z', sentAt: '2026-02-01T00:00:00.000Z' })).toBe(
+      Date.parse('2026-02-01T00:00:00.000Z'),
+    );
+    expect(shownMs({ createdAt: '2026-01-01T00:00:00.000Z', visitDate: '  ' })).toBe(
+      Date.parse('2026-01-01T00:00:00.000Z'),
+    );
+    expect(shownMs({ createdAt: '' })).toBeNull();
+    // An unreadable first field is "Date TBD" on the label, so it sorts as undated.
+    expect(shownMs({ createdAt: '2026-01-01T00:00:00.000Z', visitDate: 'last Tuesday-ish' })).toBeNull();
   });
 });

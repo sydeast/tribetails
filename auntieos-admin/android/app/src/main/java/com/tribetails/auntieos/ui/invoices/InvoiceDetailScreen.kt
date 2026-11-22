@@ -114,6 +114,8 @@ import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.components.color
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import java.time.LocalDate
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 // Stage 2 tail: header Receipt / Send-reminder actions and draft Review-and-send are
 // wired to real callables (generateReceipt / sendInvoiceReminder / postInvoiceEvent).
@@ -250,7 +252,7 @@ fun InvoiceDetailScreen(
         ) {
             item {
                 DenScreenHeading(
-                    kicker     = "Care Ops · Invoices",
+                    kicker     = railKicker(RailScreen.INVOICES),
                     title      = "Invoice",
                     accentTail = "Detail.",
                     subtitle   = "Full billing record.",
@@ -941,7 +943,8 @@ private fun invoiceDetailBody(
                     ),
                 )
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
-                if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
+                invoiceBillingFacts(invoice.kinfolkName, invoice.client, invoice.address, invoice.discount)
+                    .forEach { (label, value) -> DetailRow(label, value) }
             }
         }
     }
@@ -2286,6 +2289,25 @@ private fun LinkSessionsDialog(
 }
 
 // ── Shared row helper ─────────────────────────────────────────────────────────
+
+/**
+ * #1899: the saved name, address and discount note, so an edit to them can be
+ * seen on the invoice. A blank one is left out, and so is a name that only
+ * repeats the household already at the top of the sheet. Pure.
+ */
+internal fun invoiceBillingFacts(
+    kinfolkName: String,
+    client: String,
+    address: String,
+    discount: String,
+): List<Pair<String, String>> {
+    val name = client.trim()
+    return listOf(
+        "Kinfolk" to if (name.equals(kinfolkName.trim(), ignoreCase = true)) "" else name,
+        "Address" to address.trim(),
+        "Discount note" to discount.trim(),
+    ).filter { it.second.isNotEmpty() }
+}
 
 @Composable
 private fun DetailRow(

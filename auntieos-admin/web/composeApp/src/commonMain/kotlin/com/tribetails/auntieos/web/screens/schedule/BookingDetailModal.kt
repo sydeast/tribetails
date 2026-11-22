@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.schedule
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import com.tribetails.auntieos.web.screens.HouseholdNotice
 import com.tribetails.auntieos.web.screens.HouseholdNoticeKeys
 import com.tribetails.auntieos.web.screens.HouseholdNoticePreview
@@ -43,6 +44,7 @@ import com.tribetails.auntieos.web.data.AuthClient
 import com.tribetails.auntieos.web.data.BookingNote
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.staffByline
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.StaffMember
 import com.tribetails.auntieos.web.data.WriteResult
@@ -764,11 +766,8 @@ private fun displayDateTime(iso: String, zone: TimeZone): String {
         ?: runCatchingCancellable { LocalDateTime.parse(iso) }.getOrNull()
         ?: return iso
     val dow = ldt.date.dayOfWeek.name.take(3).lowercase().replaceFirstChar(Char::titlecase)
-    val month = ldt.date.month.name.take(3).lowercase().replaceFirstChar(Char::titlecase)
-    val ampm = if (ldt.hour >= 12) "PM" else "AM"
-    val hour12 = when (ldt.hour % 12) { 0 -> 12; else -> ldt.hour % 12 }
-    val minute = ldt.minute.toString().padStart(2, '0')
-    return "$dow, $month ${ldt.date.day} at $hour12:$minute $ampm"
+    // #1828: the admin day and 24-hour clock, with the weekday in front.
+    return "$dow, ${AdminTime.dateTime(ldt)}"
 }
 
 /**
@@ -778,7 +777,7 @@ private fun displayDateTime(iso: String, zone: TimeZone): String {
  * household's note reads "Kinfolk". Never the raw role, never "Auntie" by default.
  */
 internal fun bookingNoteAuthorLabel(note: BookingNote, staff: List<StaffMember>?): String = when (note.authorRole.trim().lowercase()) {
-    "admin" -> staff?.firstOrNull { it.uid == note.authorUid && note.authorUid.isNotBlank() }?.pickerLabel ?: "Staff"
+    "admin" -> staff?.firstOrNull { it.uid == note.authorUid && note.authorUid.isNotBlank() }?.let(::staffByline) ?: "Staff"
     "kinfolk" -> "Kinfolk"
     else -> "Unknown"
 }

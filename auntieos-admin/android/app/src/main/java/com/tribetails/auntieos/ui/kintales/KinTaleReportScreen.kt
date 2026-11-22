@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.kintales
 
+import com.tribetails.auntieos.domain.AdminTime
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -89,6 +90,8 @@ import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.RouteMap
 import com.tribetails.auntieos.ui.components.ServicePill
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 // ── Feature flags (read via the central ambient LocalFeatureFlags) ──
 // Pet-mood is LIVE: the default template ships petMoodEnabled=true with mood
@@ -228,7 +231,7 @@ fun KinTaleReportScreen(
                     // badge row, and Back is the band's control. The mocks' cover
                     // eyebrow ("KinTale · Visit Recap") is on the cover below. ──
                     DenScreenHeading(
-                        kicker = "The Den · KinTales",
+                        kicker = railKicker(RailScreen.KINTALES),
                         crumbs = listOf(
                             DenCrumb("KinTales", leave),
                             DenCrumb(if (isSent) "KinTale" else "New tale"),
@@ -593,7 +596,7 @@ fun KinTaleReportScreen(
  * the screen stops recomposing, and this one is a promise about their work.
  */
 internal fun formatSavedAt(millis: Long): String =
-    java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+    java.text.SimpleDateFormat(AdminTime.CLOCK_PATTERN, java.util.Locale.US)
         .format(java.util.Date(millis))
 
 // ───────────────────────────── Hero ─────────────────────────────

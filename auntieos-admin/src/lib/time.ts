@@ -57,18 +57,80 @@ export function dayKey(ts: FsTimeLike): string {
 }
 
 /**
- * LOCAL `MM-DD HH:mm` for a row timestamp (companion to dayKey), with the year
- * in front (`YYYY-MM-DD HH:mm`) when it is not the current year (#1599). Lists
- * such as KinTales span more than a year, and "09-03 14:02" could not say
- * whether a row was last month or a year ago. `now` is for tests.
+ * THE ADMIN DATE AND TIME SHAPE (#1828, owner ruling 2026-11-12): "auntieOS in
+ * 24hr & alphanumeric date". Every admin screen writes a day as "Nov 10, 2026"
+ * and a moment as "Nov 10, 2026 22:32". The walk found the same visit written
+ * five ways ("11-10 22:32", "2026-11-10 22:32", "Nov 10 · 10:32 PM", "10:32p",
+ * a raw UTC stamp). These are the one place that shape is spelled; a screen
+ * that needs a date reaches for one of them rather than building its own.
+ *
+ * Admin only. The MyTribe portal and anything sent to a household stays on a
+ * 12-hour clock, and Time Block labels ("Midday (11 AM to 3 PM)") are names,
+ * not clock readings, so neither comes through here.
  */
-export function formatWhen(ts: FsTimeLike, now: Date = new Date()): string {
-  const d = tsToDate(ts);
-  if (!d) return '(no time)';
-  const monthDayTime = `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return d.getFullYear() === now.getFullYear() ? monthDayTime : `${d.getFullYear()}-${monthDayTime}`;
+export const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+
+/** "Nov 10, 2026" from a year, a 1-based month and a day. */
+export function formatYmd(year: number, month1: number, day: number): string {
+  return `${MONTH_SHORT[month1 - 1] ?? pad(month1)} ${day}, ${year}`;
 }
 
+/** "22:32" from an hour (0-23) and a minute. */
+export function formatHHmm(hour: number, minute: number): string {
+  return `${pad(hour)}:${pad(minute)}`;
+}
+
+/** LOCAL "Nov 10, 2026", or null when the value is absent or unreadable. */
+export function formatDay(ts: FsTimeLike): string | null {
+  const d = tsToDate(ts);
+  if (!d) return null;
+  return formatYmd(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+
+/**
+ * A `YYYY-MM-DD` day key (what `dayKey` groups by) as the day a person reads,
+ * "Nov 10, 2026". Anything that is not such a key ("Undated") comes back as it
+ * was.
+ */
+export function dayKeyLabel(key: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (!m) return key;
+  return formatYmd(Number(m[1]), Number(m[2]), Number(m[3]));
+}
+
+/**
+ * LOCAL "Nov 10, 2026 22:32" for a row timestamp (companion to dayKey). Always
+ * with the year (#1599: lists such as KinTales span more than a year). `now`
+ * is kept for callers written when the year was dropped for the current one;
+ * it no longer changes the result.
+ */
+export function formatWhen(ts: FsTimeLike, now: Date = new Date()): string {
+  void now;
+  const d = tsToDate(ts);
+  if (!d) return '(no time)';
+  return `${formatYmd(d.getFullYear(), d.getMonth() + 1, d.getDate())} ${formatHHmm(d.getHours(), d.getMinutes())}`;
+}
+
+/**
+ * `formatWhen`'s "Nov 10, 2026 22:32", read on a named IANA zone (the
+ * business's) instead of the viewer's. No `timeZone` reads the viewer's.
+ */
+export function formatWhenInZone(ts: FsTimeLike, timeZone?: string): string {
+  const d = tsToDate(ts);
+  if (!d) return '(no time)';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+    ...(timeZone !== undefined && timeZone !== '' ? { timeZone } : {}),
+  }).formatToParts(d);
+  const part = (type: Intl.DateTimeFormatPartTypes): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? '0');
+  return `${formatYmd(part('year'), part('month'), part('day'))} ${formatHHmm(part('hour') % 24, part('minute'))}`;
+}
 /**
  * LOCAL `HH:mm` alone, for a row whose day group header already carries the
  * day. Its callers used to take `formatWhen(...).slice(6)`, which stopped
@@ -81,16 +143,13 @@ export function formatClock(ts: FsTimeLike): string {
 }
 
 /**
- * LOCAL `YYYY-MM-DD HH:mm`, with the year: the shape a sortable table column
- * uses when it has its own header to name the field, unlike `formatWhen`'s
- * bare `MM-DD HH:mm`, which counts on a joined meta line to supply context.
- * `null` for a missing timestamp, so a caller can render its own blank
- * placeholder rather than inherit `formatWhen`'s `(no time)`.
+ * `formatWhen`'s shape, but `null` for a missing timestamp, so a caller can
+ * render its own blank placeholder rather than inherit `(no time)`.
  */
 export function formatWhenFull(ts: FsTimeLike): string | null {
   const d = tsToDate(ts);
   if (!d) return null;
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatWhen(d);
 }
 
 /** Machine-readable local datetime for a `<time dateTime={…}>` attribute. */

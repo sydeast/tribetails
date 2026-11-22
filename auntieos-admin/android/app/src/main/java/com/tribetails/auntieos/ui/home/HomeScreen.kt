@@ -346,7 +346,8 @@ fun HomeScreen(
                                             value = loadingValue ?: state.pendingDraftCount.toString(),
                                             numericValue = if (state.isLoading) null else state.pendingDraftCount.toDouble(),
                                             formatValue = { it.roundToInt().toString() },
-                                            trend = "${state.recentDrafts.size} recent drafts",
+                                            // #1850: what the number counts, not the list's row cap.
+                                            trend = kinTalesReviewTrend(state.pendingDraftCount),
                                             tone = AuntieStatusTone.Teal,
                                             modifier = Modifier.weight(1f),
                                             onClick = {
@@ -458,6 +459,14 @@ fun HomeScreen(
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
                                         state.recentDrafts.take(4).forEachIndexed { i, d ->
                                             TaleRow(d, i, onOpen = { onOpenDraft(d.id) })
+                                        }
+                                        // #1850: say when the list draws fewer than the card counts.
+                                        pendingShownLine(state.recentDrafts.take(4).size, state.pendingDraftCount)?.let {
+                                            Text(
+                                                text = it,
+                                                style = AuntieTheme.typography.labelSmall,
+                                                color = AuntieTheme.colors.textDim,
+                                            )
                                         }
                                     }
                                 }
@@ -1232,6 +1241,19 @@ internal fun TodaysPackOverdueRow(label: String, onClick: () -> Unit) {
  * there is none (the button then opens a blank Communicate). Pure; tested.
  */
 internal fun reviewTarget(drafts: List<Draft>): String? = drafts.firstOrNull { it.id.isNotBlank() }?.id
+/**
+ * #1850: the line under "KinTales to review". It read "3 recent drafts" under a
+ * 12: the 3 was how many rows KinTales pending loads, not what the card counts.
+ * Pure; tested.
+ */
+internal fun kinTalesReviewTrend(pending: Int): String =
+    if (pending == 0) "all caught up" else "drafts waiting to send"
+/**
+ * #1850: "Newest 3 of 12 drafts." under KinTales pending when it draws fewer
+ * than are waiting, else null. Pure; tested.
+ */
+internal fun pendingShownLine(shown: Int, total: Int): String? =
+    if (total > shown) "Newest $shown of $total drafts." else null
 
 /**
  * The mono meta line of a "KinTales pending" row: DRAFT, the household, the day.

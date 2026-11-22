@@ -37,10 +37,20 @@ export function usePollTick(ms: number = VISIT_REQUESTS_REFRESH_MS): number {
 
 const NEW_REQUESTS: readonly RequestQueueKind[] = ['newBooking'];
 
+/** #1877: when each read of the queue was sent, so an answer can outrank a read older than it. */
+const queueReadSentAt = new WeakMap<ReadonlyMap<string, PendingBookingRequestDto>, number>();
+
+/** Records when a queue read was sent. Exported for tests. */
+export function markQueueReadSent<T extends ReadonlyMap<string, PendingBookingRequestDto>>(queue: T, sentAtMs: number): T {
+  queueReadSentAt.set(queue, sentAtMs);
+  return queue;
+}
+
 async function loadPending(): Promise<ReadonlyMap<string, PendingBookingRequestDto>> {
+  const sentAtMs = Date.now();
   try {
     const { requests } = await listPendingBookingRequests();
-    return new Map(requests.map((r) => [pendingRequestKey(r.kinfolkId, r.batchId), r]));
+    return markQueueReadSent(new Map(requests.map((r) => [pendingRequestKey(r.kinfolkId, r.batchId), r])), sentAtMs);
   } catch (err) {
     // A sandbox test admin may not read across households, so the queue is
     // refused for her on every visit. For her that is an empty queue, the
@@ -48,6 +58,45 @@ async function loadPending(): Promise<ReadonlyMap<string, PendingBookingRequestD
     if (getTestScope() !== null) return new Map();
     throw err;
   }
+}
+
+/**
+ * #1877: the requests answered on this screen, each with when the server's
+ * answer came back. A read sent after that moment speaks for the request, so
+ * one that is somehow still waiting comes back. A read sent before it knows
+ * nothing of the answer, however late it lands.
+ */
+export type AnsweredRequests = ReadonlyMap<string, number>;
+
+export const NO_ANSWERED_REQUESTS: AnsweredRequests = new Map();
+
+/** #1877: `answered` plus one more request, answered at `atMs`. */
+export function withAnsweredRequest(
+  answered: AnsweredRequests,
+  key: string,
+  atMs: number = Date.now(),
+): AnsweredRequests {
+  return new Map(answered).set(key, atMs);
+}
+
+/**
+ * #1877: the queue, less the requests answered here since it was read. After
+ * Approve the row read BOOKED while "Needs a decision" kept counting the
+ * request until the next read of the queue, which can take ten seconds from
+ * cold; a Deny happened to land sooner. The answer the server just confirmed
+ * drops the request at once, for every count and button that reads the queue.
+ */
+export function pendingLessAnswered(
+  queue: ReadonlyMap<string, PendingBookingRequestDto> | null,
+  answered: AnsweredRequests,
+): ReadonlyMap<string, PendingBookingRequestDto> | null {
+  if (queue === null || answered.size === 0) return queue;
+  const sentAtMs = queueReadSentAt.get(queue) ?? Number.NEGATIVE_INFINITY;
+  const left = [...queue].filter(([key]) => {
+    const answeredAtMs = answered.get(key);
+    return answeredAtMs === undefined || sentAtMs > answeredAtMs;
+  });
+  return left.length === queue.size ? queue : new Map(left);
 }
 
 /**

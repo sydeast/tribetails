@@ -22,5 +22,5 @@ internal fun canAssignAuntie(kinfolkId: String?, batchId: String?, visitId: Stri
 
 /** Shown beside the disabled control. Says why, not just that it is off. */
 internal fun assignUnavailableReason(): String =
-    "This visit is not part of a booking request, so there is no visit record to assign against. " +
-        "Assignment lives on the request, and only visits approved from one carry it."
+    "Only a visit that came from a booking request can have an Auntie assigned here. " +
+        "This visit was added to the calendar directly."

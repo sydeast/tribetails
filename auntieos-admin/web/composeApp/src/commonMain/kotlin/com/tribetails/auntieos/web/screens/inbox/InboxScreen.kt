@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.inbox
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -84,6 +85,8 @@ import com.tribetails.auntieos.web.util.openAudioBytes
 import com.tribetails.auntieos.web.util.openUrl
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // `internal`, not `private`: `VoicemailLog.toEntry()` below returns an
 // `InboxEntry` carrying a `Channel`, and a Kotlin function's visibility can
@@ -161,7 +164,7 @@ fun InboxScreen() {
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Inbox",
+            kicker     = navKicker(Destination.Inbox),
             title      = "Inbox",
             // Operator-facing UI chrome (no kinfolk-facing copy).
             subtitle   = "Voicemails, calls, SMS, and emails, everywhere kinfolk reach out.",
@@ -1100,18 +1103,14 @@ private fun channelIcon(entry: InboxEntry): ImageVector = when (entry.channel) {
 private fun formatDuration(sec: Int): String =
     if (sec < 60) "${sec}s" else "${sec / 60}m ${sec % 60}s"
 
-/** "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599). */
+/** "Sep 3, 2026 14:02" (#1828: the admin shape, always with the year; [currentYear] no longer changes it). */
 internal fun shortDateTime(
     iso: String,
     currentYear: Int = com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0,
+    zone: kotlinx.datetime.TimeZone = com.tribetails.auntieos.web.util.businessTimeZone(),
 ): String =
     runCatchingCancellable {
         if (iso.length < 16) return@runCatchingCancellable iso
-        val year  = iso.substring(0, 4).toInt()
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
+        AdminTime.storedDateTime(iso, zone) ?: AdminTime.dateTimeOfWallClock(iso) ?: iso
     }.getOrDefault(iso)
 
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")

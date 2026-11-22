@@ -22,6 +22,8 @@ import {
   rescheduleTimesForDrop,
   snapMinuteOfDay,
   gridWindowFor,
+  gridLanes,
+  visitBlockPlacement,
   DEFAULT_GRID_WINDOW,
 } from './scheduleGrid';
 import { businessWallClockToMs } from './businessZoneTime';
@@ -96,10 +98,10 @@ describe('clock helpers', () => {
   });
 
   it('labels the gutter the way the mock does', () => {
-    expect(hourLabel(8)).toBe('8a');
-    expect(hourLabel(12)).toBe('12p');
-    expect(hourLabel(13)).toBe('1p');
-    expect(hourLabel(18)).toBe('6p');
+    expect(hourLabel(8)).toBe('08:00');
+    expect(hourLabel(12)).toBe('12:00');
+    expect(hourLabel(13)).toBe('13:00');
+    expect(hourLabel(18)).toBe('18:00');
   });
 });
 
@@ -275,5 +277,85 @@ describe('gridWindowFor', () => {
     expect(gridPlacement(19 * 60, 60, w)).not.toBeNull();
     expect(clampDropMinute(5 * 60, w)).toBe(6 * 60);
     expect(clampDropMinute(21 * 60, w)).toBe(20 * 60 - 1);
+  });
+});
+
+// #1861: four visits between 23:05 and 23:46 printed over one another, and the
+// last was cut off by the bottom edge.
+describe('gridLanes (#1861)', () => {
+  const px = (minutes: number) => (HOUR_HEIGHT_PX * minutes) / 60;
+  const drawn = (id: string, startMin: number, lenMin = MIN_BLOCK_MINUTES) => ({ id, topPx: px(startMin), heightPx: px(lenMin) });
+  it('gives a lone block the whole column', () => {
+    expect(gridLanes([drawn('a', 0, 60)]).get('a')).toEqual({ lane: 0, lanes: 1 });
+  });
+
+  it('puts blocks whose drawn extents overlap side by side', () => {
+    // 23:05, 23:15, 23:30, 23:46 on a 22:00 window, each drawn 20 minutes tall.
+    const lanes = gridLanes([drawn('d', 106), drawn('b', 75), drawn('a', 65), drawn('c', 90)]);
+    expect(lanes.get('a')).toEqual({ lane: 0, lanes: 2 });
+    expect(lanes.get('b')).toEqual({ lane: 1, lanes: 2 });
+    expect(lanes.get('c')).toEqual({ lane: 0, lanes: 2 });
+    expect(lanes.get('d')).toEqual({ lane: 1, lanes: 2 });
+    // No two blocks in one lane overlap.
+    for (const [x, y] of [['a', 'c'], ['b', 'd']] as const) {
+      expect(lanes.get(x)?.lane).toBe(lanes.get(y)?.lane);
+    }
+  });
+
+  it('judges overlap on the drawn height, not the visit length', () => {
+    // Two 5-minute visits 10 minutes apart are each drawn 20 minutes tall.
+    const lanes = gridLanes([drawn('a', 0), drawn('b', 10)]);
+    expect(lanes.get('a')?.lanes).toBe(2);
+  });
+
+  it('lets blocks that only touch share a lane, and keeps separate groups apart', () => {
+    const lanes = gridLanes([drawn('a', 0, 60), drawn('b', 60, 60), drawn('c', 120, 30), drawn('d', 125, 30)]);
+    expect(lanes.get('a')).toEqual({ lane: 0, lanes: 1 });
+    expect(lanes.get('b')).toEqual({ lane: 0, lanes: 1 });
+    expect(lanes.get('c')).toEqual({ lane: 0, lanes: 2 });
+    expect(lanes.get('d')).toEqual({ lane: 1, lanes: 2 });
+  });
+
+  it('keeps touching visits in one lane at every minute, whatever the pixel rounding', () => {
+    // 00:01 for 73 minutes: 0.9 + 65.7 is 66.60000000000001, past the next top of 66.6.
+    const rounded = gridLanes([drawn('a', 1, 73), drawn('b', 74, 30)]);
+    expect(rounded.get('a')).toEqual({ lane: 0, lanes: 1 });
+    expect(rounded.get('b')).toEqual({ lane: 0, lanes: 1 });
+    for (let start = 0; start < 300; start += 1) {
+      for (let length = MIN_BLOCK_MINUTES; length <= 240; length += 1) {
+        const lanes = gridLanes([drawn('a', start, length), drawn('b', start + length, MIN_BLOCK_MINUTES)]);
+        expect(lanes.get('a')?.lanes).toBe(1);
+        expect(lanes.get('b')?.lanes).toBe(1);
+      }
+    }
+  });
+
+  it('orders blocks that start together by id, the same on every render', () => {
+    const one = gridLanes([drawn('y', 0), drawn('x', 0)]);
+    const two = gridLanes([drawn('x', 0), drawn('y', 0)]);
+    expect(one.get('x')).toEqual({ lane: 0, lanes: 2 });
+    expect(two.get('x')).toEqual({ lane: 0, lanes: 2 });
+  });
+
+  it('answers nothing for no blocks', () => {
+    expect(gridLanes([]).size).toBe(0);
+  });
+});
+
+describe('visitBlockPlacement (#1861)', () => {
+  const lateWindow = { startHour: 22, endHour: 24 };
+  const minPx = (HOUR_HEIGHT_PX * MIN_BLOCK_MINUTES) / 60;
+  it('places a visit with room below exactly as gridPlacement does', () => {
+    expect(visitBlockPlacement(22 * 60 + 32, 30, lateWindow)).toEqual(gridPlacement(22 * 60 + 32, 30, lateWindow));
+  });
+
+  it('lifts a visit near midnight so it is drawn at the legible minimum, ending on the bottom edge', () => {
+    const place = visitBlockPlacement(23 * 60 + 46, 30, lateWindow);
+    expect(place?.heightPx).toBeCloseTo(minPx);
+    expect((place?.topPx ?? 0) + (place?.heightPx ?? 0)).toBeCloseTo(HOUR_HEIGHT_PX * 2);
+  });
+
+  it('still refuses a start outside the window', () => {
+    expect(visitBlockPlacement(21 * 60, 30, lateWindow)).toBeNull();
   });
 });

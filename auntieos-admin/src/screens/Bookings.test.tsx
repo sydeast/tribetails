@@ -551,7 +551,7 @@ describe('Bookings screen', () => {
     // inside the Morning block above). Awaited because the mode comes from the
     // work-settings read: before it lands the row shows the clock only.
     expect(
-      await within(row).findByText('Dog Walking · Jul 16 · 9:00 AM · Morning block'),
+      await within(row).findByText('Dog Walking · Jul 16, 2026 09:00 · Morning block'),
     ).toBeInTheDocument();
     expect(within(row).getByText('SCHEDULED')).toBeInTheDocument();
   });
@@ -560,7 +560,7 @@ describe('Bookings screen', () => {
     render(<Bookings />);
     const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     // 15:30 is in no block; Midday (to 15:00) is the nearest.
-    expect(await within(row).findByText('Dog Walking · Jul 16 · 3:30 PM · Midday block')).toBeInTheDocument();
+    expect(await within(row).findByText('Dog Walking · Jul 16, 2026 15:30 · Midday block')).toBeInTheDocument();
   });
   it('#1863: in Exact times mode the row names the clock and no block, as the household sees it', async () => {
     getBusinessSettings.mockResolvedValue({
@@ -573,7 +573,7 @@ describe('Bookings screen', () => {
     render(<Bookings />);
     const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
-    expect(await within(row).findByText('Dog Walking · Jul 16 · 9:00 AM')).toBeInTheDocument();
+    expect(await within(row).findByText('Dog Walking · Jul 16, 2026 09:00')).toBeInTheDocument();
     expect(within(row).queryByText(/block/)).toBeNull();
   });
 
@@ -678,7 +678,7 @@ describe('Bookings screen', () => {
     expect(document.querySelectorAll('.den-stat-label')).toHaveLength(0);
     // DRAFT and PENDING still count as one bucket, mirroring BookingScreen.kt's
     // "Pending approval"; the chip on the section heading is where it is stated.
-    const pending = screen.getByRole('group', { name: /^Visit requests/ });
+    const pending = screen.getByRole('group', { name: /^Drafts/ });
     expect(within(pending).getByText('2')).toBeInTheDocument();
   });
 
@@ -881,7 +881,7 @@ describe('Bookings screen', () => {
     it('each section is a staggered block with a serif heading and a plain count', () => {
       useCollection.mockReturnValue({ status: 'ready', data: [entry({ status: 'PENDING' })] });
       render(<Bookings />);
-      const pending = screen.getByRole('group', { name: /^Visit requests/ });
+      const pending = screen.getByRole('group', { name: /^Drafts/ });
       expect(pending.className).toContain('d1');
       expect(screen.getByRole('group', { name: /^Scheduled/ }).className).toContain('d2');
       expect(screen.getByRole('group', { name: /^History/ }).className).toContain('d3');
@@ -1244,7 +1244,7 @@ describe('groupBookingsByStatus', () => {
   });
   it('keeps an empty section so the screen can say nothing is waiting', () => {
     const sections = groupBookingsByStatus([entry({ _id: 'c', status: 'COMPLETED' })]);
-    expect(sections[0]).toEqual({ key: 'pending', label: 'Visit requests', rows: [] });
+    expect(sections[0]).toEqual({ key: 'pending', label: 'Drafts', rows: [] });
   });
   it('#1578: keeps a visit that is under way in Scheduled, not History', () => {
     const sections = groupBookingsByStatus([
@@ -1327,20 +1327,20 @@ describe('Bookings status sections', () => {
   it('heads each section with its own live count', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    expect(within(sectionNamed('Visit requests')).getByText('1')).toBeInTheDocument();
+    expect(within(sectionNamed('Drafts')).getByText('1')).toBeInTheDocument();
     expect(within(sectionNamed('Scheduled')).getByText('1')).toBeInTheDocument();
     expect(within(sectionNamed('History')).getByText('2')).toBeInTheDocument();
   });
   it('puts each row under its own status section, not one flat list', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    expect(within(sectionNamed('Visit requests')).getByText('Waiting Wren')).toBeInTheDocument();
+    expect(within(sectionNamed('Drafts')).getByText('Waiting Wren')).toBeInTheDocument();
     expect(within(sectionNamed('Scheduled')).getByText('Booked Devlin')).toBeInTheDocument();
   });
   it('#704: all three sections are on screen, History open rather than behind "Show N finished"', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    for (const label of ['Visit requests', 'Scheduled', 'History']) {
+    for (const label of ['Drafts', 'Scheduled', 'History']) {
       expect(sectionNamed(label)).toBeInTheDocument();
     }
     expect(screen.getByText('Finished Sparrow')).toBeInTheDocument();
@@ -1366,7 +1366,7 @@ describe('Bookings status sections', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [mixed[1] as BookingEntry] });
     render(<Bookings />);
     expect(
-      within(sectionNamed('Visit requests')).getByText(/nothing is waiting on a reply/i),
+      within(sectionNamed('Drafts')).getByText('No drafts.'),
     ).toBeInTheDocument();
   });
   it('#701: the Select toggle on the list header turns select mode on, next to the rows it picks', async () => {
@@ -1519,7 +1519,7 @@ describe('Bookings bulk reschedule', () => {
     expect(screen.getByText('Not offered a new time:')).toBeInTheDocument();
     // Scoped to the sheet: the "Pending" stat card carries the same phrase.
     const sheet = screen.getByRole('dialog');
-    expect(within(sheet).getByText(/awaiting a reply/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/not approved yet/i)).toBeInTheDocument();
     // Opening a sheet is not a transition: nothing was written by the press.
     expect(rescheduleBooking).not.toHaveBeenCalled();
   });

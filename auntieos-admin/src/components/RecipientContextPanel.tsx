@@ -7,11 +7,13 @@ import {
   getDossier,
   getHouseholdBank,
   getKin411,
+  getLatestThreadMessage,
   recapRecentComms,
   commsQueries,
   type Dossier,
   type HouseholdBank,
   type Kin411,
+  type LatestThreadMessage,
 } from '../api/recipientContext';
 import {
   summaryLine,
@@ -19,11 +21,16 @@ import {
   kinMetaLine,
   latestCommunication,
   commsBoxState,
+  commsLocalDay,
+  threadCommsRow,
   type CommsRow,
   type CommsChannel,
 } from '../lib/recipientContext';
+import { humanizeDate } from '../lib/invoiceFormat';
+import { localDateIso } from '../lib/inboxFormat';
 import { DenPanel, EmptyHint } from './DenScreenKit';
 import { Banner } from './Banner';
+import { LoadingRow } from './LoadingRow';
 import './RecipientContextPanel.css';
 
 const DOSSIER_SUMMARY_MAX = 280;
@@ -39,6 +46,7 @@ const CHANNEL_LABEL: Record<CommsChannel, string> = {
   email: 'Email',
   call: 'Call',
   voicemail: 'Voicemail',
+  thread: 'MyTribe message',
 };
 
 export interface RecipientContextPanelProps {
@@ -87,6 +95,11 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
   const [recapFlagOn, setRecapFlagOn] = useState(false);
   const [recap, setRecap] = useState('');
   const [recapError, setRecapError] = useState<string | null>(null);
+  // #1878: the Inbox thread, read once per recipient. 'loading' and 'error' are
+  // kept apart from "no thread" so neither can read as "No messages on file".
+  const [thread, setThread] = useState<
+    { status: 'loading' } | { status: 'error' } | { status: 'ready'; latest: LatestThreadMessage | null }
+  >({ status: 'loading' });
 
   const kinState = useCollection<Kin>(KIN_QUERY);
 
@@ -146,6 +159,25 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
       })
       .finally(() => {
         if (live) setBankLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [id, hasRecipient]);
+
+  useEffect(() => {
+    if (!hasRecipient) {
+      setThread({ status: 'ready', latest: null });
+      return;
+    }
+    let live = true;
+    setThread({ status: 'loading' });
+    getLatestThreadMessage(id)
+      .then((latest) => {
+        if (live) setThread({ status: 'ready', latest });
+      })
+      .catch(() => {
+        if (live) setThread({ status: 'error' });
       });
     return () => {
       live = false;
@@ -217,10 +249,16 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
     push(emailState, 'email');
     push(callState, 'call');
     push(voicemailState, 'voicemail');
+    if (thread.status === 'ready') {
+      const row = threadCommsRow(thread.latest);
+      if (row !== null) rows.push(row);
+    }
     return rows;
-  }, [smsState, emailState, callState, voicemailState]);
+  }, [smsState, emailState, callState, voicemailState, thread]);
 
   const box = commsBoxState(recapFlagOn, recap, latestCommunication(commsRows));
+  const commsLoading =
+    thread.status === 'loading' || [smsState, emailState, callState, voicemailState].some((c) => c.status === 'loading');
 
   if (!hasRecipient) {
     return (
@@ -359,7 +397,8 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
         {box.kind === 'latest' && (
           <>
             <p className="context__latest">
-              {CHANNEL_LABEL[box.latest.channel]} · {box.latest.timestamp}: {box.latest.snippet}
+              {CHANNEL_LABEL[box.latest.channel]} · {humanizeDate(commsLocalDay(box.latest.timestamp), localDateIso(new Date()))}:{' '}
+              {box.latest.snippet}
             </p>
             {box.disclosedFallback && recapError === null && (
               <p className="context__disclosure">
@@ -369,7 +408,14 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
           </>
         )}
 
-        {box.kind === 'empty' && <EmptyHint>No messages on file yet.</EmptyHint>}
+        {thread.status === 'error' && (
+          <Banner tone="warning">The message thread could not be read, so a newer message may be missing here.</Banner>
+        )}
+
+        {box.kind === 'empty' && commsLoading && <LoadingRow label="Reading messages…" />}
+        {box.kind === 'empty' && !commsLoading && thread.status !== 'error' && (
+          <EmptyHint>No messages on file yet.</EmptyHint>
+        )}
       </section>
     </DenPanel>
   );

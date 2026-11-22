@@ -226,6 +226,10 @@ fun AuntieMediaCell(
  * or placeholder "auntie" [uploadedBy] is omitted rather than shown as a real
  * author. Returns "" when nothing real remains. Pure; unit-tested.
  */
+/** #1882: a stored author that is an identifier, an email or a long opaque uid, not a name. */
+internal fun isStoredIdentifier(value: String): Boolean =
+    value.contains('@') || Regex("^[A-Za-z0-9_-]{20,}$").matches(value)
+
 internal fun mediaMetaLine(
     uploadedAt: String,
     uploadedBy: String,
@@ -236,7 +240,8 @@ internal fun mediaMetaLine(
         .orEmpty()
     val stored = uploadedBy.trim()
     // #1564: uploads store the uploader's uid; show their name when staff has one.
-    val author = (uploaderNames[stored] ?: stored)
+    // #1882: a uid staff does not know, or an email, is not a name: left off.
+    val author = (uploaderNames[stored] ?: stored.takeUnless(::isStoredIdentifier).orEmpty())
         .takeIf { it.isNotBlank() && !it.equals("auntie", ignoreCase = true) }
         .orEmpty()
     return listOf(date, author).filter { it.isNotBlank() }.joinToString(" · ")

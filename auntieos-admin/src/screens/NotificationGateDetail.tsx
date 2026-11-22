@@ -1,3 +1,4 @@
+import { formatWhen } from '../lib/time';
 import { useCallback, useEffect, useState } from 'react';
 import type { NotificationCatalogEntry, NotificationMatrix, UngatedSend } from '../api/myNotifications';
 import { listNotificationDeliveries, type DeliveryEvidence } from '../api/notificationDeliveries';
@@ -35,17 +36,15 @@ import { humanizeKey } from '../lib/notificationsFeed';
  * happens for a row someone actually opened.
  */
 
-const pad = (n: number): string => String(n).padStart(2, '0');
 /** A channel as a word ("Email", "SMS", "Push"); an unknown one as it is. */
 function channelWord(channel: string): string {
   return channel === 'email' || channel === 'sms' || channel === 'push' ? channelLabel(channel) : channel;
 }
 
-/** LOCAL `MM-DD HH:mm`, matching `lib/time.ts` formatWhen but from epoch ms. */
+/** `lib/time.ts` formatWhen from epoch ms, "Nov 10, 2026 22:32" (#1828). */
 function whenMs(ms: number | null): string {
   if (ms === null) return 'no time recorded';
-  const d = new Date(ms);
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatWhen(ms);
 }
 
 export function BadgeRow({ badges }: { badges: RowBadge[] }) {
@@ -84,7 +83,7 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
         <h4 className="notifgate__detail-heading">Who receives it</h4>
         {who.length === 0 ? (
           <p className="notifgate__detail-empty">
-            The server sent no recipient rule for this row. Upgrade MyTribe functions to see it.
+            Who gets this notice is not listed yet.
           </p>
         ) : (
           <ul className="notifgate__detail-list">
@@ -145,12 +144,12 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
       <section className="notifgate__detail-block">
         <h4 className="notifgate__detail-heading">What the body can carry</h4>
         {fields.length === 0 ? (
-          <p className="notifgate__detail-empty">No merge fields are recorded for this row.</p>
+          <p className="notifgate__detail-empty">Nothing is listed for this notice yet.</p>
         ) : (
           <>
             <p className="notifgate__detail-note">
-              Anything on this list can appear in the message, and therefore reach whoever the
-              recipient rule above resolves to.
+              Anything on this list can appear in the message, so everyone who gets this notice
+              can read it.
             </p>
             {/* #1592: what each field is, in words; the keys were developer text. */}
             <ul className="notifgate__detail-list" aria-label="What the body can carry">

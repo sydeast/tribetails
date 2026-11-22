@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.inbox
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -139,7 +140,7 @@ fun InboxScreen(
             ) {
                 item {
                     DenScreenHeading(
-                        kicker   = "The Den · Inbox",
+                        kicker   = railKicker(RailScreen.INBOX),
                         title    = "Inbox",
                         // Operator-facing UI chrome (no kinfolk-facing copy).
                         subtitle = "Voicemails, calls, SMS, and emails, everywhere kinfolk reach out.",
@@ -440,7 +441,7 @@ private fun InboxRow(entry: InboxEntry, onClick: () -> Unit) {
             MetaRow(entry)
         }
         Text(
-            text = shortDateTime(entry.timestamp),
+            text = shortDateTime(entry.timestamp, zone = com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current),
             style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
             color = c.textDim.copy(alpha = 0.7f),
             modifier = Modifier.padding(top = 3.dp),
@@ -645,18 +646,22 @@ private fun channelIcon(entry: InboxEntry): ImageVector = when (entry.channel) {
 private fun formatDuration(sec: Int): String =
     if (sec < 60) "${sec}s" else "${sec / 60}m ${sec % 60}s"
 
-/** "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599). */
-internal fun shortDateTime(iso: String, currentYear: Int = java.time.LocalDate.now().year): String =
+/** "Sep 3, 2026 14:02" (#1828: the admin shape, always with the year; [currentYear] no longer changes it). */
+@Suppress("UNUSED_PARAMETER")
+internal fun shortDateTime(
+    iso: String,
+    currentYear: Int = java.time.LocalDate.now().year,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+): String =
     runCatching {
         if (iso.length < 16) return@runCatching iso
-        val year  = iso.substring(0, 4).toInt()
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
+        AdminTime.storedDateTime(iso, zone)?.let { return@runCatching it }
+        AdminTime.dateTime(
+            iso.substring(0, 4).toInt(), iso.substring(5, 7).toInt(), iso.substring(8, 10).toInt(),
+            iso.substring(11, 13).toInt(), iso.substring(14, 16).toInt(),
+        )
     }.getOrDefault(iso)
 
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Messages (Stage 2 step 7 / Message Auntie 16.4): two-way kinfolk<->auntie

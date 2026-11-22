@@ -131,6 +131,12 @@ describe('mediaMetaLine', () => {
     expect(mediaMetaLine('2026-07-16T09:03:00.000Z', 'Jamie', names)).toBe('2026-07-16 · Jamie');
   });
 
+  // #1882: the walk read "2026-07-20 · [email]" under a picture.
+  it('#1882: leaves off an email or a uid the staff list does not know', () => {
+    expect(mediaMetaLine('2026-07-16T09:03:00.000Z', 'e2e-admin@tribetails.com')).toBe('2026-07-16');
+    expect(mediaMetaLine('2026-07-16T09:03:00.000Z', 'nppJNdMNYJfUigibGKUQj3n4obt2')).toBe('2026-07-16');
+  });
+
   it('drops the author when it is blank', () => {
     expect(mediaMetaLine('2026-07-16T09:03:00.000Z', '')).toBe('2026-07-16');
     expect(mediaMetaLine('2026-07-16T09:03:00.000Z', '   ')).toBe('2026-07-16');

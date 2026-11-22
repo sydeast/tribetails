@@ -93,16 +93,16 @@ describe('the pure helpers', () => {
   });
 
   it('labels the hours in twelve-hour time', () => {
-    expect(hourLabel(0)).toBe('12:00 AM');
-    expect(hourLabel(9)).toBe('9:00 AM');
-    expect(hourLabel(12)).toBe('12:00 PM');
-    expect(hourLabel(23)).toBe('11:00 PM');
+    expect(hourLabel(0)).toBe('00:00');
+    expect(hourLabel(9)).toBe('09:00');
+    expect(hourLabel(12)).toBe('12:00');
+    expect(hourLabel(23)).toBe('23:00');
   });
 
   it('offers not-scheduled first, then all 24 hours', () => {
     expect(HOUR_OPTIONS.length).toBe(25);
     expect(HOUR_OPTIONS[0]).toEqual({ value: '', label: 'Not scheduled' });
-    expect(HOUR_OPTIONS[HOUR_OPTIONS.length - 1]).toEqual({ value: '23', label: '11:00 PM' });
+    expect(HOUR_OPTIONS[HOUR_OPTIONS.length - 1]).toEqual({ value: '23', label: '23:00' });
   });
 
   it('builds the three-field patch', () => {
@@ -294,7 +294,7 @@ describe('the panel', () => {
       ).toBe('Notices to households: on · Invoice reminders: not scheduled · Times are in America/Chicago');
       expect(
         scheduleDetail({ householdNotificationsLive: false, householdNotificationHour: 14, timeZone: '' }),
-      ).toBe('Notices to households: off · Invoice reminders: 2:00 PM · Times are in America/Chicago');
+      ).toBe('Notices to households: off · Invoice reminders: 14:00 · Times are in America/Chicago');
     });
 
     it('the value line follows the saved document, not an unsaved flip', async () => {

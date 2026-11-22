@@ -322,7 +322,7 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
     const heading = screen.getByRole('heading', { level: 1 });
     expect(heading).toHaveTextContent('How the Den runs.');
     expect(heading.querySelector('.den-heading-accent')).toHaveTextContent('runs.');
-    expect(document.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Settings');
+    expect(document.querySelector('.den-heading-kicker')).toHaveTextContent('More · Settings');
     // The stamp is a VALUE, so it sits on the heading's detail line, never as
     // a stray paragraph between the band and the columns.
     const detail = document.querySelector('.den-heading-detail');
@@ -369,7 +369,7 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
 
     it('prints no stamp while the roster is still being read', async () => {
       const detail = await detailFor(UID, null);
-      expect(detail).toMatch(/^Last saved \S+ \S+$/);
+      expect(detail).toMatch(/^Last saved \w{3} \d{1,2}, \d{4} \d\d:\d\d$/);
       expect(detail).not.toContain(UID);
       expect(detail).not.toContain(' by ');
     });

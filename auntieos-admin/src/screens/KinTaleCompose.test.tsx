@@ -444,7 +444,7 @@ describe('KinTaleCompose: the composer mock', () => {
     expect(within(nav).getByText('New tale')).toHaveAttribute('aria-current', 'page');
     expect(within(hero).getByRole('heading', { level: 1 })).toHaveTextContent(/^New tale$/);
     // The mock's cover eyebrow, "Visit · <when> · <service>", as the detail line.
-    expect(hero.querySelector('.den-heading-detail')).toHaveTextContent(/^Visit · 07-16 \d\d:\d\d · Dog Walk$/);
+    expect(hero.querySelector('.den-heading-detail')).toHaveTextContent(/^Visit · Jul 16, 2026 \d\d:\d\d · Dog Walk$/);
     expect(within(hero).getByText('Draft')).toHaveClass('den-statuspill');
     expect(within(hero).getByText('Draft')).toHaveAttribute('data-tone', 'orange');
     // A nested screen carries the trail, never the list's kicker.
@@ -1114,7 +1114,10 @@ describe('L20 · template selection', () => {
   it('says so, in the operator’s own words, when it fell back to the built-in', async () => {
     renderComposer({ templates: [templateDoc({ serviceTypeKeys: ['Overnight'] })] });
     expect(await screen.findByText('Standard Visit')).toBeInTheDocument();
-    expect(screen.getByText(/nothing in the template bank matches/i)).toBeInTheDocument();
+    // #1827: an info tip beside the name, never a sentence under it.
+    const note = screen.getByText(/nothing in the template bank matches/i);
+    expect(note).toHaveAttribute('role', 'tooltip');
+    expect(note.closest('.kintale-compose__provenance')).toBeNull();
   });
   /**
    * The REFUSAL that matters most: an unresolved template must never be

@@ -79,6 +79,8 @@ import com.tribetails.auntieos.web.observability.reportingExceptionHandler
 import com.tribetails.auntieos.web.screens.booking.NewBookingMath
 import com.tribetails.auntieos.web.screens.booking.SeriesDecisionDialog
 import com.tribetails.auntieos.web.screens.booking.groupIncomingBySeries
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Admin notification inbox ("The Den · Notifications").
@@ -161,7 +163,12 @@ fun NotificationsScreen(
         val names = (kinfolkState as? FirestoreResult.Data)?.value.orEmpty().associate { it._id to it.displayName }
         groupIncomingBySeries(visits) { names[it] }
     }
-    val pending: Set<String>? = if (incomingState is FirestoreResult.Data) pendingRequestKeys(waitingSeries) else null
+
+    // #1877: a request answered here leaves the count at once; the next read of
+    // the queue starts the list over.
+    val answeredHere = remember(incomingState) { mutableStateListOf<String>() }
+    val pending: Set<String>? =
+        if (incomingState is FirestoreResult.Data) pendingLessAnswered(pendingRequestKeys(waitingSeries), answeredHere) else null
     val zone = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone)
 
     // Active category filter. null = "All". Selection is presentation-only; it
@@ -414,6 +421,7 @@ fun NotificationsScreen(
                 val answer = answerBookingRequest(client, entry, approve = !decline, note = note)
                 actionError = answer.error
                 actionNotice = answer.notice
+                if (answer.error == null) notificationRequestKey(entry)?.let { answeredHere.add(it) }
                 answering = false
                 confirming = null
             }
@@ -431,7 +439,7 @@ private fun Heading(unreadCount: Int) {
     val typo = AuntieTheme.typography
 
     DenScreenHeading(
-        kicker = "The Den · Notifications",
+        kicker = navKicker(Destination.Notifications),
         title = "Notifications",
         subtitle = "Events that need you, and the household each one is about. Activity Log keeps the audit trail.",
         trailing = {

@@ -1,3 +1,4 @@
+import { formatWhenInZone } from '../lib/time';
 import { useCallback, useEffect, useState } from 'react';
 import {
   addInternalBookingNote,
@@ -37,17 +38,10 @@ export function noteByline(note: ListVisitInternalNotesResultNote): string {
 
 /** "Nov 5, 3:00 PM" in the business zone ("Nov 5, 2025, 3:00 PM" outside [now]'s year), or '' when the note has no date. */
 export function noteWhen(ms: number | null, zone: string, now: Date = new Date()): string {
+  // #1828: the admin shape, "Nov 10, 2026 22:32"; `now` no longer changes it.
+  void now;
   if (ms === null) return '';
-  const yearIn = (d: Date) => new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric' }).format(d);
-  const sameYear = yearIn(new Date(ms)) === yearIn(now);
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: zone,
-    month: 'short',
-    day: 'numeric',
-    ...(sameYear ? {} : { year: 'numeric' }),
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(ms));
+  return formatWhenInZone(ms, zone);
 }
 
 function failure(err: unknown): string {

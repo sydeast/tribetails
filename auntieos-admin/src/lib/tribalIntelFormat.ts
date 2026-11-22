@@ -430,6 +430,6 @@ export function reconcileStateInfo(state: ReconcileState): ReconcileStateInfo {
  * and the desktop console carry the same two strings.
  */
 export const TRIBAL_INTEL_SUBTITLE =
-  'Notes about a household, a person or a pet, written for the dossier and the 411.';
+  'Notes about a household, a person or a Kin, written for the dossier and the 411.';
 export const TRIBAL_INTEL_EMPTY_COPY =
-  'No Tribal Intel yet. Notes about a household, a person or a pet appear here once you add them.';
+  'No Tribal Intel yet. Notes about a household, a person or a Kin appear here once you add them.';

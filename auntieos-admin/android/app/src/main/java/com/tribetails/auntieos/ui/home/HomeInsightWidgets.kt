@@ -163,7 +163,7 @@ internal fun OverdueVisitsWidget(
                 Column(Modifier.weight(1f)) {
                     Text(v.kinfolkName, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                     // #2095: the business day it ended, not the stored instant's UTC day.
-                    Text("ended ${com.tribetails.auntieos.domain.storedBusinessDay(v.endedAt, zone)} ${formatTime(v.endedAt, zone)}".trim(), style = AuntieTheme.typography.bodySmall, color = c.error)
+                    Text("ended ${com.tribetails.auntieos.domain.storedBusinessDayLabel(v.endedAt, zone)} ${formatTime(v.endedAt, zone)}".trim(), style = AuntieTheme.typography.bodySmall, color = c.error)
                 }
                 if (v.serviceType.isNotBlank()) ServicePill(catalog.nameOf(v.serviceType))
             }
@@ -444,7 +444,7 @@ internal fun SafeboxWidget(
                     }
                     // #2095: the visit's business day and time, not its stored UTC characters.
                     Text(
-                        "${com.tribetails.auntieos.domain.storedBusinessDay(next.startTime, zone)} ${formatTime(next.startTime, zone)}".trim(),
+                        "${com.tribetails.auntieos.domain.storedBusinessDayLabel(next.startTime, zone)} ${formatTime(next.startTime, zone)}".trim(),
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )

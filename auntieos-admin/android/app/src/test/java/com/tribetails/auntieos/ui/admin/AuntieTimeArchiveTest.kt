@@ -247,7 +247,7 @@ class AuntieTimeArchiveTest {
     @Test
     fun `the card prints the business's day and clock for an instant`() {
         val visit = session(startTime = instant("2026-11-11", "23:30")).apply { endTime = instant("2026-11-12", "00:15") }
-        assertEquals("Nov 11 · 23:30 to 00:15", sessionWindow(visit, "2026-11-12", chicago))
-        assertEquals("Mar 8 · 23:30", auntieTimeDate(instant("2026-03-08", "23:30"), "2026-03-09", chicago))
+        assertEquals("Nov 11, 2026 23:30 to 00:15", sessionWindow(visit, "2026-11-12", chicago))
+        assertEquals("Mar 8, 2026 23:30", auntieTimeDate(instant("2026-03-08", "23:30"), "2026-03-09", chicago))
     }
 }

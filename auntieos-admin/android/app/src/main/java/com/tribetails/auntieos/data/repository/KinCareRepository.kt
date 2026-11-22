@@ -1242,14 +1242,24 @@ internal fun staffRolesByUid(staff: List<StaffMember>): Map<String, String> =
     staff.mapNotNull { member -> member.role?.let { member.uid to it } }.toMap()
 
 /**
- * #1564: uid -> the name the Gallery shows for an uploader (name, else email).
- * A staff member with neither is left out, so their uid line stays as it was.
+ * #1564, #1882: uid -> the byline a screen shows for a staff member: their
+ * name, else the word for their role ("Office" for the owner, "Auntie"), the
+ * words the visit notes sign with. Never an email, and an email stored as a
+ * display name is not a name.
  */
 internal fun staffNamesByUid(staff: List<StaffMember>): Map<String, String> =
-    staff.mapNotNull { member ->
-        val name = member.displayName?.ifBlank { null } ?: member.email?.ifBlank { null }
-        name?.let { member.uid to it }
-    }.toMap()
+    staff.associate { member -> member.uid to staffByline(member) }
+
+/** #1882: a staff member's name, else the word for their role. */
+internal fun staffByline(member: StaffMember): String {
+    val name = member.displayName?.trim().orEmpty()
+    if (name.isNotEmpty() && !name.contains('@')) return name
+    return when (member.role) {
+        "owner" -> "Office"
+        "auntie" -> "Auntie"
+        else -> "Staff"
+    }
+}
 
 /**
  * Pure encode of the assignAuntie callable payload. The backend schema is

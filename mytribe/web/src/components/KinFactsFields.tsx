@@ -8,8 +8,8 @@ interface SexFieldProps {
 }
 
 /**
- * Sex picker for the Kin editor (#1310). Male / Female / Unknown, the admin's
- * own three. A stored value outside them (the admin has written "F" and "M")
+ * Gender picker for the Kin editor (#1310, #1852: one label on every client; the
+ * stored field stays `sex`). Male / Female / Unknown, the admin's own three. A stored value outside them (the admin has written "F" and "M")
  * stays selectable as its own entry, so opening the editor never silently
  * rewrites what the admin entered.
  */
@@ -18,7 +18,7 @@ export function SexField({ id, value, onChange, error }: SexFieldProps) {
   const listed = KIN_SEX_OPTIONS.some((o) => o === trimmed);
   return (
     <div className="field">
-      <label htmlFor={id}>Sex</label>
+      <label htmlFor={id}>Gender</label>
       <select id={id} className="inp" value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">Not set</option>
         {KIN_SEX_OPTIONS.map((o) => (

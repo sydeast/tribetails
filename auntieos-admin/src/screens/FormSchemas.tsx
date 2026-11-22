@@ -17,6 +17,7 @@ import { IconTile } from '../components/IconTile';
 import { BRAND_GRADIENTS } from '../components/Avatar';
 import { useToast } from '../components/Toast';
 import './FormSchemas.css';
+import { navKicker } from '../lib/nav';
 
 export type SortColumn = 'name' | 'version' | 'updatedAt' | 'updatedBy';
 export type SortDirection = 'asc' | 'desc';
@@ -29,15 +30,17 @@ export interface SortState {
 /** The mock's shipped default: Updated, descending. */
 export const DEFAULT_SORT: SortState = { column: 'updatedAt', direction: 'desc' };
 
-/**
- * A value that reads as a Firebase Auth uid, long and opaque, rather than a
- * human label such as a seed script name ("seed_phase14_schemas"). Only used
- * to decide whether an UNRESOLVED `updatedBy` is worth shortening; shortening
- * a value that was already a readable label would make it harder to read, not
- * easier.
- */
+/** A value that reads as a Firebase Auth uid, long and opaque. */
 function looksLikeUid(value: string): boolean {
   return /^[A-Za-z0-9]{16,}$/.test(value);
+}
+
+/**
+ * A script's name, such as the seed run "seed_phase14_schemas": lower case
+ * words joined by underscores, never something a person typed as a name.
+ */
+function looksLikeScriptName(value: string): boolean {
+  return /^[a-z0-9]+(_[a-z0-9]+)+$/.test(value);
 }
 
 /**
@@ -57,13 +60,17 @@ function looksLikeUid(value: string): boolean {
  */
 export function resolveUpdatedBy(
   updatedBy: string | null,
-  emailByUid: ReadonlyMap<string, string>,
+  labelByUid: ReadonlyMap<string, string>,
 ): string | null {
   const trimmed = (updatedBy ?? '').trim();
   if (trimmed === '') return null;
-  const email = emailByUid.get(trimmed);
-  if (email) return email;
-  return looksLikeUid(trimmed) ? `${trimmed.slice(0, 8)}…` : trimmed;
+  const label = labelByUid.get(trimmed);
+  // #1890: a person's name, or a plain word. A sign-in email, a uid and a seed
+  // script's name are all things the owner would have to decode.
+  if (label && !label.includes('@')) return label;
+  if (label || looksLikeUid(trimmed) || trimmed.includes('@')) return 'Staff';
+  if (looksLikeScriptName(trimmed)) return 'Set up';
+  return trimmed;
 }
 
 /**
@@ -325,8 +332,11 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
       .then((roster) => {
         if (!live) return;
         const map = new Map<string, string>();
+        // #1890: a business admin the staff list does not name is the office,
+        // never their email.
         for (const member of roster.members) {
-          if (member.email) map.set(member.uid, member.email);
+          const name = (member.displayName ?? '').trim();
+          map.set(member.uid, name !== '' && !name.includes('@') ? name : 'Office');
         }
         setEmailByUid(map);
       })
@@ -392,7 +402,7 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Admin"
+        kicker={navKicker('formSchemas')}
         title="Form"
         accentTail="Schemas"
         subtitle="Author the dynamic forms kinfolk fill out."
@@ -459,8 +469,8 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
                         const byLabel = resolveUpdatedBy(row.updatedBy, labelByUid);
                         const nameCell = (
                           <>
+                            {/* #1890: the name alone; the stored id is not the owner's to read. */}
                             <span className="schemas__row-name">{row.name || row.id}</span>
-                            <code className="schemas__row-id">{row.id}</code>
                           </>
                         );
                         return (
@@ -540,7 +550,6 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
           <p className="schemas__dialog-hint">
             {pendingDelete.name || pendingDelete.id} (v{pendingDelete.version}). This cannot be undone.
           </p>
-          <code className="schemas__dialog-id">Schema id: {pendingDelete.id}</code>
         </Dialog>
       )}
     </div>

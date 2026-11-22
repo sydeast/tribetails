@@ -70,6 +70,8 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.util.businessTodayIso
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Activity log (hash-chain audit trail) in the Den aesthetic. Reads the
@@ -169,7 +171,7 @@ fun ActivityLogScreen() {
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Activity log",
+            kicker     = navKicker(Destination.Activity),
             title      = "Every move,",
             accentTail = "sealed.",
             subtitle   = "The append-only audit trail. Every login, edit, and system event the app records, sealed into the hash chain.",
@@ -616,12 +618,9 @@ internal fun activityDetailRows(
     return rows
 }
 
-/** `Nov 11, 2026, 11:33a`: an entry's time as the opened entry reads it (#1818). */
-internal fun activityWhenWords(w: ActivityWhen): String {
-    val month = MONTHS.getOrNull(w.dayKey.substring(5, 7).toInt() - 1) ?: w.dayKey.substring(5, 7)
-    val day = w.dayKey.substring(8, 10).toInt()
-    return "$month $day, ${w.dayKey.take(4)}, ${w.clock}"
-}
+/** `Nov 11, 2026 11:33`: an entry's time as the opened entry reads it (#1818), in the admin shape (#1828). */
+internal fun activityWhenWords(w: ActivityWhen): String =
+    "${com.tribetails.auntieos.web.ui.AdminTime.dayKeyLabel(w.dayKey)} ${w.clock}"
 
 /** Household id to name, real names only (#1818). */
 internal fun householdNamesById(directory: List<Kinfolk>): Map<String, String> =

@@ -42,6 +42,7 @@ import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { useToast } from '../components/Toast';
 import { useAdminAccess } from '../lib/access';
 import './KinfolkEdit.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Kinfolk (household) editor: the WRITE surface for `kinfolk/{id}`, ported from
@@ -512,7 +513,7 @@ export function KinfolkEdit({
   return (
     <div className="screen" data-screen="kinfolk-edit">
       <DenScreenHeading
-        kicker="The Den · Directory"
+        kicker={navKicker('directory')}
         title={`Edit ${kinfolkName || kinfolkId}`}
         subtitle="Contact, access, and vet details for this household."
         trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={leaveHeld} />}
@@ -737,12 +738,23 @@ export function KinfolkEdit({
                     </span>
                   )}
                   <GhostButton label="Cancel" onClick={onCancel} disabled={leaveHeld} />
-                  <PrimaryButton
-                    label={saving || tagsSaving ? 'Saving…' : 'Save changes'}
-                    onClick={() => void handleSave()}
-                    disabled={leaveHeld}
-                    busy={saving || tagsSaving}
-                  />
+                  {/* #1851: pressing Save must not blur the field being typed in
+                      first. The blur marked that field touched, its message
+                      appeared above, the button moved down before the mouse came
+                      up, and the press never became a click. Save itself shows
+                      every message and moves focus to the first one. */}
+                  <span
+                    className="kfedit__save-hold"
+                    data-testid="kfedit-save-hold"
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    <PrimaryButton
+                      label={saving || tagsSaving ? 'Saving…' : 'Save changes'}
+                      onClick={() => void handleSave()}
+                      disabled={leaveHeld}
+                      busy={saving || tagsSaving}
+                    />
+                  </span>
                 </div>
               </div>
               {/* #1602: what stopped the save, where the operator is looking:

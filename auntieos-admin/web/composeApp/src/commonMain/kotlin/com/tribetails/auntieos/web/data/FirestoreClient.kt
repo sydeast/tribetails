@@ -765,6 +765,21 @@ class FirestoreClient {
         }
     }
 
+    /**
+     * #1878: the newest message of the household's thread, or null for no thread.
+     * Read-only: [getConversationThread] marks the thread read, and choosing a
+     * recipient on Communicate is not opening it.
+     */
+    suspend fun latestThreadMessage(kinfolkId: String): WriteResult<com.tribetails.auntieos.web.screens.communicate.LatestThreadMessage?> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("getLatestConversationMessage", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeLatestThreadMessage(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "latest message decode failed") }
+        }
+    }
+
     suspend fun replyToConversation(kinfolkId: String, body: String): WriteResult<String> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(kinfolkId))
@@ -1913,6 +1928,14 @@ class FirestoreClient {
      */
     suspend fun invoiceSendMarks(invoiceId: String): SendMarks? =
         runCatchingCancellable { platformInvoiceDocPlain(invoiceId)?.let { sendMarksOf(it) } }.getOrNull()
+    /**
+     * #1871: one invoice read from the server right after an edit, so the sheet
+     * holds the saved figures before it says "Invoice updated.". The invoices
+     * stream polls, so without this the old quantity and total stayed up for up
+     * to a poll. Null when the read fails or the invoice is gone.
+     */
+    suspend fun invoiceFromServer(invoiceId: String): Invoice? =
+        runCatchingCancellable { platformInvoiceDoc(invoiceId) }.getOrNull()
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<SendAck> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)
         val payload = buildJsonObject {
@@ -3240,6 +3263,8 @@ internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailM
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
 /** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
 internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
+/** #1871: one invoice document from the server, decoded, or null when it does not exist. */
+internal expect suspend fun platformInvoiceDoc(invoiceId: String): Invoice?
 /**
  * #2037: how long the console waits for the server's record of a clock step
  * before it says it is still checking. Web waits the same (`VISIT_NOTICE_WAIT_MS`).
@@ -3620,7 +3645,22 @@ data class StaffMember(
  * A uid with neither is left out, so the caller keeps whatever it showed before.
  */
 fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
-    staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+    staff.associate { m -> m.uid to staffByline(m) }
+
+/**
+ * #1882: a staff member's name, else the word for their role ("Office" for the
+ * owner, "Auntie"), the words the visit notes sign with. Never an email, and
+ * an email stored as a display name is not a name.
+ */
+fun staffByline(member: StaffMember): String {
+    val name = member.displayName?.trim().orEmpty()
+    if (name.isNotEmpty() && !name.contains('@')) return name
+    return when (member.role) {
+        "owner" -> "Office"
+        "auntie" -> "Auntie"
+        else -> "Staff"
+    }
+}
 
 /**
  * #1820: uid -> "owner" or "auntie", for the Activity Log's actor role. Only
@@ -4349,7 +4389,8 @@ data class GeneratedDraft(
  * Drafts bucket. Pure; tested.
  */
 fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
-    drafts.filter { it.isUnsent }.sortedByDescending { it.created() }
+    // #1850: with copy to review, the rule web and Android count by.
+    drafts.filter { it.isUnsent && it.body().isNotBlank() }.sortedByDescending { it.created() }
 
 /**
  * #2293: the drafts KinTales files under Drafts: every one awaiting review, plus

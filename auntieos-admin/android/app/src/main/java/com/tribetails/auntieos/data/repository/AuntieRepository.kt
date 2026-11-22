@@ -1680,10 +1680,11 @@ class AuntieRepository(
      * Home's "KinTales pending": the three newest drafts still waiting on a
      * decision. #1563: an approved or already-sent draft is not pending, and the
      * panel's rows and its "Review & send" button now open what they list, so
-     * listing one would open a draft there is nothing left to do with. Read a
-     * little wider than three so a run of decided drafts does not empty it.
+     * listing one would open a draft there is nothing left to do with. #1850:
+     * the same read as the count, so a run of decided drafts cannot leave the
+     * list at "Newest 0 of 12".
      */
-    suspend fun getRecentDrafts(): Result<List<Draft>> = getGeneratedDrafts(limit = 10)
+    suspend fun getRecentDrafts(): Result<List<Draft>> = getGeneratedDrafts()
         // #1629: the same rule as the count beside it (pendingDraftCountOf), so a
         // content-less shell is neither a row nor counted.
         .map { drafts -> drafts.filter { it.isUnsent && it.generatedCopy.isNotBlank() }.take(3) }
@@ -4059,6 +4060,25 @@ class AuntieRepository(
             )
         }
     }.onFailure { AuntieLog.e("recentCommsForKinfolk failed for $kinfolkId", it) }
+
+    /**
+     * #1878: the newest message of the household's thread with the office, or null
+     * when there is no thread. Read-only: `getConversationThread` would mark the
+     * thread read, and choosing a recipient is not opening it.
+     */
+    suspend fun latestThreadMessage(kinfolkId: String): Result<com.tribetails.auntieos.ui.communicate.LatestThreadMessage?> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        val raw = functions.getHttpsCallable("getLatestConversationMessage")
+            .call(mapOf("kinfolkId" to kinfolkId))
+            .awaitCallable().data as? Map<*, *>
+        val message = raw?.get("message") as? Map<*, *>
+        val at = (message?.get("createdAtMs") as? Number)?.toLong() ?: 0L
+        if (message == null || at <= 0L) {
+            null
+        } else {
+            com.tribetails.auntieos.ui.communicate.LatestThreadMessage(message["preview"] as? String ?: "", at)
+        }
+    }.onFailure { AuntieLog.e("latestThreadMessage failed for $kinfolkId", it) }
 
     /**
      * AI-generated recap of the most recent communications for a kinfolk, via the

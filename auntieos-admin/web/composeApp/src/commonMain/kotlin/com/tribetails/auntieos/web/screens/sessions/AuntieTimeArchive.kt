@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.sessions
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
@@ -156,10 +157,10 @@ internal fun archiveDayLabel(day: String, today: LocalDate): String {
 internal fun archiveBoxLabel(day: LocalDate): String =
     "${ARCHIVE_MONTHS[day.monthNumber - 1]} ${day.dayOfMonth}, ${day.year}"
 
-/** "Nov 11 · 23:30" on the business's clock, or the stored text when it does not read. */
+/** "Nov 11, 2026 23:30" (#1828) on the business's clock, or the stored text when it does not read. */
 internal fun businessShortDateTime(iso: String, zone: TimeZone): String {
     val at = businessDateTimeOf(iso.trim(), zone) ?: return iso
-    return "${ARCHIVE_MONTHS[at.monthNumber - 1]} ${at.dayOfMonth} · ${clockOf(at)}"
+    return AdminTime.dateTime(at)
 }
 
 /** "23:30" on the business's clock, or the stored text when it does not read. */

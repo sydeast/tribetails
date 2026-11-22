@@ -5,7 +5,7 @@ import { AUDIT_EVENTS } from './auditEvents';
 import { logEvent } from './logger';
 import type { ActorRole } from './schema';
 import { businessTimeZone } from './bookingTimeBlocks';
-import { formatBusyWindow } from './visitWindowLabel';
+import { formatBusyWindow, windowClockFor, type WindowClock } from './visitWindowLabel';
 import { legacyUtcWindow, storedInstants } from './googleBusySlot';
 
 /**
@@ -216,8 +216,8 @@ export function findBookingBusyConflicts(
 }
 
 /** A busy block's window worded in `timeZone` (the business zone), for the refusal and its `details`. */
-export function busySlotLabel(slot: DecodedBusySlot, timeZone: string): string {
-  return formatBusyWindow(slot.startMs, slot.endMs, timeZone);
+export function busySlotLabel(slot: DecodedBusySlot, timeZone: string, clock: WindowClock = '12h'): string {
+  return formatBusyWindow(slot.startMs, slot.endMs, timeZone, clock);
 }
 /**
  * One human-readable, fail-loud message naming every conflicting date/time
@@ -225,10 +225,14 @@ export function busySlotLabel(slot: DecodedBusySlot, timeZone: string): string {
  * (resolved by `businessTimeZone`), so the times read as the operator's
  * schedule shows them.
  */
-export function formatBookingBusyConflictMessage(conflicts: readonly BookingBusyConflict[], timeZone: string): string {
+export function formatBookingBusyConflictMessage(
+  conflicts: readonly BookingBusyConflict[],
+  timeZone: string,
+  clock: WindowClock = '12h',
+): string {
   const parts = conflicts.map(
     (c) =>
-      `visit ${c.visitIndex + 1} (${formatBusyWindow(c.visitStartMs, c.visitEndMs, timeZone)}) conflicts with a Google Calendar busy block (${busySlotLabel(c.slot, timeZone)})`,
+      `visit ${c.visitIndex + 1} (${formatBusyWindow(c.visitStartMs, c.visitEndMs, timeZone, clock)}) conflicts with a Google Calendar busy block (${busySlotLabel(c.slot, timeZone, clock)})`,
   );
   return `This time is not available: ${parts.join('; ')}.`;
 }
@@ -345,6 +349,8 @@ export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOpt
   // ONE settings read serves both the switch and the zone the refusal is worded in (#1164).
   const settings = (await opts.firestore.doc(BUSINESS_SETTINGS_DOC).get()).data();
   const timeZone = businessTimeZone(settings);
+  // #1828: the refusal is read by whoever pressed the button.
+  const clock = windowClockFor(opts.actorRole);
   if (settings?.enableConflictDetection === false) {
     logEvent({
       severity: 'info',
@@ -360,12 +366,12 @@ export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOpt
   }
 
   if (!opts.override) {
-    throw new HttpsError('failed-precondition', formatBookingBusyConflictMessage(conflicts, timeZone), {
+    throw new HttpsError('failed-precondition', formatBookingBusyConflictMessage(conflicts, timeZone, clock), {
       code: BOOKING_BUSY_CONFLICT_CODE,
       conflicts: conflicts.map((c) => ({
         visitIndex: c.visitIndex,
         slotDocId: c.slot.docId,
-        window: busySlotLabel(c.slot, timeZone),
+        window: busySlotLabel(c.slot, timeZone, clock),
       })),
     });
   }
@@ -376,7 +382,7 @@ export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOpt
     severity: 'warn',
     actorRole: opts.actorRole,
     actorUid: opts.actorUid,
-    description: formatBookingBusyConflictMessage(conflicts, timeZone),
+    description: formatBookingBusyConflictMessage(conflicts, timeZone, clock),
     payload: {
       ...opts.auditContext,
       conflicts: conflicts.map((c) => ({ visitIndex: c.visitIndex, slotDocId: c.slot.docId })),

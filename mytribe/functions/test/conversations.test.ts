@@ -29,6 +29,7 @@ import {
 import {
   listConversationsHandler,
   getConversationThreadHandler,
+  getLatestConversationMessageHandler,
   replyToConversationHandler,
   markConversationReadHandler,
   markConversationUnreadHandler,
@@ -308,6 +309,50 @@ describe('getConversationThread (admin)', () => {
     const res = await getConversationThreadHandler(req({ kinfolkId: 'kf1' }));
     expect(res.messages.length).toBe(1);
     expect(ctx.writes.find((w) => w.path === 'conversations/kf1')?.data.unreadForAdmin).toBe(false);
+  });
+});
+
+describe('getLatestConversationMessage (admin, #1878)', () => {
+  it('returns the newest message as one plain line', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        'conversations/kf1/messages': [
+          { id: 'm2', data: { senderRole: 'kinfolk', body: '<p>See you <b>Sunday</b></p>', createdAtMs: 20 } },
+          { id: 'm1', data: { senderRole: 'auntie', body: 'older', createdAtMs: 10 } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await getLatestConversationMessageHandler(req({ kinfolkId: 'kf1' }));
+    expect(res.message).toEqual({ senderRole: 'kinfolk', preview: 'See you Sunday', createdAtMs: 20 });
+  });
+
+  it('answers null for a household with no thread', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await getLatestConversationMessageHandler(req({ kinfolkId: 'kf1' }));
+    expect(res.message).toBeNull();
+  });
+
+  it('never marks the thread read: choosing a recipient is not opening the thread', async () => {
+    const ctx = buildDbMock({
+      docs: { 'conversations/kf1': { unreadForAdmin: true } },
+      queryDocs: {
+        'conversations/kf1/messages': [
+          { id: 'm1', data: { senderRole: 'kinfolk', body: 'hi', createdAtMs: 1, readAt: null } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await getLatestConversationMessageHandler(req({ kinfolkId: 'kf1' }));
+    expect(ctx.writes).toEqual([]);
+  });
+
+  it('refuses a missing household id and a signed-out caller', async () => {
+    await expect(getLatestConversationMessageHandler(req({}))).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(
+      getLatestConversationMessageHandler({ data: { kinfolkId: 'kf1' } } as never),
+    ).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 });
 

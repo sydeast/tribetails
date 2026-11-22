@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,12 +55,8 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 
 /** Every decision this panel makes lives out here, where the JVM suite can reach it. */
 
-/** "9:00 AM" for 9. Mirrors `hourLabel` in the React `NotificationScheduleSection`. */
-internal fun notificationHourLabel(hour: Int): String {
-    val twelve = if (hour % 12 == 0) 12 else hour % 12
-    val meridiem = if (hour < 12) "AM" else "PM"
-    return "$twelve:00 $meridiem"
-}
+/** "09:00" for 9 (#1828: the admin 24-hour clock). Mirrors `hourLabel` in the React `NotificationScheduleSection`. */
+internal fun notificationHourLabel(hour: Int): String = AdminTime.clock(hour, 0)
 
 /**
  * The picker's entries: "not scheduled" first, then the 24 hours.

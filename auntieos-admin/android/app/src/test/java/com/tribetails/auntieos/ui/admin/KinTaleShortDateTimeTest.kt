@@ -7,12 +7,12 @@ import org.junit.Test
 class KinTaleShortDateTimeTest {
     @Test
     fun thisYearIsMonthDayAndTime() {
-        assertEquals("Nov 5 · 14:02", kinTaleShortDateTime("2026-11-05T14:02:00Z", 2026))
+        assertEquals("Nov 5, 2026 14:02", kinTaleShortDateTime("2026-11-05T14:02:00Z", 2026, java.time.ZoneOffset.UTC))
     }
 
     @Test
     fun anotherYearCarriesTheYear() {
-        assertEquals("Sep 3, 2025 · 14:02", kinTaleShortDateTime("2025-09-03T14:02:00Z", 2026))
+        assertEquals("Sep 3, 2025 14:02", kinTaleShortDateTime("2025-09-03T14:02:00Z", 2026, java.time.ZoneOffset.UTC))
     }
 
     @Test
@@ -27,8 +27,8 @@ class KinTaleSortDateTest {
     private fun ids(rows: List<com.tribetails.auntieos.data.model.KinCareReport>) = rows.map { it.id }
     @Test
     fun freeTextRowShowsItsDateAndTime() {
-        assertEquals("Sep 3, 2025 · 14:02", kinTaleShortDateTime("September 3, 2025 2:02pm", 2026))
-        assertEquals("Apr 10 · 09:00", kinTaleShortDateTime("April 10, 2026 9am", 2026))
+        assertEquals("Sep 3, 2025 14:02", kinTaleShortDateTime("September 3, 2025 2:02pm", 2026))
+        assertEquals("Apr 10, 2026 09:00", kinTaleShortDateTime("April 10, 2026 9am", 2026))
     }
     @Test
     fun parsesIsoAndFreeTextToTheSameInstantScale() {
@@ -83,5 +83,22 @@ class KinTaleSortDateTest {
             report("b", createdAt = "2026-05-01T00:00:00Z"),
         )
         assertEquals(listOf("a", "b"), ids(sortReports(rows, ReportSort.Newest)))
+    }
+
+    /**
+     * #1856: the row's label reads visitDate first. A migrated report's sentAt
+     * and createdAt can be the day it was copied over, so sorting on them put
+     * the 2025 visits oldest first with a 2026 visit among them.
+     */
+    @Test
+    fun theVisitDateTheLabelShowsIsTheDateItSortsOn() {
+        val rows = listOf(
+            report("aug06", createdAt = "2026-04-05T10:00:02Z", sentAt = "2026-04-05T10:00:02Z", visitDate = "2025-08-06T18:38:00Z"),
+            report("aug29", createdAt = "2026-04-05T10:00:01Z", sentAt = "2026-04-05T10:00:01Z", visitDate = "2025-08-29T09:00:00Z"),
+            report("apr04", createdAt = "2026-04-05T10:00:00Z", sentAt = "2026-04-05T10:00:00Z", visitDate = "2026-04-04T16:09:00Z"),
+            report("nov11", createdAt = "2026-11-11T09:00:00Z", sentAt = "2026-11-11T09:00:00Z", visitDate = "2026-11-11T08:00:00Z"),
+        )
+        assertEquals(listOf("nov11", "apr04", "aug29", "aug06"), ids(sortReports(rows, ReportSort.Newest)))
+        assertEquals(listOf("aug06", "aug29", "apr04", "nov11"), ids(sortReports(rows, ReportSort.Oldest)))
     }
 }

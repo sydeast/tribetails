@@ -52,6 +52,8 @@ import com.tribetails.auntieos.ui.components.ProfileTagsSection
 import com.tribetails.auntieos.ui.components.TagChip
 import com.tribetails.auntieos.ui.components.hasDynamicFieldValues
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * The hero line under the pet's name: "Labrador Retriever · 5 yrs · neutered
@@ -353,7 +355,7 @@ private fun KinHero(
         add(DenCrumb(kin.name.ifBlank { kin.id }))
     }
     DenScreenHeading(
-        kicker = "The Den · Directory",
+        kicker = railKicker(RailScreen.DIRECTORY),
         crumbs = crumbs,
         title = kin.name.ifBlank { kin.id },
         detail = heroLine.ifBlank { null },

@@ -122,4 +122,16 @@ class OpenRowMetaLabelTest {
         val inv = quote(QuoteDecision.Accepted, decidedByUid = "u1")
         assertEquals("You accepted this", openRowMetaLabel(inv, viewerUid = "u1"))
     }
+    /** #1859: a bill with no due date says so in words, never "Due" and an em dash. */
+    @Test
+    fun openRowMetaLabel_billWithNoDueDate_saysSoInWords() {
+        val inv = quote().copy(status = InvoiceStatus.Open, dueDate = null)
+        assertEquals("No due date", openRowMetaLabel(inv, viewerUid = "u1"))
+    }
+    /** #1859: a paid invoice with no readable day reads "Paid", never "Paid" and an em dash. */
+    @Test
+    fun paidRowMetaLabel_withNoDay_isPaidAlone() {
+        val inv = quote().copy(status = InvoiceStatus.Paid, isPaid = true, date = null)
+        assertEquals("Paid", paidRowMetaLabel(inv))
+    }
 }

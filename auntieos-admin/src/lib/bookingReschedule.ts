@@ -141,7 +141,7 @@ function rescheduleSkipReason(state: BookingState): string {
   switch (state) {
     case 'draft':
     case 'pending':
-      return 'It is still awaiting a reply, so it has no visit on the books to move. Approve it first.';
+      return 'It is not approved yet, so it has no visit on the books to move. Approve it first.';
     case 'onMyWay':
     case 'arrived':
     case 'departed':

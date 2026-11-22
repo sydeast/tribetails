@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.kintales
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import com.tribetails.auntieos.web.screens.bookingServiceName
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -90,10 +91,13 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
+import com.tribetails.auntieos.web.ui.components.AuntieInfoTip
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 private enum class Bucket(val label: String) {
     Drafts ("Drafts"),
@@ -175,7 +179,7 @@ fun KinTaleLogsScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · KinTales",
+            kicker     = navKicker(Destination.KinTales),
             title      = "KinTales",
             subtitle   = "Every recap that goes home to a Kinfolk after care",
             trailing   = {
@@ -201,11 +205,8 @@ fun KinTaleLogsScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(6.dp))
-        Text(
-            text  = "Filters the KinTales loaded here, not the full archive.",
-            style = AuntieTheme.typography.labelSmall,
-            color = AuntieTheme.colors.textFaint,
-        )
+        // #1827: what the search reaches is guidance, an info tip, not a line under the field.
+        AuntieInfoTip("Filters the KinTales loaded here, not the full archive.")
         Spacer(Modifier.height(12.dp))
         // KT1: operator-chosen ordering so the Sent bucket can be organized, not just
         // an ever-growing newest-first scroll. Applied before bucketing below.
@@ -1024,7 +1025,10 @@ private fun bucketFor(r: KinCareReport): Bucket = when (r.status.uppercase()) {
  * above every ISO row, so this is epoch milliseconds, null when unreadable.
  */
 internal fun sortMillis(r: KinCareReport): Long? = kinTaleSortMillis(
-    sequenceOf(r.sentAt, r.updatedAt, r.visitDate, r.createdAt).firstOrNull { it.isNotBlank() },
+    // #1856: the same fields, in the same order, as the row's date label.
+    // Sorting on sentAt / updatedAt first put rows out of the order their
+    // labels read.
+    sequenceOf(r.visitDate, r.arrivedAt, r.sentAt, r.createdAt).firstOrNull { it.isNotBlank() },
 )
 
 // KT1: operator-chosen ordering for the KinTales list (organizes the Sent bucket).
@@ -1096,22 +1100,21 @@ internal fun duplicateCandidateLabel(r: KinCareReport, currentYear: Int): String
     "${r.kinfolkName.trim().ifBlank { "Unnamed Kinfolk" }} · ${reportWhen(r, currentYear)}"
 
 /**
- * "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear]
- * (#1599: the list spans more than a year). Echoes non-ISO text.
+ * "Sep 3, 2025 14:02" (#1828: the admin day and 24-hour clock, always with the
+ * year; [currentYear] no longer changes it). Echoes non-ISO text.
  */
-internal fun kinTaleShortDateTime(iso: String, currentYear: Int): String =
+internal fun kinTaleShortDateTime(
+    iso: String,
+    currentYear: Int,
+    zone: kotlinx.datetime.TimeZone = com.tribetails.auntieos.web.util.businessTimeZone(),
+): String =
     runCatchingCancellable {
         parseLegacyKinTaleStamp(iso)?.let { s ->
-            val time = "${s.hour.toString().padStart(2, '0')}:${s.minute.toString().padStart(2, '0')}"
-            val month = MONTHS[s.month - 1]
-            return@runCatchingCancellable if (s.year == currentYear) "$month ${s.day} · $time" else "$month ${s.day}, ${s.year} · $time"
+            // #1828: the admin day and 24-hour clock, always with the year.
+            return@runCatchingCancellable AdminTime.dateTime(s.year, s.month, s.day, s.hour, s.minute)
         }
         if (iso.length < 16) return@runCatchingCancellable iso
-        val year  = iso.substring(0, 4).toInt()
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
+        // #1828: an instant reads on the business clock, never its UTC characters.
+        AdminTime.storedDateTime(iso, zone) ?: AdminTime.dateTimeOfWallClock(iso) ?: iso
     }.getOrDefault(iso)
 
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")

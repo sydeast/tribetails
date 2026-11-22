@@ -31,6 +31,7 @@ import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { MediaUploadDialog } from '../components/MediaUploadDialog';
 import { MediaViewerDialog } from '../components/MediaViewerDialog';
 import './Media.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Media, the CONTEXTUAL single-entity gallery, ported from the wasm
@@ -178,7 +179,7 @@ export function Media({ targetType, targetId, isAuntie = false }: MediaProps) {
   const total = hasTarget && mediaState.status === 'ready' ? mediaState.data.length : null;
 
   const headingProps = {
-    kicker: 'The Den · Media',
+    kicker: navKicker('directory'),
     title: label,
     accentTail: 'media.',
     ...(hasTarget

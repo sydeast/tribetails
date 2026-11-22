@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { getKin, type KinDetail } from '../api/kinView';
-import { updateKin, setKinArchived, type KinEditPatch } from '../api/directoryWrite';
+import { updateKin, setKinArchived, NEW_KIN_SEX_OPTIONS, type KinEditPatch } from '../api/directoryWrite';
 import { useBreedBanks } from '../api/breeds';
 import { breedBankNote, breedCatalogForSpecies } from '../lib/breedSearch';
 import { type Async } from '../lib/async';
@@ -16,6 +16,7 @@ import { useAdminAccess } from '../lib/access';
 import { validateKinAge, validateKinWeight } from '../lib/kinMeasures';
 import { KinVetField } from '../components/KinVetField';
 import './KinEdit.css';
+import { navKicker } from '../lib/nav';
 
 interface KinEditProps {
   kinId: string;
@@ -38,7 +39,6 @@ const TEXT_FIELDS = [
   ['name', 'Name'],
   ['species', 'Species'],
   ['age', 'Age'],
-  ['sex', 'Sex'],
   ['weight', 'Weight'],
   ['colorMarkings', 'Color / markings'],
 ] as const;
@@ -209,10 +209,17 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
     // #1583: age and weight are numbers. A value left as it loaded passes even
     // if it is old free text, so a record with a bad legacy value stays editable.
     const base = loaded.status === 'ready' ? toForm(loaded.data) : null;
-    const measureError =
-      validateKinAge(form.age, base?.age) ?? validateKinWeight(form.weight, base?.weight);
-    if (measureError !== null) {
-      setError(measureError);
+    // #1851: every refused value is named, not only the first, and the first
+    // field that needs fixing takes focus, which scrolls it into view.
+    const problems = [
+      validateKinAge(form.age, base?.age),
+      validateKinWeight(form.weight, base?.weight),
+    ].filter((p): p is string => p !== null);
+    if (problems.length > 0) {
+      setError(problems.join(' '));
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('[data-screen="kin-edit"] [aria-invalid="true"]')?.focus();
+      });
       return;
     }
     setSaving(true);
@@ -303,19 +310,13 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   const isOwner = access?.status === 'admin';
 
   return (
-    <div className="screen">
+    <div className="screen" data-screen="kin-edit">
       <DenScreenHeading
-        kicker="The Den · Directory"
+        kicker={navKicker('directory')}
         title={`Edit ${kinName || kinId}`}
         subtitle="Kin profile editor."
         trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={busy} />}
       />
-
-      {error !== null && (
-        <Banner tone="error" title="Save failed" onDismiss={() => setError(null)}>
-          {error}
-        </Banner>
-      )}
 
       <AsyncRegion
         state={loaded}
@@ -348,6 +349,29 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                           </span>
                         )}
                       </label>
+                      {key === 'age' && (
+                        // #1852: the same "Gender" list Add kin offers. A stored
+                        // value outside the list ("M", "male") stays as its own
+                        // choice, so opening and saving never rewrites it.
+                        <label className="kedit__field">
+                          <span className="kedit__label">Gender</span>
+                          <select
+                            className="kedit__input"
+                            value={form.sex}
+                            onChange={(e) => set('sex', e.target.value)}
+                          >
+                            <option value="">Not set</option>
+                            {NEW_KIN_SEX_OPTIONS.map((o) => (
+                              <option key={o} value={o}>
+                                {o}
+                              </option>
+                            ))}
+                            {form.sex !== '' && !NEW_KIN_SEX_OPTIONS.includes(form.sex) && (
+                              <option value={form.sex}>{form.sex}</option>
+                            )}
+                          </select>
+                        </label>
+                      )}
                       {key === 'species' && (
                         // Rendered here rather than appended so Breed keeps its
                         // place beside the Species that chooses its bank.
@@ -481,6 +505,19 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                   />
                 </div>
               </div>
+              {/* #1851: what stopped the save or the archive, beside the button
+                  that was pressed. At the top of the page it was off screen,
+                  and its arrival pushed the button out of view. */}
+              {error !== null && (
+                <Banner
+                  tone="error"
+                  title="That didn't save"
+                  onDismiss={() => setError(null)}
+                  className="kedit__save-error"
+                >
+                  {error}
+                </Banner>
+              )}
             </>
           )
         }

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
 import com.tribetails.auntieos.domain.addressLooksIncomplete
 import com.composables.icons.lucide.*
@@ -293,7 +294,7 @@ fun KinCareDetailScreen(
 
             item {
                 DenScreenHeading(
-                    kicker = "Care Ops · Auntie Time",
+                    kicker = railKicker(RailScreen.AUNTIE_TIME),
                     // The crumb IS the way back, the same trail the web detail
                     // draws: the rail's name for the board, then the Kin.
                     crumbs = listOf(
@@ -1058,8 +1059,8 @@ private fun window(s: KinCareSession, zone: java.time.ZoneId): String {
 }
 
 /**
- * "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599).
- * #2095: on the business clock. An instant printed its own characters, the UTC
+ * "Sep 3, 2026 14:02" (#1828: the admin shape, always with the year; [currentYear]
+ * no longer changes it). #2095: on the business clock. An instant printed its own characters, the UTC
  * day and hour, so an 11:30 PM Chicago visit read "Nov 12 · 05:30".
  */
 internal fun shortIso(
@@ -1070,15 +1071,12 @@ internal fun shortIso(
     runCatching {
         if (iso.length < 16) return@runCatching iso
         val at = com.tribetails.auntieos.domain.storedBusinessLocal(iso, zone) ?: return@runCatching iso
-        val month = MONTHS[at.monthValue - 1]
-        val time  = "${at.hour.toString().padStart(2, '0')}:${at.minute.toString().padStart(2, '0')}"
-        if (at.year == currentYear) "$month ${at.dayOfMonth} · $time" else "$month ${at.dayOfMonth}, ${at.year} · $time"
+        AdminTime.DATE_TIME.format(at)
     }.getOrDefault(iso)
 
 private fun shortIsoTimeOnly(iso: String, zone: java.time.ZoneId): String =
     com.tribetails.auntieos.domain.storedBusinessClock(iso, zone).ifBlank { if (iso.length >= 16) iso.substring(11, 16) else iso }
 
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 
 /** True iff a by-id session read failed because Firestore rules denied it -
  *  the sandbox "not yours to see" case, folded into "not available" above. */
@@ -1351,9 +1349,8 @@ internal fun internalNoteLabel(note: ListVisitInternalNotesResultNote, zone: Zon
     }
     val whenText = note.createdAtMs?.let {
         val at = java.time.Instant.ofEpochMilli(it.toLong()).atZone(zone)
-        // #1599: the year when the note is from another one.
-        val pattern = if (at.year == java.time.ZonedDateTime.now(zone).year) "MMM d, h:mm a" else "MMM d, yyyy, h:mm a"
-        java.time.format.DateTimeFormatter.ofPattern(pattern, java.util.Locale.US).format(at)
+        // #1828: the admin day and 24-hour clock, always with the year.
+        AdminTime.DATE_TIME.format(at)
     }
     return listOfNotNull(if (note.visibility == "adminOnly") "Admin only" else null, who, whenText).joinToString(" · ")
 }

@@ -29,6 +29,10 @@ describe('noteBody / noteAuthorLabel / noteCreatedMs', () => {
     ).toBe('The office');
     expect(noteAuthorLabel({ _id: 'n1', authorRole: 'admin', authorUid: 'u-gone' }, new Map())).toBe('Staff');
     expect(noteAuthorLabel({ _id: 'n1', authorRole: 'kinfolk' })).toBe('Kinfolk');
+    // #1882: the walk saw a kinfolk-facing note signed with the sign-in email.
+    expect(
+      noteAuthorLabel({ _id: 'n1', authorRole: 'admin', authorUid: 'u1' }, new Map([['u1', 'e2e-admin@tribetails.com']])),
+    ).toBe('Staff');
   });
 
   it('never throws on a legacy or partial note doc', () => {

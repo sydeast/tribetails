@@ -313,8 +313,8 @@ describe('ScheduleWeekGrid', () => {
       session({ _id: 'late', startTime: bizIso(18, 30), endTime: bizIso(19, 0) }),
     ]);
     const labels = Array.from(document.querySelectorAll('.schedule-grid__time')).map((el) => el.textContent);
-    expect(labels[0]).toBe('6a');
-    expect(labels[labels.length - 1]).toBe('6p');
+    expect(labels[0]).toBe('06:00');
+    expect(labels[labels.length - 1]).toBe('18:00');
     expect(document.querySelector('[data-session-id="early"]')).not.toBeNull();
     const late = document.querySelector('[data-session-id="late"]') as HTMLElement;
     expect(late).not.toBeNull();
@@ -327,7 +327,7 @@ describe('ScheduleWeekGrid', () => {
     renderGrid([session()]);
     const labels = Array.from(document.querySelectorAll('.schedule-grid__time')).map((el) => el.textContent);
     expect(labels).toHaveLength(10);
-    expect(labels[0]).toBe('8a');
+    expect(labels[0]).toBe('08:00');
   });
 
   /** #1606: a half-hour block names its household beside the time, not below it where it was cut off. */
@@ -460,5 +460,43 @@ describe('ScheduleWeekGrid with moving switched off (an Auntie)', () => {
     stubColumnWidth();
     drag(block(), 0, HOUR_HEIGHT_PX * 2);
     expect(onDrop).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #1861: the walk's TUE 10 column, four visits from 23:05 to 23:46 drawn on top
+// of one another, the last cut off at the bottom edge.
+describe('ScheduleWeekGrid: visits that start minutes apart (#1861)', () => {
+  const late = [
+    session({ _id: 's1', kinfolkName: 'Household One', startTime: bizIso(23, 5), endTime: bizIso(23, 20) }),
+    session({ _id: 's2', kinfolkName: 'Household Two', startTime: bizIso(23, 15), endTime: bizIso(23, 30) }),
+    session({ _id: 's3', kinfolkName: 'Household Three', startTime: bizIso(23, 30), endTime: bizIso(23, 45) }),
+    session({ _id: 's4', kinfolkName: 'Household Four', startTime: bizIso(23, 46), endTime: '' }),
+    session({ _id: 's0', kinfolkName: 'Household Early', startTime: bizIso(22, 32), endTime: bizIso(22, 50) }),
+  ];
+  const blockOf = (name: string) => screen.getByRole('button', { name: new RegExp(name) });
+  it('draws overlapping blocks side by side and leaves a lone block the full width', () => {
+    renderGrid(late);
+    expect(blockOf('Household Early').dataset.lane).toBeUndefined();
+    expect(blockOf('Household Early').style.width).toBe('');
+    const lanes = ['One', 'Two', 'Three', 'Four'].map((n) => blockOf(`Household ${n}`).dataset.lane);
+    expect(lanes).toEqual(['1/2', '2/2', '1/2', '2/2']);
+    // The second lane starts half way across the column (jsdom normalises the calc).
+    expect(blockOf('Household Two').style.left).toContain('0.5');
+    expect(blockOf('Household One').style.width).not.toBe('');
+    // A narrow lane cuts the name, so hovering reads all of it. A full-width block needs no tip.
+    expect(blockOf('Household Three').title).toBe('23:30 Household Three');
+    expect(blockOf('Household Early').title).toBe('');
+  });
+
+  it('draws the last block of the day tall enough to read, ending on the bottom edge', () => {
+    const { container } = renderGrid(late);
+    const column = container.querySelector('.schedule-grid__day[data-day="2026-07-16"]') as HTMLElement;
+    const four = blockOf('Household Four');
+    const top = parseFloat(four.style.top);
+    const height = parseFloat(four.style.height);
+    expect(height).toBeCloseTo((HOUR_HEIGHT_PX * 20) / 60);
+    expect(top + height).toBeCloseTo(parseFloat(column.style.height));
+    // The label still says when the visit starts.
+    expect(four).toHaveTextContent('23:46');
   });
 });

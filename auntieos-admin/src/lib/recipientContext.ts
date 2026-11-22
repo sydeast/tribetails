@@ -58,7 +58,7 @@ export function kinMetaLine(species: string, breed: string): string {
   return [str(species).trim(), str(breed).trim()].filter((p) => p !== '').join(' · ');
 }
 
-export type CommsChannel = 'sms' | 'email' | 'call' | 'voicemail';
+export type CommsChannel = 'sms' | 'email' | 'call' | 'voicemail' | 'thread';
 
 /**
  * One row from any of the four comms collections, narrowed to the fields the
@@ -98,10 +98,41 @@ export function commsSnippet(row: CommsRow): string {
     case 'voicemail':
       text = str(row.transcript);
       break;
+    case 'thread':
+      text = str(row.body);
+      break;
   }
   const trimmed = text.trim();
   if (trimmed.length <= SNIPPET_MAX) return trimmed;
   return `${cutWhole(trimmed, SNIPPET_MAX).trimEnd()}…`;
+}
+
+/**
+ * #1878: the newest Inbox thread message as a comms row, so it competes for
+ * "latest" on the same ISO timestamp as the four logs. Null for no message.
+ */
+export function threadCommsRow(latest: { preview: string; createdAtMs: number } | null): CommsRow | null {
+  if (latest === null) return null;
+  return {
+    _id: 'latest-thread-message',
+    channel: 'thread',
+    timestamp: new Date(latest.createdAtMs).toISOString(),
+    body: latest.preview,
+  };
+}
+
+/**
+ * #1878: a stored instant as a local YYYY-MM-DD, so an evening message reads the
+ * day the Inbox shows it on, never the next UTC day. A value with no time, or
+ * one that does not parse, is returned as it is. Pure.
+ */
+export function commsLocalDay(timestamp: string): string {
+  if (!timestamp.includes('T')) return timestamp;
+  const at = new Date(timestamp);
+  if (Number.isNaN(at.getTime())) return timestamp;
+  const month = String(at.getMonth() + 1).padStart(2, '0');
+  const day = String(at.getDate()).padStart(2, '0');
+  return `${String(at.getFullYear())}-${month}-${day}`;
 }
 
 export interface LatestComm {

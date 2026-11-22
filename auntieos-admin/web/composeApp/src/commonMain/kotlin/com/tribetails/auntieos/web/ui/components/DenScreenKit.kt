@@ -367,7 +367,7 @@ fun statusLabel(status: String): String = when (visitStatusCode(status)) {
 }
 
 /**
- * Formats a stored time to a compact "h:mma/p" on the BUSINESS's clock, or
+ * Formats a stored time to a 24-hour "HH:mm" (#1828) on the BUSINESS's clock, or
  * echoes the input. #2095: an instant (`...Z`) is converted into [zone] first;
  * printing its characters 12 to 16 gave the UTC hour. A zone-less value is
  * already the business's wall clock and is read as written.
@@ -377,7 +377,5 @@ fun formatTime(iso: String, zone: TimeZone = businessTimeZone()): String = runCa
     val at = businessDateTimeOf(iso.trim(), zone)
     val hour = at?.hour ?: iso.substring(11, 13).toInt()
     val minute = at?.minute?.toString()?.padStart(2, '0') ?: iso.substring(14, 16)
-    val ampm = if (hour >= 12) "p" else "a"
-    val hour12 = when (hour % 12) { 0 -> 12; else -> hour % 12 }
-    "$hour12:$minute$ampm"
+    "${hour.toString().padStart(2, '0')}:$minute"
 }.getOrDefault(iso)

@@ -97,6 +97,8 @@ import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.color
 import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 private sealed interface BookingRoute {
     data object List   : BookingRoute
@@ -395,7 +397,7 @@ private fun BookingListScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "Care Ops · Bookings",
+            kicker     = navKicker(Destination.Bookings),
             title      = "Bookings",
             subtitle   = "Pending requests and scheduled visits.",
             trailing   = {
@@ -527,10 +529,11 @@ private fun BookingListScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // #1826: this counts the office's drafts, not the household requests.
             StatRowCard(
-                label = "Visit requests",
+                label = "Drafts",
                 value = if (pendingState is FirestoreResult.Loading) "…" else pending.size.toString(),
-                trend = "awaiting a reply",
+                trend = "not yet approved",
                 tone  = AuntieStatusTone.Orange,
                 feature = true,
                 modifier = Modifier.weight(1f),
@@ -634,19 +637,20 @@ private fun BookingListScreen(
             Spacer(Modifier.height(18.dp))
         }
 
-        // ── Pending approval (real DRAFT requests) ────────────────────────────
+        // ── Drafts (DRAFT sessions the office saved) ─────────────────────────
+        // #1826: titled apart from the household Visit requests panel above.
         DenPanel(
-            title    = "Visit requests",
-            subtitle = "New booking requests waiting on your call.",
+            title    = "Drafts",
+            subtitle = "Bookings saved as drafts, waiting for you to approve them.",
             trailing = { SectionCount(if (pendingState is FirestoreResult.Loading) "" else "${pending.size}") },
         ) {
             when {
                 pendingState is FirestoreResult.Loading ->
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { repeat(2) { ShimmerCard(height = 92.dp) } }
                 pendingState is FirestoreResult.Error ->
-                    EmptyHint("Couldn't load booking requests: ${(pendingState as FirestoreResult.Error).message}", error = true)
+                    EmptyHint("Couldn't load drafts: ${(pendingState as FirestoreResult.Error).message}", error = true)
                 pending.isEmpty() ->
-                    EmptyHint("No requests waiting. New bookings land here for approval.")
+                    EmptyHint("No drafts.")
                 else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     pending.forEach { booking ->
                         BookingCard(
@@ -1334,7 +1338,10 @@ private fun bookingDateLabel(b: KinCareSession): String {
         .ifBlank { b.completedAt }
         .ifBlank { b.departedAt }
         .ifBlank { b.createdAt }
-    return raw.take(10).ifBlank { "Date pending" }
+    // #1828: "Nov 10, 2026" on the business's calendar. `take(10)` of a UTC
+    // instant was the next day for a late evening visit.
+    return com.tribetails.auntieos.web.ui.AdminTime.storedDay(raw, com.tribetails.auntieos.web.util.businessTimeZone())
+        ?: com.tribetails.auntieos.web.ui.AdminTime.dayKeyLabel(raw.take(10)).ifBlank { "Date pending" }
 }
 
 

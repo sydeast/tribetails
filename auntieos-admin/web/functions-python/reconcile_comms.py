@@ -36,6 +36,8 @@ Cloud Function: main.py calls init_firebase() + reconcile_pass() directly.
 from __future__ import annotations
 
 import argparse
+import html
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -354,8 +356,36 @@ def collect_recent_comms(db, kinfolk_id: str, per_collection_limit: int = 10, to
             d = snap.to_dict() or {}
             ts = (d.get("timestamp") or d.get("sentAt") or "").strip()
             out.append({"channel": channel, "timestamp": ts, "text": extract_log_body(d)})
+    out.extend(_recent_thread_entries(db, kinfolk_id, per_collection_limit))
     out.sort(key=lambda e: e["timestamp"], reverse=True)
     return out[:total_limit]
+
+
+def _recent_thread_entries(db, kinfolk_id: str, limit: int) -> list[dict]:
+    """#1878: the household's message thread, which the four logs never see.
+
+    Keyed by `createdAtMs` (epoch ms), so it is written as the same ISO UTC shape
+    the logs sort on. Bodies can hold markup, so the recap gets plain text.
+    """
+    try:
+        snaps = list(db.collection("conversations").document(kinfolk_id)
+                       .collection("messages")
+                       .order_by("createdAtMs", direction="DESCENDING")
+                       .limit(limit)
+                       .stream())
+    except Exception:
+        return []
+    out: list[dict] = []
+    for snap in snaps:
+        d = snap.to_dict() or {}
+        ms = d.get("createdAtMs")
+        if not isinstance(ms, (int, float)) or ms <= 0:
+            continue
+        when = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        ts = when.strftime("%Y-%m-%dT%H:%M:%S.") + f"{when.microsecond // 1000:03d}Z"
+        text = html.unescape(re.sub(r"<[^>]+>", " ", str(d.get("body") or "")))
+        out.append({"channel": "message", "timestamp": ts, "text": " ".join(text.split())})
+    return out
 
 
 def claude_recap(entries: list[dict]) -> str:

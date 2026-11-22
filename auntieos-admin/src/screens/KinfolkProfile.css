@@ -26,6 +26,24 @@
   flex: 0 1 auto;
   min-width: 0;
 }
+/* #1854: the identity keeps room for itself. With a basis of zero and no
+   floor, seven buttons squeezed it to a sliver at 1372px: "Directory /",
+   "Kinfolk /" and the name each took a line, and a two-word name broke in
+   two. A real basis and a floor make the flex row wrap instead, so the
+   buttons drop under the identity once the band cannot hold both on one
+   line, and the trail and the name stay on one line each. Above the kit's
+   phone breakpoint only: below it the kit already sends the buttons under
+   the photo and the text. */
+@media (min-width: 721px) {
+  .kprofile__hero .den-heading-main {
+    flex: 1 1 22rem;
+    min-width: 18rem;
+  }
+  .kprofile__hero .den-crumbs ol {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+}
 /* TWO COLUMNS, at the mock's own 860px breakpoint and in its own 1 : 1.2
    proportion. Below it the columns stack, which is what the mock's own media
    query does and what the Android profile already is. */

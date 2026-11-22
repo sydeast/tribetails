@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.marketing
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.tribetails.auntieos.domain.HeldSendKind
 import com.tribetails.auntieos.domain.heldSendText
 import com.tribetails.auntieos.ui.communicate.BroadcastCriteria
@@ -578,11 +579,11 @@ fun blastErrorText(message: String): String = when {
     else -> message
 }
 
-/** `yyyy-MM-dd HH:mm` for a fire time on the business's clock ([zone], #1158), or a blank marker. Pure. */
+/** "Nov 10, 2026 22:32" (#1828) for a fire time on the business's clock ([zone], #1158), or a blank marker. Pure. */
 fun fireLabel(ms: Long, zone: ZoneId): String {
     if (ms <= 0L) return "no send time"
     return runCatching {
         java.time.Instant.ofEpochMilli(ms).atZone(zone).toLocalDateTime()
-            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+            .format(AdminTime.DATE_TIME)
     }.getOrDefault("no send time")
 }

@@ -87,6 +87,8 @@ import com.tribetails.auntieos.domain.householdTextAsSentLines
 import com.tribetails.auntieos.domain.householdTextChannelLine
 import com.tribetails.auntieos.domain.channelLabel
 import com.tribetails.auntieos.domain.isoDatePrefixOrNull
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Communicate: the Den comms surface, ported from the web CommunicateScreen and
@@ -241,7 +243,7 @@ fun CommunicateScreen(
             // the info button.
             item {
                 DenScreenHeading(
-                    kicker = "Care Ops · Communicate",
+                    kicker = railKicker(RailScreen.COMMUNICATE),
                     title = "Talk to your",
                     accentTail = "kinfolk",
                     subtitle = if (mode == ComposeMode.Broadcast)
@@ -1062,7 +1064,7 @@ private fun BroadcastConfirm(state: CommunicateUiState, viewModel: CommunicateVi
             PrimaryButton(
                 label = if (state.isBroadcasting) "Sending…" else "Send now",
                 onClick = viewModel::sendBroadcast,
-                enabled = !state.isBroadcasting,
+                enabled = !state.isBroadcasting && !broadcastSendBlocked(state.bcReach),
                 loading = state.isBroadcasting,
             )
         },
@@ -1087,7 +1089,7 @@ private fun BroadcastConfirm(state: CommunicateUiState, viewModel: CommunicateVi
                 color = c.textPrimary,
             )
             Text(
-                "This goes out right now. A household that switched a channel off does not get it there; the result shows who was reached.",
+                broadcastConfirmNote(state.bcReach),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -1563,7 +1565,7 @@ private fun LastCommunicationBox(state: CommunicateUiState, viewModel: Communica
                     is CommsBoxState.RawLatest -> {
                         AuntieFieldLabel(text = "Latest message")
                         Text(
-                            text = "${cb.latest.channel} · ${humanizeDate(cb.latest.timestamp)} · ${cb.latest.snippet}",
+                            text = "${commsChannelLabel(cb.latest.channel)} · ${humanizeDate(commsLocalDay(cb.latest.timestamp))} · ${cb.latest.snippet}",
                             style = AuntieTheme.typography.bodyMedium,
                             color = c.textPrimary,
                         )
@@ -1576,10 +1578,21 @@ private fun LastCommunicationBox(state: CommunicateUiState, viewModel: Communica
                         }
                     }
                     CommsBoxState.Empty -> {
+                        if (!state.commsThreadFailed) {
+                            Text(
+                                text = "No messages on file yet.",
+                                style = AuntieTheme.typography.bodySmall,
+                                color = c.textDim,
+                            )
+                        }
+                    }
+                }
+                if (state.commsThreadFailed) {
+                    AuntieBanner(tone = AuntieBannerTone.Warning, icon = Lucide.TriangleAlert, dashed = true) {
                         Text(
-                            text = "No messages on file yet.",
+                            text = COMMS_THREAD_FAILED,
                             style = AuntieTheme.typography.bodySmall,
-                            color = c.textDim,
+                            color = c.textPrimary,
                         )
                     }
                 }

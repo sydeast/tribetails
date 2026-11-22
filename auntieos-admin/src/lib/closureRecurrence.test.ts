@@ -160,7 +160,7 @@ describe('formatClosureEntry: the inverse of parseClosureEntry', () => {
 
 describe('describeClosureRecurrence', () => {
   it('once is the bare date', () => {
-    expect(describeClosureRecurrence(parseClosureEntry('2026-09-14|Surgery'))).toBe('2026-09-14');
+    expect(describeClosureRecurrence(parseClosureEntry('2026-09-14|Surgery'))).toBe('Sep 14, 2026');
   });
 
   it('yearly-fixed', () => {

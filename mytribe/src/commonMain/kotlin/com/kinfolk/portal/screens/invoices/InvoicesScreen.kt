@@ -553,7 +553,7 @@ internal fun invoiceDocNoun(invoice: Invoice): String =
  */
 internal fun openRowMetaLabel(invoice: Invoice, viewerUid: String?): String = when {
     invoice.status == InvoiceStatus.Zero -> "Nothing due"
-    invoice.status != InvoiceStatus.Quote -> "Due ${invoice.dueDate ?: "—"}"
+    invoice.status != InvoiceStatus.Quote -> invoice.dueDate?.takeIf { it.isNotBlank() }?.let { "Due $it" } ?: "No due date"
     invoice.quoteDecision == QuoteDecision.Denied ->
         quoteActorLabel(invoice, viewerUid)?.let { "$it declined this" } ?: "Declined"
     invoice.quoteDecision == QuoteDecision.Accepted ->
@@ -572,7 +572,7 @@ internal fun paidRowMetaLabel(invoice: Invoice): String =
     if (invoice.status == InvoiceStatus.WrittenOff) {
         WRITTEN_OFF_ROW_LABEL
     } else {
-        "Paid ${com.kinfolk.portal.util.invoiceDayLabel(invoice.date).ifEmpty { "—" }}"
+        com.kinfolk.portal.util.invoiceDayLabel(invoice.date).let { if (it.isEmpty()) "Paid" else "Paid $it" }
     }
 
 /**

@@ -201,6 +201,8 @@ import com.tribetails.auntieos.ui.components.color
 import com.tribetails.auntieos.ui.components.tagToneRole
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Admin Settings, rebuilt in the Den aesthetic by adapting the redesigned web
@@ -323,7 +325,7 @@ internal fun AdminSettingsSectionNav(
                 .verticalScroll(rememberScrollState())
         ) {
             DenScreenHeading(
-                kicker = "The Den · Settings",
+                kicker = railKicker(RailScreen.SETTINGS),
                 title = "How the Den",
                 accentTail = "runs.",
                 subtitle = "Pick a section to view and edit it. Each one saves on its own.",
@@ -1623,7 +1625,7 @@ private fun NotifRowDetail(
         NotifDetailBlock(
             title = "WHO RECEIVES IT",
             lines = notifRecipientLines(entry, matrix.businessAdminCount),
-            empty = "The server sent no recipient rule for this row. Update MyTribe functions to see it.",
+            empty = NOTIF_NO_RECIPIENTS_LINE,
         )
         if (notifReachesBusinessAdmins(entry)) {
             NotifBusinessAdminRosterBlock()
@@ -1654,10 +1656,9 @@ private fun NotifRowDetail(
         NotifDetailBlock(
             title = "WHAT THE BODY CAN CARRY",
             lines = if (fields.isEmpty()) emptyList() else listOf(
-                "Anything here can appear in the message, and so reach whoever the recipient rule " +
-                    "above resolves to: " + fields.joinToString(", "),
+                notifBodyCarryLine(fields),
             ) + entry.emitters.mapNotNull { it.dataNote },
-            empty = "No merge fields are recorded for this row.",
+            empty = "Nothing is listed for this notice yet.",
         )
         NotifDeliveryEvidenceBlock(notificationKey = entry.key)
     }
@@ -3549,7 +3550,7 @@ private fun VetClinicsPanel(
 
     Column(verticalArrangement = Arrangement.spacedBy(dims.space5)) {
         DenScreenHeading(
-            kicker = "The Den · Directory",
+            kicker = railKicker(RailScreen.SETTINGS),
             title = "Vet",
             accentTail = "clinics",
             subtitle = "The shared bank every household and the kinfolk portal pick from. " +
@@ -4017,3 +4018,11 @@ private fun AddVetClinicCard(onCreate: (VetClinic) -> Unit, onCancel: () -> Unit
         }
     }
 }
+
+/** #1883: the owner's words for what the body can carry, never the data model's. */
+internal fun notifBodyCarryLine(fields: List<String>): String =
+    "Anything here can appear in the message, so everyone who gets this notice can read it: " +
+        fields.joinToString(", ")
+
+/** #1883: a notice the server sent without its recipients, in plain words. */
+internal const val NOTIF_NO_RECIPIENTS_LINE = "Who gets this notice is not listed yet."

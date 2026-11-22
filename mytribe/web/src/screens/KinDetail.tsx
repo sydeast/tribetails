@@ -168,7 +168,7 @@ export function KinDetail() {
                   <div className="v">{found.ageYears !== null ? `${found.ageYears} yrs` : FALLBACK}</div>
                 </div>
                 <div className="fact">
-                  <div className="k">Sex</div>
+                  <div className="k">Gender</div>
                   <div className="v">{found.sex ?? FALLBACK}</div>
                 </div>
                 <div className="fact">

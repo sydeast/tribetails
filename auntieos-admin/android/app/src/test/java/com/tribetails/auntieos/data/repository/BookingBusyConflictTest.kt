@@ -202,24 +202,24 @@ class BookingBusyConflictTest {
     private fun at(iso: String) = Instant.parse(iso)
     @Test
     fun `#1164 words a same-day same-meridiem window in the business zone`() {
-        assertEquals("Oct 5, 2:00-3:00 PM", formatBusyWindow(at("2026-10-05T19:00:00Z"), at("2026-10-05T20:00:00Z"), chicago))
+        assertEquals("Oct 5, 14:00-15:00", formatBusyWindow(at("2026-10-05T19:00:00Z"), at("2026-10-05T20:00:00Z"), chicago))
     }
     @Test
     fun `#1164 keeps both meridiems when the window crosses noon`() {
-        assertEquals("Oct 5, 11:00 AM-1:30 PM", formatBusyWindow(at("2026-10-05T16:00:00Z"), at("2026-10-05T18:30:00Z"), chicago))
+        assertEquals("Oct 5, 11:00-13:30", formatBusyWindow(at("2026-10-05T16:00:00Z"), at("2026-10-05T18:30:00Z"), chicago))
     }
     @Test
     fun `#1164 names both days when the window crosses business midnight`() {
         // 03:00Z Oct 6 is 10:00 PM Oct 5 in Chicago.
         assertEquals(
-            "Oct 5, 10:00 PM to Oct 6, 2:00 AM",
+            "Oct 5, 22:00 to Oct 6, 02:00",
             formatBusyWindow(at("2026-10-06T03:00:00Z"), at("2026-10-06T07:00:00Z"), chicago),
         )
     }
     @Test
     fun `#1164 follows the zone it is given`() {
         assertEquals(
-            "Oct 5, 3:00-4:00 PM",
+            "Oct 5, 15:00-16:00",
             formatBusyWindow(at("2026-10-05T19:00:00Z"), at("2026-10-05T20:00:00Z"), ZoneId.of("America/New_York")),
         )
     }
@@ -237,7 +237,7 @@ class BookingBusyConflictTest {
             ),
         )!!
         val msg = busyConflictMessage(listOf(d), chicago)
-        assertEquals("This time is not available: conflicts with a Google Calendar busy block (Oct 5, 2:00-3:00 PM).", msg)
+        assertEquals("This time is not available: conflicts with a Google Calendar busy block (Oct 5, 14:00-15:00).", msg)
         assertTrue(!msg.contains("UTC") && !msg.contains('\u2014') && !msg.contains('\u2013'))
     }
     @Test
@@ -245,7 +245,7 @@ class BookingBusyConflictTest {
         val a = DecodedBusySlot("a", at("2026-10-05T19:00:00Z"), at("2026-10-05T20:00:00Z"))
         val b = DecodedBusySlot("b", at("2026-10-06T14:00:00Z"), at("2026-10-06T15:30:00Z"))
         assertEquals(
-            "This time is not available: conflicts with a Google Calendar busy block (Oct 5, 2:00-3:00 PM; Oct 6, 9:00-10:30 AM).",
+            "This time is not available: conflicts with a Google Calendar busy block (Oct 5, 14:00-15:00; Oct 6, 09:00-10:30).",
             busyConflictMessage(listOf(a, b), chicago),
         )
     }

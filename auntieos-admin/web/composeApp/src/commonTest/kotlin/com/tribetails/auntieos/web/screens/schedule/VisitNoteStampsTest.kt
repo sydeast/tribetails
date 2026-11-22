@@ -15,21 +15,21 @@ class VisitNoteStampsTest {
     @Test
     fun aStampReadsInChicagoTime() {
         assertEquals(
-            "[Nov 5, 3:32 PM] (office) Gate code changed",
+            "[Nov 5, 2026 15:32] (office) Gate code changed",
             readableVisitNotesAt("[2026-11-05T21:32:52Z] (office) Gate code changed", chicago, now),
         )
     }
 
     @Test
     fun aPastYearStampCarriesTheYear() {
-        assertEquals("[Dec 31, 2025, 6:00 PM] (field) Fed", readableVisitNotesAt("[2026-01-01T00:00:00Z] (field) Fed", chicago, now))
+        assertEquals("[Dec 31, 2025 18:00] (field) Fed", readableVisitNotesAt("[2026-01-01T00:00:00Z] (field) Fed", chicago, now))
     }
 
     @Test
     fun everyStampIsReadAndOtherTextIsLeftAlone() {
         val notes = "[2026-11-05T13:05:00Z] (field) Walked\n[2026-11-05T21:32:52Z] (office) Called [not a stamp]"
         assertEquals(
-            "[Nov 5, 7:05 AM] (field) Walked\n[Nov 5, 3:32 PM] (office) Called [not a stamp]",
+            "[Nov 5, 2026 07:05] (field) Walked\n[Nov 5, 2026 15:32] (office) Called [not a stamp]",
             readableVisitNotesAt(notes, chicago, now),
         )
     }

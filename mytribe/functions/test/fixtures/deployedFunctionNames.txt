@@ -86,6 +86,7 @@ getInvoiceLedger
 getKinTaleComments
 getKinTaleReaction
 getKinTaleTemplateUsage
+getLatestConversationMessage
 getLocalWeather
 getMyAccess
 getMyAccount

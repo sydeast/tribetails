@@ -1095,7 +1095,7 @@ private fun VisitSlotEditor(
                 value = slot.hour,
                 options = (0..23).toList(),
                 onSelect = { h -> onEdit { it.copy(hour = h) } },
-                displayText = { formatClock(it, 0).replace(":00", "") },
+                displayText = { formatClock(it, 0) },
                 label = "START",
                 modifier = Modifier.fillMaxWidth(0.5f),
             )

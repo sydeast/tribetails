@@ -1,5 +1,6 @@
 import { sessionDayKey, sessionDayLabel, groupSessionsByDay, localDateIso } from './sessionFormat';
 import { str } from './coerce';
+import { formatHHmm } from './time';
 
 /**
  * Pure Schedule ("The Den · Schedule", `lib/nav.ts` slug `schedule`)
@@ -297,26 +298,25 @@ export function isValidHHmm(hhmm: string): boolean {
   return HHMM_RE.test(hhmm);
 }
 
-/** "14:30" → "2:30 PM", or `null` when unparseable (never a fabricated time). */
-export function formatHHmm12h(hhmm: string | undefined): string | null {
+/**
+ * "14:30" stays "14:30" (#1828: the admin clock is 24-hour), or `null` when
+ * unparseable (never a fabricated time).
+ */
+export function formatHHmmClock(hhmm: string | undefined): string | null {
   const raw = str(hhmm);
   if (!isValidHHmm(raw)) return null;
   const [hStr, mStr] = raw.split(':');
-  const hour = Number(hStr);
-  const minute = mStr ?? '00';
-  const ampm = hour >= 12 ? 'PM' : 'AM';
-  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
-  return `${hour12}:${minute} ${ampm}`;
+  return formatHHmm(Number(hStr), Number(mStr ?? '0'));
 }
 
 /**
- * "8:00 AM to 9:00 AM", ported from the wasm's `sessionWindow` shape for
+ * "08:00 to 09:00", ported from the wasm's `sessionWindow` shape for
  * consistency: "Time TBD" only when BOTH ends are unparseable, one valid end
  * shows on its own rather than collapsing the whole row to "TBD".
  */
 export function busyWindowLabel(startHHmm: string | undefined, endHHmm: string | undefined): string {
-  const start = formatHHmm12h(startHHmm);
-  const end = formatHHmm12h(endHHmm);
+  const start = formatHHmmClock(startHHmm);
+  const end = formatHHmmClock(endHHmm);
   if (!start && !end) return 'Time TBD';
   if (!end) return start as string;
   if (!start) return end;

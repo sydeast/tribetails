@@ -607,20 +607,26 @@ private fun KinTaleComposerBody(
     // #1631: once this tale has been saved it is a stored draft, and it can be deleted.
     var confirmDelete by remember { mutableStateOf(false) }
     var isDeleting by remember { mutableStateOf(false) }
+    val stillOnScreen = remember { ScreenPresence() }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { stillOnScreen.leave() }
+    }
     fun onDelete() {
         val id = report._id
         if (id.isBlank() || isDeleting) return
         isDeleting = true
-        scope.launch {
+        // #1895: outlives the screen, and reports above whatever is open by then.
+        // It closes this screen only if the owner is still on it.
+        composerDeleteScope.launch {
             when (val r = client.deleteKinTaleReportDraft(id)) {
                 is WriteResult.Ok -> {
                     isDeleting = false
                     routeToast.show("Draft deleted.", ToastKind.Success)
-                    onClose()
+                    if (stillOnScreen.value) onClose()
                 }
                 is WriteResult.Err -> {
                     isDeleting = false
-                    showToast("Couldn't delete: ${r.message}", ToastKind.Error)
+                    routeToast.show("Couldn't delete: ${r.message}", ToastKind.Error)
                 }
             }
         }
@@ -1560,4 +1566,20 @@ internal fun kinTaleComposeSentMessage(
         "KinTale sent.",
         com.tribetails.auntieos.web.screens.householdNoticeResultLine(notice, household),
     )
+}
+
+/** #1895: where a composer's draft delete runs, so leaving the screen does not cancel it. */
+private val composerDeleteScope = kotlinx.coroutines.CoroutineScope(
+    kotlinx.coroutines.SupervisorJob() +
+        com.tribetails.auntieos.web.observability.reportingExceptionHandler("deleteKinTaleReportDraft"),
+)
+
+/** #1895: whether the screen that started a delete is still the one showing. */
+private class ScreenPresence {
+    var value: Boolean = true
+        private set
+
+    fun leave() {
+        value = false
+    }
 }

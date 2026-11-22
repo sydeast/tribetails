@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Timestamp } from 'firebase/firestore';
-import { tsToDate, dayKey, formatClock, formatWhen, formatWhenFull, machineWhen } from './time';
+import { tsToDate, dayKey, dayKeyLabel, formatClock, formatDay, formatHHmm, formatWhen, formatWhenFull, machineWhen } from './time';
 
 /** A fixed 'now' in 2026, so the same-year cases do not turn over on Jan 1. */
 const NOW_2026 = new Date(2026, 10, 6, 12, 0);
@@ -25,13 +25,13 @@ describe('lib/time (local, AO-18)', () => {
     expect(dayKey(ts(d))).toBe('2026-07-16');
   });
 
-  it('formatWhen renders local MM-DD HH:mm', () => {
-    expect(formatWhen(ts(new Date(2026, 6, 16, 9, 3)), NOW_2026)).toBe('07-16 09:03');
-    expect(formatWhen(ts(new Date(2026, 11, 1, 23, 59)), NOW_2026)).toBe('12-01 23:59');
+  it('#1828: formatWhen renders local "Mon D, YYYY HH:mm", 24-hour', () => {
+    expect(formatWhen(ts(new Date(2026, 6, 16, 9, 3)), NOW_2026)).toBe('Jul 16, 2026 09:03');
+    expect(formatWhen(ts(new Date(2026, 11, 1, 23, 59)), NOW_2026)).toBe('Dec 1, 2026 23:59');
   });
-  it('#1599: formatWhen leads with the year when it is not the current year', () => {
-    expect(formatWhen(ts(new Date(2025, 8, 3, 14, 2)), NOW_2026)).toBe('2025-09-03 14:02');
-    expect(formatWhen(ts(new Date(2027, 0, 2, 8, 0)), NOW_2026)).toBe('2027-01-02 08:00');
+  it('#1599: formatWhen always carries the year', () => {
+    expect(formatWhen(ts(new Date(2025, 8, 3, 14, 2)), NOW_2026)).toBe('Sep 3, 2025 14:02');
+    expect(formatWhen(ts(new Date(2027, 0, 2, 8, 0)), NOW_2026)).toBe('Jan 2, 2027 08:00');
   });
   it('#1599: formatClock is the time alone, whatever the year', () => {
     expect(formatClock(ts(new Date(2025, 8, 3, 14, 2)))).toBe('14:02');
@@ -42,9 +42,9 @@ describe('lib/time (local, AO-18)', () => {
     expect(machineWhen(ts(new Date(2026, 6, 16, 9, 3)))).toBe('2026-07-16T09:03');
   });
 
-  it('formatWhenFull renders local YYYY-MM-DD HH:mm, with the year', () => {
-    expect(formatWhenFull(ts(new Date(2026, 6, 16, 9, 3)))).toBe('2026-07-16 09:03');
-    expect(formatWhenFull(ts(new Date(2026, 11, 1, 23, 59)))).toBe('2026-12-01 23:59');
+  it('#1828: formatWhenFull is the same shape as formatWhen', () => {
+    expect(formatWhenFull(ts(new Date(2026, 6, 16, 9, 3)))).toBe('Jul 16, 2026 09:03');
+    expect(formatWhenFull(ts(new Date(2026, 11, 1, 23, 59)))).toBe('Dec 1, 2026 23:59');
   });
 
   it('formatWhenFull is null for a missing timestamp, not a placeholder string', () => {
@@ -58,12 +58,12 @@ describe('lib/time (local, AO-18)', () => {
   // error boundary blanked the whole Notifications page.
   it('reads an ISO string, epoch millis and a Date as the same instant as a Timestamp', () => {
     const d = new Date(2026, 6, 16, 9, 3);
-    expect(formatWhen(d.toISOString(), NOW_2026)).toBe('07-16 09:03');
-    expect(formatWhen(d.getTime(), NOW_2026)).toBe('07-16 09:03');
-    expect(formatWhen(d, NOW_2026)).toBe('07-16 09:03');
+    expect(formatWhen(d.toISOString(), NOW_2026)).toBe('Jul 16, 2026 09:03');
+    expect(formatWhen(d.getTime(), NOW_2026)).toBe('Jul 16, 2026 09:03');
+    expect(formatWhen(d, NOW_2026)).toBe('Jul 16, 2026 09:03');
     expect(dayKey(d.toISOString())).toBe('2026-07-16');
     expect(machineWhen(d.getTime())).toBe('2026-07-16T09:03');
-    expect(formatWhenFull(d)).toBe('2026-07-16 09:03');
+    expect(formatWhenFull(d)).toBe('Jul 16, 2026 09:03');
     expect(tsToDate(d.toISOString())?.getTime()).toBe(d.getTime());
   });
 
@@ -88,5 +88,21 @@ describe('lib/time (local, AO-18)', () => {
     // slice would in any zone west of UTC.
     const late = new Date(2026, 6, 16, 23, 30);
     expect(dayKey(ts(late))).toBe('2026-07-16');
+  });
+});
+
+describe('#1828: one admin date and time shape', () => {
+  it('formatDay is the month as a word with the year', () => {
+    expect(formatDay(new Date(2026, 10, 10, 22, 32))).toBe('Nov 10, 2026');
+    expect(formatDay(null)).toBeNull();
+  });
+  it('dayKeyLabel turns a YYYY-MM-DD group key into the same day shape', () => {
+    expect(dayKeyLabel('2026-11-10')).toBe('Nov 10, 2026');
+    expect(dayKeyLabel('2026-01-05')).toBe('Jan 5, 2026');
+    expect(dayKeyLabel('Undated')).toBe('Undated');
+  });
+  it('formatHHmm is a 24-hour clock from an hour and minute', () => {
+    expect(formatHHmm(22, 32)).toBe('22:32');
+    expect(formatHHmm(0, 5)).toBe('00:05');
   });
 });

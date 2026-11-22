@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,9 +64,9 @@ internal fun doNotSendMetaLine(row: Suppression): String = listOfNotNull(
     doNotSendWhenLabel(row.suppressedAtMs),
 ).joinToString(", ")
 
-private val WHEN_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+private val WHEN_FORMAT = AdminTime.DATE_TIME
 
-/** Local `YYYY-MM-DD HH:mm`, matching the web list. */
+/** Local "Nov 10, 2026 22:32" (#1828), matching the web list. */
 internal fun doNotSendWhenLabel(ms: Long): String =
     if (ms <= 0L) {
         "(no time)"

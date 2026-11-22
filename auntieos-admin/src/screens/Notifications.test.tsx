@@ -62,7 +62,8 @@ vi.mock('../api/bookingRequests', () => ({ approveBookingRequest, declineBooking
 // #2069: the live queue of waiting booking requests. Swapped per test; by
 // default it holds the one request `waitingRequest()` names below.
 const { pendingState } = vi.hoisted(() => ({ pendingState: { current: null as unknown } }));
-vi.mock('../lib/pendingBookingRequests', () => ({
+vi.mock('../lib/pendingBookingRequests', async (orig) => ({
+  ...(await orig<typeof import('../lib/pendingBookingRequests')>()),
   usePendingBookingRequests: () => pendingState.current,
   usePollTick: () => 0,
   VISIT_REQUESTS_REFRESH_MS: 60_000,
@@ -180,9 +181,9 @@ describe('Notifications screen', () => {
   it('renders streamed rows grouped by day, with the title and the category in words', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Notifications />);
-    expect(screen.getByText('2026-07-16')).toBeInTheDocument();
+    expect(screen.getByText('Jul 16, 2026')).toBeInTheDocument();
     // #1592: a row with no title reads its key as words, never the key itself.
-    expect(screen.getByText('Kincare booking confirm')).toBeInTheDocument();
+    expect(screen.getByText('KinCare booking confirm')).toBeInTheDocument();
     expect(screen.queryByText('kincare.booking.confirm')).toBeNull();
     // Scoped to the ROW: "Bookings" is also the text of the category filter
     // chip, and an unscoped getByText now matches both. It used to be unique
@@ -200,9 +201,9 @@ describe('Notifications screen', () => {
     expect(screen.getByRole('tab', { name: 'Visits' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'visit' })).toBeNull();
     expect(within(screen.getByRole('listitem')).getByText('Visits')).toBeInTheDocument();
-    expect(screen.getByText('Account welcome kinfolk')).toBeInTheDocument();
+    expect(screen.getByText('Account welcome Kinfolk')).toBeInTheDocument();
     expect(screen.queryByText('account.welcome.kinfolk')).toBeNull();
-    expect(screen.getByRole('checkbox', { name: 'Select Account welcome kinfolk' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select Account welcome Kinfolk' })).toBeInTheDocument();
   });
 
   it('#2277: the visit note row names who wrote the note, before the category', () => {
@@ -473,7 +474,7 @@ describe('Notifications feed context (issue #20)', () => {
     });
     render(<Notifications />);
     const days = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
-    expect(days).toEqual(['2026-07-16', '2026-07-15']);
+    expect(days).toEqual(['Jul 16, 2026', 'Jul 15, 2026']);
   });
 
   it('filters the feed by category chip, and says so when nothing matches', async () => {
@@ -971,6 +972,66 @@ describe('Notifications quick actions (issue #20)', () => {
     await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('kf1', 'req_b1'));
     expect(batchUpdateBookings).not.toHaveBeenCalled();
     expect(screen.queryByText('Notification action failed')).toBeNull();
+  });
+
+  // #1877: the row read BOOKED while the tile kept counting the request until
+  // the queue was read again.
+  it('#1877: Needs a decision drops as soon as the approval lands, before the queue is read again', async () => {
+    approveBookingRequest.mockResolvedValue(APPROVED);
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    const tile = () => screen.getByText('Needs a decision').closest('.den-stat') as HTMLElement;
+    expect(within(tile()).getByText('1')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await confirmDecision('Book it');
+    await waitFor(() => expect(within(tile()).getByText('0')).toBeInTheDocument());
+    // The row no longer offers a decision either.
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+  });
+
+  it('#1877: an approval where some visits did not go through leaves the request counted', async () => {
+    approveBookingRequest.mockResolvedValue({ ...APPROVED, affectedVisits: 2, failedVisits: 1 });
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    const tile = () => screen.getByText('Needs a decision').closest('.den-stat') as HTMLElement;
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await confirmDecision('Book it');
+    expect(await screen.findByText(/Approved 2 of 3 visits/)).toBeInTheDocument();
+    expect(within(tile()).getByText('1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  });
+
+  it('#1877: a decline that stops partway leaves the request counted and says so', async () => {
+    declineBookingRequest.mockResolvedValue({ ok: true, householdNotified: false, affectedVisits: 1, failedVisits: 2 });
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    const tile = () => screen.getByText('Needs a decision').closest('.den-stat') as HTMLElement;
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    await confirmDecision('Send the decline');
+    expect(await screen.findByText(/Declined 1 of 3 visits/)).toBeInTheDocument();
+    expect(within(tile()).getByText('1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+  });
+
+  it('#1877: a whole decline drops the request from the count', async () => {
+    declineBookingRequest.mockResolvedValue({ ok: true, householdNotified: true, affectedVisits: 3, failedVisits: 0 });
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    const tile = () => screen.getByText('Needs a decision').closest('.den-stat') as HTMLElement;
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    await confirmDecision('Send the decline');
+    await waitFor(() => expect(within(tile()).getByText('0')).toBeInTheDocument());
+  });
+
+  it('#1877: a refused approval leaves the request counted', async () => {
+    approveBookingRequest.mockRejectedValue(new Error('That time overlaps a busy block on your Google Calendar.'));
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    const tile = () => screen.getByText('Needs a decision').closest('.den-stat') as HTMLElement;
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await confirmDecision('Book it');
+    expect(await screen.findByText(/overlaps a busy block/)).toBeInTheDocument();
+    expect(within(tile()).getByText('1')).toBeInTheDocument();
   });
 
   it('#1675: Deny declines the whole request by household and request id', async () => {

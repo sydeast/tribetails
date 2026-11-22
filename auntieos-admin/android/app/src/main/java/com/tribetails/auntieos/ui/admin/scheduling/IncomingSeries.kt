@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.data.repository.IncomingKinCare
 import com.tribetails.auntieos.ui.admin.ServiceCatalog
@@ -69,7 +70,7 @@ fun IncomingSeries.visitLines(zone: ZoneId, catalog: ServiceCatalog = ServiceCat
     }
     if (v.serviceType.isNotBlank() && v.serviceType != serviceType) "$whenText · ${catalog.nameOf(v.serviceType)}" else whenText
 }
-private val VISIT_LINE_FORMAT = DateTimeFormatter.ofPattern("EEE, MMM d 'at' h:mm a", Locale.US)
+private val VISIT_LINE_FORMAT = DateTimeFormatter.ofPattern("EEE, " + AdminTime.DATE_TIME_PATTERN, Locale.US)
 
 /**
  * The key one night's chosen start time is held under. A visit id is unique

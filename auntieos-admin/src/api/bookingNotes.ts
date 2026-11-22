@@ -91,8 +91,10 @@ export function noteAuthorLabel(
 ): string {
   switch (note.authorRole) {
     case 'admin': {
+      // #1882: the staff byline (a name, else "Office" or "Auntie"), and never
+      // an email whatever the map holds.
       const name = note.authorUid !== undefined ? staffNames.get(note.authorUid) : undefined;
-      return name !== undefined && name.trim() !== '' ? name : 'Staff';
+      return name !== undefined && name.trim() !== '' && !name.includes('@') ? name : 'Staff';
     }
     case 'kinfolk':
       return 'Kinfolk';

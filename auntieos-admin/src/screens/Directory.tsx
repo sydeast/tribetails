@@ -39,6 +39,7 @@ import { EntityCardGrid } from '../components/EntityCardGrid';
 import { KinfolkProfile, type ProfileSubView, type ProfileView } from './KinfolkProfile';
 import { KinView } from './KinView';
 import './Directory.css';
+import { navKicker } from '../lib/nav';
 
 type DirectoryTab = 'kinfolk' | 'kin';
 
@@ -652,7 +653,7 @@ export function Directory({
           their own schedule and a second animation on top reads as a glitch. */}
       <div className="d1">
         <DenScreenHeading
-          kicker="The Den · Directory"
+          kicker={navKicker('directory')}
           title="Your"
           accentTail="kinfolk"
           subtitle="Every household and kin on file."

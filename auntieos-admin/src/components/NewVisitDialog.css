@@ -5,11 +5,6 @@
  * literal colours, radii, or durations.
  */
 
-.new-visit__hint {
-  margin: 0 0 var(--space-4);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-dim);
-}
 
 .new-visit__fields {
   display: flex;

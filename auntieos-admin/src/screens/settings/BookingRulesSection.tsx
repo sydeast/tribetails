@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { BusinessSettings } from '../../api/settings';
-import { DenPanel } from '../../components/DenScreenKit';
+import { DenPanel, InfoTip } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
@@ -8,6 +8,7 @@ import {
   CALENDAR_VIEWS,
   HHMM_REGEX,
   NUMBER_FIELDS,
+  VISIT_REMINDER_SWITCH_NOTE,
   VISIT_REMINDER_TIMING,
   blockOverlaps,
   compareBlocksByStart,
@@ -366,7 +367,9 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
         <span className="settingsEdit__groupHeading">Defaults</span>
         <ul className="settingsEdit__toggleList">
           <li className="settingsEdit__toggleRow">
-            <span className="settingsEdit__toggleLabel">Remind kinfolk {VISIT_REMINDER_TIMING} a visit</span>
+            <span className="settingsEdit__toggleLabel">
+              Remind kinfolk {VISIT_REMINDER_TIMING} a visit <InfoTip text={VISIT_REMINDER_SWITCH_NOTE} />
+            </span>
             <Toggle
               label="Toggle the visit reminder"
               checked={draft.enableAutoReminder24h}

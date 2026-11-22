@@ -10,7 +10,6 @@ import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
-import java.util.Locale
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FormSchema pure helpers. Extracted as top-level functions per
@@ -41,7 +40,7 @@ const val NO_UPDATED_AT_LABEL = "date unknown"
  *
  * Three input classes, three honest outputs, never a crash and never a
  * fabricated date:
- *  - a real instant  -> `08-02 05:15`
+ *  - a real instant  -> `Aug 2, 2026 05:15` (#1828, the admin shape)
  *  - blank / absent  -> [NO_UPDATED_AT_LABEL]. `FormSchemaSummary.updatedAt` is
  *    a non-null String on this platform, so a schema saved before the field
  *    existed arrives as `""`. Not "never updated": absent is unknown, not proof
@@ -53,14 +52,7 @@ fun formSchemaUpdatedLabel(updatedAt: String): String {
     val raw = updatedAt.trim()
     if (raw.isEmpty()) return NO_UPDATED_AT_LABEL
     val local = parseFormSchemaInstant(raw) ?: return raw
-    return String.format(
-        Locale.US,
-        "%02d-%02d %02d:%02d",
-        local.monthValue,
-        local.dayOfMonth,
-        local.hour,
-        local.minute,
-    )
+    return com.tribetails.auntieos.domain.AdminTime.DATE_TIME.format(local)
 }
 
 /**
@@ -204,7 +196,7 @@ fun formSchemaRefusalsOf(t: Throwable?): List<FormSchemaValidationError> =
 object FormSchemaValidator {
 
     /**
-     * Schema id pattern. Must start with a letter; allows letters, digits,
+     * Short name pattern. Must start with a letter; allows letters, digits,
      * underscore, dot, hyphen. Mirrors the Zod schema on the server (Cloud
      * Function `saveFormSchema`) so client + server agree before the round-
      * trip. Fail-loud per [[fail-loud-policy]] - surface a clear message
@@ -228,18 +220,18 @@ object FormSchemaValidator {
     fun validate(schema: FormSchema): List<FormSchemaValidationError> {
         val errors = mutableListOf<FormSchemaValidationError>()
         if (schema.id.isBlank()) {
-            errors += FormSchemaValidationError(-1, null, "Schema id is required")
+            errors += FormSchemaValidationError(-1, null, "Short name is required")
         } else if (!SCHEMA_ID_REGEX.matches(schema.id)) {
             errors += FormSchemaValidationError(
                 -1, null,
-                "Schema id \"${schema.id}\" is invalid: must start with a letter and contain only letters, digits, underscore, dot, or hyphen",
+                "Short name \"${schema.id}\" is invalid: must start with a letter and contain only letters, digits, underscore, dot, or hyphen",
             )
         }
         val r = FormSchemaTextRules
         fun add(section: Int, field: Int?, problem: String?) {
             if (problem != null) errors += FormSchemaValidationError(section, field, problem)
         }
-        if (schema.id.length > r.ID) add(-1, null, "Schema id is ${schema.id.length} characters long. The limit is ${r.ID}.")
+        if (schema.id.length > r.ID) add(-1, null, "Short name is ${schema.id.length} characters long. The limit is ${r.ID}.")
         if (schema.name.isBlank()) {
             errors += FormSchemaValidationError(-1, null, "Schema name is required")
         } else {

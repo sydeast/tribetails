@@ -76,7 +76,7 @@ describe('TimeOffEditor', () => {
       />,
     );
     expect(screen.getByText('Christmas closure')).toBeInTheDocument();
-    expect(screen.getByText('2026-12-25')).toBeInTheDocument();
+    expect(screen.getByText('Dec 25, 2026')).toBeInTheDocument();
   });
 
   it('the Add company-holiday button stays disabled until date and name are both valid', async () => {

@@ -223,7 +223,7 @@ describe('BookingDetailModal fact rows', () => {
     expect(factValue('Kinfolk')).toHaveTextContent('The Whitfields');
     expect(factValue('Requested services')).toHaveTextContent('Dog Walk');
     expect(factValue('Duration')).toHaveTextContent('1 hr 30 min');
-    expect(factValue('When')).toHaveTextContent('Thu, Jul 16 at 2:00 PM');
+    expect(factValue('When')).toHaveTextContent('Thu, Jul 16, 2026 14:00');
     expect(factValue('Status')).toHaveTextContent('SCHEDULED');
     // #1580: the session's own notes text is the first row of the internal-notes list now, not a fact.
     expect(screen.queryByText('Office note')).not.toBeInTheDocument();
@@ -560,7 +560,7 @@ describe('BookingDetailModal on a non-envelope (legacy flat) visit', () => {
     open(legacy);
     expect(screen.getByRole('button', { name: 'Choose an Auntie' })).toBeDisabled();
     expect(
-      screen.getByText(/not part of a booking request, so there is no visit record to assign against/i),
+      screen.getByText(/Only a visit that came from a booking request can have an Auntie assigned here\./),
     ).toBeInTheDocument();
     expect(getVisitAssignment).not.toHaveBeenCalled();
   });
@@ -568,7 +568,7 @@ describe('BookingDetailModal on a non-envelope (legacy flat) visit', () => {
   it('explains why the note threads are unavailable instead of showing empty ones', () => {
     open(legacy);
     expect(useCollection).not.toHaveBeenCalled();
-    expect(screen.getAllByText(/no visit record to attach notes to/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Only a visit that came from a booking request can carry notes here\./).length).toBeGreaterThan(0);
     expect(screen.queryByLabelText('Add a kinfolk-facing note')).toBeNull();
   });
   it('#1580: still lists and takes internal notes, which the server keeps on its visit record', async () => {

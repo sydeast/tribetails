@@ -40,7 +40,9 @@ class AuntieAssignmentTest {
     fun `assignUnavailableReason explains why rather than only naming the state`() {
         val reason = assignUnavailableReason()
         assertTrue("must name the booking request", reason.contains("booking request"))
-        assertTrue("must say what is missing", reason.contains("visit record"))
+        assertTrue("must say why this visit has none", reason.contains("added to the calendar directly"))
+        // #1883: the owner's words, not the data model's.
+        assertFalse("no developer wording", Regex("visit record|assign against|lives on the request").containsMatchIn(reason))
         assertFalse("no em dashes in operator copy", reason.contains("—"))
     }
 }

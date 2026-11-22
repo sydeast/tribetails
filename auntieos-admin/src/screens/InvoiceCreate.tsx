@@ -28,7 +28,12 @@ import { Dialog } from '../components/Dialog';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { Banner } from '../components/Banner';
-import { InvoiceLineItemsEditor, parseDraftLines, type DraftLine } from '../components/InvoiceLineItems';
+import {
+  InvoiceLineItemsEditor,
+  editorProblemsShown,
+  parseDraftLines,
+  type DraftLine,
+} from '../components/InvoiceLineItems';
 import { UninvoicedVisitsPicker, visitLineDescription } from '../components/UninvoicedVisitsPicker';
 import './InvoiceCreate.css';
 
@@ -595,7 +600,13 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   // than flagged in red before anything has been typed.
   const totalFieldProblem = totalProblem !== null && totalText.trim() !== '' ? totalProblem : null;
   /** Sentences already on screen beside a field. The button's reason is not printed twice. */
-  const saidBesideAField = [termsNote, totalFieldProblem, dueOrderProblem];
+  const saidBesideAField: (string | null)[] = [
+    termsNote,
+    totalFieldProblem,
+    dueOrderProblem,
+    // #1903: the discount's refusal is already under its field.
+    ...(onWork ? editorProblemsShown(extraLines, invoiceDiscountText, visitLines) : []),
+  ];
   const visitCount = onWork ? selected.size : 0;
 
   return (
@@ -751,11 +762,15 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
                 it would say this invoice "will be created for $0.00" when in
                 fact it cannot be created at all. An empty set and a zero total
                 are different facts and must not read alike. */}
-            <p className="invoice-create__derived">
-              {money?.totals && money.lines !== null && money.lines.length > 0
-                ? `This ${noun} will be created for ${formatCentsUsd(money.totals.totalCents)}, worked out from the work it covers. There is nowhere to type a total, so it can never say a different number from the work it lists.`
-                : `Totals are worked out from the work this ${noun} covers. Tick a visit above, or add a line of your own.`}
-            </p>
+            {/* #1903: with work on it and the money refused, the refusal beside
+                the field is the whole message. "Tick a visit" would be false. */}
+            {!(money?.error != null && (selected.size > 0 || extraLines.length > 0)) && (
+              <p className="invoice-create__derived">
+                {money?.totals && money.lines !== null && money.lines.length > 0
+                  ? `This ${noun} will be created for ${formatCentsUsd(money.totals.totalCents)}, worked out from the work it covers. There is nowhere to type a total, so it can never say a different number from the work it lists.`
+                  : `Totals are worked out from the work this ${noun} covers. Tick a visit above, or add a line of your own.`}
+              </p>
+            )}
           </>
         )}
 

@@ -52,6 +52,10 @@ class InvoiceEditViewModelTest {
         Dispatchers.setMain(testDispatcher)
         coEvery { invoiceRepository.getInvoiceLedger(any()) } returns Result.success(TestFixtures.emptyInvoiceLedger())
         coEvery { repository.getBusinessSettings() } returns Result.success(BusinessSettings())
+        // #1871: the read after a save answers with whatever the test stored.
+        coEvery { invoiceRepository.readInvoiceFromServer(any()) } coAnswers {
+            invoiceRepository.getInvoiceById(firstArg()).getOrNull()
+        }
         viewModel = InvoiceDetailViewModel(repository, invoiceRepository, mockk(relaxed = true))
     }
 
@@ -130,6 +134,45 @@ class InvoiceEditViewModelTest {
         // The server unlinked the visit with its line; the screen reads the stored set.
         assertEquals(listOf("ses1"), viewModel.uiState.value.invoice?.sessionIds)
     }
+    @Test
+    fun `#1871 Invoice updated shows only with the saved figures in place`() = runTest {
+        val before = invoice("all").copy(total = 25.0, amountDue = 25.0)
+        val after = before.copy(total = 1025.0, amountDue = 1025.0)
+        coEvery { invoiceRepository.getInvoiceById("inv1") } returns Result.success(before)
+        viewModel.loadInvoice("inv1")
+        advanceUntilIdle()
+        val reread = kotlinx.coroutines.CompletableDeferred<Result<Invoice>>()
+        coEvery { invoiceRepository.readInvoiceFromServer("inv1") } coAnswers { reread.await().getOrNull() }
+        coEvery { invoiceRepository.updateInvoice("inv1", any()) } returns Result.success(ok)
+
+        viewModel.openInvoiceEdit()
+        viewModel.updateInvoiceEdit(viewModel.uiState.value.invoiceEdit!!.copy(dueDate = "2026-10-30"))
+        viewModel.saveInvoiceEdit()
+        advanceUntilIdle()
+        // Saved, not yet read back: no "Done" over the old $25.00.
+        assertFalse(viewModel.uiState.value.toastVisible)
+        assertEquals(25.0, viewModel.uiState.value.invoice?.total)
+
+        reread.complete(Result.success(after))
+        advanceUntilIdle()
+        assertEquals("Invoice updated.", viewModel.uiState.value.toastMessage)
+        assertEquals(1025.0, viewModel.uiState.value.invoice?.total)
+        assertFalse(viewModel.uiState.value.savingInvoiceEdit)
+    }
+
+    @Test
+    fun `#1871 a failed re-read says saved, never updated, over the copy it had`() = runTest {
+        load(invoice("all"))
+        coEvery { invoiceRepository.readInvoiceFromServer("inv1") } returns null
+        coEvery { invoiceRepository.updateInvoice("inv1", any()) } returns Result.success(ok)
+        viewModel.openInvoiceEdit()
+        viewModel.updateInvoiceEdit(viewModel.uiState.value.invoiceEdit!!.copy(dueDate = "2026-10-30"))
+        viewModel.saveInvoiceEdit()
+        advanceUntilIdle()
+        assertEquals(INVOICE_SAVED_FIGURES_PENDING, viewModel.uiState.value.toastMessage)
+        assertEquals(40.0, viewModel.uiState.value.invoice?.total)
+    }
+
     @Test
     fun `a refusal stays in the form verbatim, with what was typed`() = runTest {
         load(invoice("all"))

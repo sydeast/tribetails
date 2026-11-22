@@ -97,11 +97,16 @@ import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.SegmentedPicker
+import com.tribetails.auntieos.web.ui.components.LocalRouteToast
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Communicate: the Den comms surface.
@@ -326,6 +331,8 @@ fun CommunicateScreen(
     }
 
     fun showToast(text: String, kind: ToastKind = ToastKind.Info) { toastMsg = text to kind }
+    // #1895: a delete's result, shown above whichever screen is open by then.
+    val routeToast = LocalRouteToast.current
 
     val recipientName = selectedKinfolk?.displayName.orEmpty()
 
@@ -423,7 +430,7 @@ fun CommunicateScreen(
         // #2389: one delete at a time, and never across a send in flight.
         if (deleting || saving || retryingPush) return
         deleting = true
-        scope.launch {
+        draftDeleteScope.launch {
             try {
                 when (val w = firestore.deleteGeneratedDraft(draftId)) {
                     is WriteResult.Ok -> {
@@ -432,14 +439,14 @@ fun CommunicateScreen(
                         sentReportId = null
                         pushNotice = null
                         sentNotice = null
-                        showToast("Draft deleted.", ToastKind.Success)
+                        routeToast.show("Draft deleted.", ToastKind.Success)
                     }
-                    is WriteResult.Err -> showToast("Delete failed: ${w.message}", ToastKind.Error)
+                    is WriteResult.Err -> routeToast.show("Delete failed: ${w.message}", ToastKind.Error)
                 }
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                showToast("Delete failed: ${t.message ?: "unknown error"}", ToastKind.Error)
+                routeToast.show("Delete failed: ${t.message ?: "unknown error"}", ToastKind.Error)
             } finally {
                 deleting = false
             }
@@ -648,7 +655,7 @@ fun CommunicateScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker = "Care Ops · Communicate",
+            kicker = navKicker(Destination.Communicate),
             title = "Talk to your",
             accentTail = "kinfolk.",
             subtitle = "Pull a saved template or write from scratch, let Auntie draft it, then approve before it goes home.",
@@ -940,6 +947,14 @@ fun CommunicateScreen(
         )
     }
 }
+
+/**
+ * #1895: where a draft delete runs. The screen's own scope is cancelled when the
+ * owner leaves, which dropped the delete and said nothing.
+ */
+private val draftDeleteScope = CoroutineScope(
+    SupervisorJob() + com.tribetails.auntieos.web.observability.reportingExceptionHandler("deleteGeneratedDraft"),
+)
 
 /** #1563: the line under a draft that was already sent when it was opened, or null. Pure; tested. */
 internal fun sentNoteFor(sentBefore: Boolean, sentReportId: String?, household: String?): String? =
@@ -1672,7 +1687,12 @@ private fun BroadcastForm(
             maxWidth = 520.dp,
             footer = {
                 GhostButton(label = "Cancel", onClick = { confirmOpen = false }, enabled = !sending)
-                PrimaryButton(label = "Send now", onClick = ::send, enabled = !sending, loading = sending)
+                PrimaryButton(
+                    label = "Send now",
+                    onClick = ::send,
+                    enabled = !sending && !broadcastSendBlocked((reach as? WriteResult.Ok)?.value?.targeted, reach is WriteResult.Err),
+                    loading = sending,
+                )
             },
         ) {
             Text(
@@ -1693,7 +1713,7 @@ private fun BroadcastForm(
                 color = c.textPrimary,
             )
             Text(
-                text = "This goes out right now. A household that switched a channel off does not get it there; the result shows who was reached.",
+                text = broadcastConfirmNote((reach as? WriteResult.Ok)?.value?.targeted),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -2157,7 +2177,13 @@ private fun LastCommunicationBox(
     val calls = (callsState as? FirestoreResult.Data)?.value.orEmpty().filter { it.kinfolkId == kinfolkId }
     val emails = (emailsState as? FirestoreResult.Data)?.value.orEmpty().filter { it.kinfolkId == kinfolkId }
     val vms = (vmState as? FirestoreResult.Data)?.value.orEmpty().filter { it.kinfolkId == kinfolkId }
-    val latest = latestCommunication(sms, emails, calls, vms)
+
+    // #1878: the household's thread with the office, read once per recipient.
+    var threadRead by remember(kinfolkId) { mutableStateOf<WriteResult<LatestThreadMessage?>?>(null) }
+    LaunchedEffect(kinfolkId) { threadRead = firestore.latestThreadMessage(kinfolkId) }
+    val latest = latestCommunication(sms, emails, calls, vms, (threadRead as? WriteResult.Ok)?.value)
+    val commsLoading = threadRead == null ||
+        listOf(smsState, callsState, emailsState, vmState).any { it is FirestoreResult.Loading }
 
     var recap by remember(kinfolkId) { mutableStateOf<String?>(null) }
     var recapError by remember(kinfolkId) { mutableStateOf<String?>(null) }
@@ -2204,7 +2230,7 @@ private fun LastCommunicationBox(
             is CommsBoxState.RawLatest -> {
                 FieldLabel("Latest message")
                 Text(
-                    "${state.latest.channel} · ${humanizeDate(state.latest.timestamp)}: ${state.latest.snippet}",
+                    "${commsChannelLabel(state.latest.channel)} · ${humanizeDate(commsLocalDay(state.latest.timestamp))}: ${state.latest.snippet}",
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textPrimary,
                 )
@@ -2217,11 +2243,24 @@ private fun LastCommunicationBox(
                 }
             }
             CommsBoxState.Empty -> {
-                Text(
-                    "No messages on file yet.",
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.textDim,
-                )
+                if (commsLoading) {
+                    Text(
+                        "Reading messages…",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                } else if (threadRead !is WriteResult.Err) {
+                    Text(
+                        "No messages on file yet.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+            }
+        }
+        if (threadRead is WriteResult.Err) {
+            AuntieBanner(tone = AuntieBannerTone.Warning, icon = Lucide.TriangleAlert) {
+                Text(COMMS_THREAD_FAILED, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
             }
         }
     }

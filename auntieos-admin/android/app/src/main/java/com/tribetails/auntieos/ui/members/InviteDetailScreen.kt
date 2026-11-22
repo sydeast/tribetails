@@ -25,6 +25,8 @@ import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * ONE invite (#1339). The Android half of
@@ -70,7 +72,7 @@ fun InviteDetailBody(
     ) {
         item {
             DenScreenHeading(
-                kicker = "The Den · Invites",
+                kicker = railKicker(RailScreen.INVITES),
                 title = title,
                 crumbs = listOf(DenCrumb("Invites", onInvites), DenCrumb(title)),
             )

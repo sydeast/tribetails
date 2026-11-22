@@ -94,6 +94,7 @@ import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.NavGroup
 
 /**
  * KinTale template editor - Auntie can edit which sections appear in the report
@@ -549,11 +550,11 @@ private fun EditorHeader(
     val c = AuntieTheme.colors
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            // Kicker: "The Den · KinTale templates"
+            // Kicker: "More · KinTale templates", the web rail files it under More
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Lucide.Settings, contentDescription = null, tint = c.primary, modifier = Modifier.size(13.dp))
                 Text(
-                    text = "THE DEN · KINTALE TEMPLATES",
+                    text = "${NavGroup.More.label} · KinTale templates".uppercase(),
                     style = AuntieTheme.typography.mono.copy(letterSpacing = 1.4.sp, fontSize = 11.sp),
                     color = c.primary,
                 )

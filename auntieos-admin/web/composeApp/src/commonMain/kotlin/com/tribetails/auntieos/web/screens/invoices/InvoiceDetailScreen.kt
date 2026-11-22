@@ -112,6 +112,8 @@ import kotlinx.coroutines.launch
 import com.tribetails.auntieos.web.util.businessTimeZone
 import com.tribetails.auntieos.web.screens.sessions.businessDayOf
 import com.tribetails.auntieos.web.util.businessTodayIso
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // The header Receipt / Send-reminder actions and the Payments panel's Record
 // payment (real generateReceipt / sendInvoiceReminder / recordPayment callables)
@@ -133,10 +135,12 @@ fun InvoiceDetailScreen(
     val streamState by remember { client.invoicesStream() }.collectAsState(initial = FirestoreResult.Loading)
 
     val state = invoiceDetailStateFor(invoiceId, streamState)
+    // #1871: the invoice as read back after a saved edit, until the stream moves on.
+    var savedEdit by remember(invoiceId) { mutableStateOf<SavedInvoiceEdit?>(null) }
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "Care Ops · Invoices",
+            kicker     = navKicker(Destination.Invoices),
             title      = "Invoice",
             accentTail = "Detail.",
             subtitle   = "Full billing record.",
@@ -186,9 +190,17 @@ fun InvoiceDetailScreen(
                 )
 
             is InvoiceDetailState.Loaded -> InvoiceDetailBody(
-                invoice     = state.invoice,
+                invoice     = invoiceShownAfterEdit(state.invoice, savedEdit),
                 client      = client,
                 onOpenVisit = onOpenVisit,
+                onEdited    = {
+                    // `before` is the STREAM's copy, so a second edit inside one
+                    // poll still compares against what the stream is holding.
+                    val before = state.invoice
+                    val after = client.invoiceFromServer(invoiceId)
+                    if (after != null) savedEdit = SavedInvoiceEdit(before, after)
+                    after != null
+                },
             )
         }
     }
@@ -199,6 +211,8 @@ private fun InvoiceDetailBody(
     invoice: Invoice,
     client: FirestoreClient,
     onOpenVisit: ((String) -> Unit)?,
+    /** #1871: re-reads the invoice after a saved edit, before the notice shows. False when it could not. */
+    onEdited: suspend () -> Boolean = { true },
 ) {
     val c = AuntieTheme.colors
     val todayKey = businessTodayIso()
@@ -433,9 +447,11 @@ private fun InvoiceDetailBody(
         scope.launch {
             when (val r = client.updateInvoice(invoice._id, patch)) {
                 is WriteResult.Ok -> {
+                    // #1871: the saved figures first, then the word that it is done.
+                    val figuresShown = onEdited()
                     savingInvoiceEdit = false
                     invoiceEdit = null
-                    showToast("Invoice updated.", false)
+                    showToast(invoiceEditedNotice(figuresShown), false)
                 }
                 is WriteResult.Err -> {
                     savingInvoiceEdit = false
@@ -861,7 +877,8 @@ private fun InvoiceDetailBody(
                 )
                 DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly, heldAtMs = invoice.reminderHeldAtMs))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
-                if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
+                invoiceBillingFacts(invoice.kinfolkName, invoice.client, invoice.address, invoice.discount)
+                    .forEach { (label, value) -> DetailRow(label, value) }
             }
         }
 
@@ -1645,6 +1662,25 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
             tone  = AuntieStatusTone.Neutral,
         )
     }
+}
+
+/**
+ * #1899: the saved name, address and discount note, so an edit to them can be
+ * seen on the invoice. A blank one is left out, and so is a name that only
+ * repeats the household already at the top of the sheet. Pure.
+ */
+internal fun invoiceBillingFacts(
+    kinfolkName: String,
+    client: String,
+    address: String,
+    discount: String,
+): List<Pair<String, String>> {
+    val name = client.trim()
+    return listOf(
+        "Kinfolk" to if (name.equals(kinfolkName.trim(), ignoreCase = true)) "" else name,
+        "Address" to address.trim(),
+        "Discount note" to discount.trim(),
+    ).filter { it.second.isNotEmpty() }
 }
 
 @Composable

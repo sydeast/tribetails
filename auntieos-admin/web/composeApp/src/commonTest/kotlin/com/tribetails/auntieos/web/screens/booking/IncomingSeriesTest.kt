@@ -103,7 +103,7 @@ class IncomingSeriesTest {
             ),
         ).single()
         assertEquals(
-            listOf("Time not on file", "Wed, Jun 3 at 9:00 AM", "soon"),
+            listOf("Time not on file", "Wed, Jun 3, 2026 09:00", "soon"),
             series.visitLines(kotlinx.datetime.TimeZone.of("America/Chicago")),
         )
     }

@@ -362,6 +362,16 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
       expect(screen.queryByText(key)).not.toBeInTheDocument();
     }
   });
+  // #1883: the owner's words. "the recipient rule above resolves to" was the
+  // data model talking.
+  it('says who can read the body in plain words', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    await open();
+    expect(
+      await screen.findByText(/Anything on this list can appear in the message, so everyone who gets this notice can read it\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/recipient rule|resolves to|therefore/)).not.toBeInTheDocument();
+  });
   it('#1592: shows the server words for a merge field when it sends them', async () => {
     getNotificationMatrix.mockResolvedValue(
       matrix({
@@ -625,12 +635,12 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
     await open();
     expect(await screen.findByTestId('business-email-line')).toHaveTextContent(/nowhere to go/);
   });
-  it('shows an allowlist-seeded operator by uid rather than dropping them', async () => {
+  it('lists an allowlist-seeded operator as the office rather than dropping them (#1882: never by uid)', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
     listBusinessAdmins.mockResolvedValue(roster);
     await open();
-    expect(await screen.findByText(/op8/)).toBeInTheDocument();
-    expect(screen.getByText(/no staff record/)).toBeInTheDocument();
+    expect(await screen.findByText('Office (no staff record yet)')).toBeInTheDocument();
+    expect(screen.queryByText(/op8/)).toBeNull();
   });
   it('warns when the list is the allowlist fallback and the roster is empty', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 0 }));

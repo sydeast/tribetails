@@ -227,7 +227,7 @@ describe('bookings', () => {
         .invoke('text')
         .should('match', /^\d+$/);
     }
-    cy.contains('#bookings-section-pending', 'Visit requests').should('exist');
+    cy.contains('#bookings-section-pending', 'Drafts').should('exist');
     cy.contains('#bookings-section-scheduled', 'Scheduled').should('exist');
     cy.contains('#bookings-section-history', 'History').should('exist');
 

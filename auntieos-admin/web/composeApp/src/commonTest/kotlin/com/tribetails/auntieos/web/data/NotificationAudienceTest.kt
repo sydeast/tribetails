@@ -163,7 +163,7 @@ class NotificationAudienceTest {
         assertEquals("Label", NotificationCatalogEntry(key = "k", label = "Label", description = "Desc").displayTitle())
         assertEquals("Desc", NotificationCatalogEntry(key = "k", description = "Desc").displayTitle())
         // #1592: the key as words, never the key itself.
-        assertEquals("Account welcome kinfolk", NotificationCatalogEntry(key = "account.welcome.kinfolk").displayTitle())
+        assertEquals("Account welcome Kinfolk", NotificationCatalogEntry(key = "account.welcome.kinfolk").displayTitle())
     }
 
     private fun cat(key: String, category: String) = NotificationCatalogEntry(key = key, category = category)
@@ -199,17 +199,17 @@ class NotificationAudienceTest {
     @Test
     fun sectionTaxonomyMatchesEachAudiencesWorkflow() {
         assertEquals(
-            listOf("Bookings and visits", "Messages", "Billing and payments", "Ratings and pets", "Account and security"),
+            listOf("Bookings and visits", "Messages", "Billing and payments", "Ratings and Kin", "Account and security"),
             notifSections(NotifAudience.Business).map { it.title },
         )
         assertEquals(
-            listOf("Assignments and schedule", "Visit workflow", "KinTales and comments", "Pets and profiles"),
+            listOf("Assignments and schedule", "Visit workflow", "KinTales and comments", "Kin and profiles"),
             notifSections(NotifAudience.Staff).map { it.title },
         )
         assertEquals(
             listOf(
                 "Visit updates", "Upcoming care", "KinTales", "Billing and payments",
-                "Home and pets", "Account and security", "Newsletters and community",
+                "Home and Kin", "Account and security", "Newsletters and community",
             ),
             notifSections(NotifAudience.Kinfolk).map { it.title },
         )

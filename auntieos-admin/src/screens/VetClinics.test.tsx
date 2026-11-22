@@ -470,7 +470,7 @@ describe('VetClinics: the mock shape (#755)', () => {
     seed();
     render(<VetClinics />);
     await screen.findByText('Riverside Animal Hospital');
-    expect(document.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Directory');
+    expect(document.querySelector('.den-heading-kicker')).toHaveTextContent('More · Settings');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Vet clinics');
     expect(screen.getByRole('button', { name: 'Add clinic' })).toBeInTheDocument();
   });

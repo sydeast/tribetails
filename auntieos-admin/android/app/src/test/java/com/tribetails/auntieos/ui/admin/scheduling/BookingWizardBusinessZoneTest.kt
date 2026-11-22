@@ -84,6 +84,6 @@ class BookingWizardBusinessZoneTest {
         val second = s.plans.single().visits[1]
         s = s.updateDayVisit(monday, second.id) { it.copy(hour = 18, minute = 0) }
         val warnings = bookingSelectionWarnings(buildVisits(s), BookingAvailability(businessHours = hours), s.zone)
-        assertEquals(listOf("Aug 2 at 6:00 PM: outside business hours (8:00 AM to 5:00 PM)."), warnings)
+        assertEquals(listOf("Aug 2 at 18:00: outside business hours (08:00 to 17:00)."), warnings)
     }
 }

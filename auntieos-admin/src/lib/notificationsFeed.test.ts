@@ -20,13 +20,13 @@ import {
 
 describe('#1592 notification words, never keys', () => {
   it('a row with no title reads its key as words', () => {
-    expect(notificationTitle({ key: 'account.welcome.kinfolk' })).toBe('Account welcome kinfolk');
-    expect(notificationTitle({ key: 'account.welcome.kinfolk', title: '' })).toBe('Account welcome kinfolk');
+    expect(notificationTitle({ key: 'account.welcome.kinfolk' })).toBe('Account welcome Kinfolk');
+    expect(notificationTitle({ key: 'account.welcome.kinfolk', title: '' })).toBe('Account welcome Kinfolk');
   });
 
   it('a title that is only the key is treated as missing', () => {
     expect(notificationTitle({ key: 'account.welcome.kinfolk', title: 'account.welcome.kinfolk' })).toBe(
-      'Account welcome kinfolk',
+      'Account welcome Kinfolk',
     );
   });
 
@@ -54,6 +54,11 @@ describe('#1592 notification words, never keys', () => {
   it('humanizeKey splits dots, underscores and dashes', () => {
     expect(humanizeKey('visit_60')).toBe('Visit 60');
     expect(humanizeKey('  ')).toBe('');
+    // #1887: a key reads in the app's own words.
+    expect(humanizeKey('pets.updated')).toBe('Kin updated');
+    expect(humanizeKey('account.welcome.kinfolk')).toBe('Account welcome Kinfolk');
+    expect(humanizeKey('kintale.published')).toBe('KinTale published');
+    expect(humanizeKey('TWILIO_API_KEY')).toBe('Twilio API key');
   });
 });
 
@@ -163,7 +168,7 @@ describe('notificationsByDay', () => {
       entry({ _id: 'c', createdAt: ts('2026-07-15T12:00:00Z') }),
     ];
     const groups = notificationsByDay(rows);
-    expect(groups.map(([day]) => day)).toEqual(['2026-07-16', '2026-07-15']);
+    expect(groups.map(([day]) => day)).toEqual(['Jul 16, 2026', 'Jul 15, 2026']);
     expect(groups[0]![1].map((r) => r._id)).toEqual(['a', 'b']);
     expect(groups[1]![1].map((r) => r._id)).toEqual(['c']);
   });

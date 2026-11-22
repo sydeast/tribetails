@@ -277,7 +277,7 @@ class VisitRequestCardsTest {
             }
         }
         rule.onNodeWithText("Cancel").performClick()
-        rule.onNodeWithText("Thu, Dec 3 at 9:00 AM").assertExists()
+        rule.onNodeWithText("Thu, Dec 3, 2026 09:00").assertExists()
         rule.onNodeWithText("Nothing will be booked. The household will be told.").assertExists()
     }
 }

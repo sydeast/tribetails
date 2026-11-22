@@ -52,6 +52,9 @@ fun storedBusinessDay(raw: String?, zone: ZoneId): String {
     return LEADING_DAY.find(raw?.trim().orEmpty())?.value.orEmpty()
 }
 
+/** [storedBusinessDay] as the day a person reads, "Nov 10, 2026" (#1828), or "" when there is none. */
+fun storedBusinessDayLabel(raw: String?, zone: ZoneId): String =
+    storedBusinessDay(raw, zone).let { if (it.isBlank()) it else AdminTime.dayKeyLabel(it) }
 /** "HH:mm" on the business clock, or "" when the stored value has no readable time. */
 fun storedBusinessClock(raw: String?, zone: ZoneId): String {
     val at = storedBusinessLocal(raw, zone) ?: return ""

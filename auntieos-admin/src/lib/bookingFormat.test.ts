@@ -148,28 +148,28 @@ describe('formatLocalDateTime', () => {
     // instant this maps to internally, the LOCAL getters must read back 9:05 AM
     // on Jul 16 regardless of the host's UTC offset.
     const d = new Date(2026, 6, 16, 9, 5, 0);
-    expect(formatLocalDateTime(d)).toBe('Jul 16, 9:05 AM');
+    expect(formatLocalDateTime(d)).toBe('Jul 16, 2026 09:05');
   });
 
   it('formats a midnight and a noon boundary correctly (12 AM / 12 PM, not 0)', () => {
-    expect(formatLocalDateTime(new Date(2026, 0, 1, 0, 0, 0))).toBe('Jan 1, 12:00 AM');
-    expect(formatLocalDateTime(new Date(2026, 0, 1, 12, 0, 0))).toBe('Jan 1, 12:00 PM');
+    expect(formatLocalDateTime(new Date(2026, 0, 1, 0, 0, 0))).toBe('Jan 1, 2026 00:00');
+    expect(formatLocalDateTime(new Date(2026, 0, 1, 12, 0, 0))).toBe('Jan 1, 2026 12:00');
   });
 });
 
 describe('bookingWhen', () => {
   it('prefers startTime when present', () => {
-    expect(bookingWhen(whenRow({ startTime: '2026-07-16T09:00:00' }))).toBe('Jul 16, 9:00 AM');
+    expect(bookingWhen(whenRow({ startTime: '2026-07-16T09:00:00' }))).toBe('Jul 16, 2026 09:00');
   });
 
   it('falls back to completedAt when startTime is blank (legacy/imported session)', () => {
     expect(bookingWhen(whenRow({ startTime: '', completedAt: '2026-07-10T17:30:00' }))).toBe(
-      'Jul 10, 5:30 PM',
+      'Jul 10, 2026 17:30',
     );
   });
 
   it('falls back to departedAt when startTime and completedAt are both blank', () => {
-    expect(bookingWhen(whenRow({ departedAt: '2026-07-11T08:15:00' }))).toBe('Jul 11, 8:15 AM');
+    expect(bookingWhen(whenRow({ departedAt: '2026-07-11T08:15:00' }))).toBe('Jul 11, 2026 08:15');
   });
 
   it('shows unparseable free text verbatim rather than hiding it (fail-loud)', () => {
@@ -307,38 +307,38 @@ describe('bookingMetaLine', () => {
     businessZone: zone,
   };
   it('Time Blocks: the service, the date, the booked clock time and the block the household sees', () => {
-    expect(bookingMetaLine(row(), CATALOG, blocksMode)).toBe('60Minute · May 28 · 9:30 AM · Morning block');
+    expect(bookingMetaLine(row(), CATALOG, blocksMode)).toBe('60Minute · May 28, 2026 09:30 · Morning block');
   });
   it('#2034: a moved visit names the block for where it now is, by the same rule as the portal', () => {
     // 12:00 is in no ACTIVE block (Seasonal is off): one hour after Morning
     // ends and five before Evening starts, so the household sees Morning.
     expect(bookingMetaLine(row({ startTime: '2026-05-28T12:00:00' }), CATALOG, blocksMode)).toBe(
-      '60Minute · May 28 · 12:00 PM · Morning block',
+      '60Minute · May 28, 2026 12:00 · Morning block',
     );
     expect(bookingMetaLine(row({ startTime: '2026-05-28T16:00:00', timeBlockId: 'morning' }), CATALOG, blocksMode)).toBe(
-      '60Minute · May 28 · 4:00 PM · Evening block',
+      '60Minute · May 28, 2026 16:00 · Evening block',
     );
   });
   it('a tie goes to the earlier block, as the server rules', () => {
     // 14:00 is 3 hours after Morning ends and 3 before Evening starts.
     expect(bookingMetaLine(row({ startTime: '2026-05-28T14:00:00' }), CATALOG, blocksMode)).toBe(
-      '60Minute · May 28 · 2:00 PM · Morning block',
+      '60Minute · May 28, 2026 14:00 · Morning block',
     );
   });
   it('Exact times: no block is named, because the household sees the clock', () => {
-    expect(bookingMetaLine(row(), CATALOG, exactMode)).toBe('60Minute · May 28 · 9:30 AM');
+    expect(bookingMetaLine(row(), CATALOG, exactMode)).toBe('60Minute · May 28, 2026 09:30');
   });
   it('a start-time KinCare keeps its clock in Time Blocks mode', () => {
     const overnight = { ...blocksMode, settings: { ...blocksMode.settings, startTimeServiceIds: ['60Minute'] } };
-    expect(bookingMetaLine(row(), CATALOG, overnight)).toBe('60Minute · May 28 · 9:30 AM');
+    expect(bookingMetaLine(row(), CATALOG, overnight)).toBe('60Minute · May 28, 2026 09:30');
   });
   it('does not say "block" twice when the operator already typed it', () => {
     expect(bookingMetaLine(row({ startTime: '2026-05-28T18:00:00' }), CATALOG, blocksMode)).toBe(
-      '60Minute · May 28 · 6:00 PM · Evening block',
+      '60Minute · May 28, 2026 18:00 · Evening block',
     );
   });
   it('before the settings read lands, the clock only and never a guessed block', () => {
-    expect(bookingMetaLine(row(), CATALOG)).toBe('60Minute · May 28 · 9:30 AM');
+    expect(bookingMetaLine(row(), CATALOG)).toBe('60Minute · May 28, 2026 09:30');
   });
   it('prints an unparseable stored stamp verbatim, with no empty third segment', () => {
     expect(bookingMetaLine(row({ startTime: 'Net 14' }), CATALOG, blocksMode)).toBe('60Minute · Net 14');
@@ -349,13 +349,13 @@ describe('bookingMetaLine', () => {
   it('falls through startTime to completedAt to departedAt, the chain bookingWhen walks', () => {
     expect(
       bookingMetaLine(row({ startTime: '', completedAt: '2026-05-25T09:00:00' }), CATALOG, blocksMode),
-    ).toBe('60Minute · May 25 · 9:00 AM · Morning block');
+    ).toBe('60Minute · May 25, 2026 09:00 · Morning block');
     expect(
       bookingMetaLine(row({ startTime: '', departedAt: '2026-05-24T09:00:00' }), CATALOG, blocksMode),
-    ).toBe('60Minute · May 24 · 9:00 AM · Morning block');
+    ).toBe('60Minute · May 24, 2026 09:00 · Morning block');
   });
   it('degrades to the raw label and the clock time on an empty catalog, never to a blank', () => {
-    expect(bookingMetaLine(row(), EMPTY_BOOKING_CATALOG)).toBe('visit_60 · May 28 · 9:30 AM');
+    expect(bookingMetaLine(row(), EMPTY_BOOKING_CATALOG)).toBe('visit_60 · May 28, 2026 09:30');
   });
 });
 

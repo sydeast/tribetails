@@ -668,3 +668,43 @@ describe('HolidayRunwayWidget', () => {
     expect(screen.getByText(/Loading visits/i)).toBeInTheDocument();
   });
 });
+/**
+ * #1850: Home read 12 with "4 recent drafts" under it while KinTales pending
+ * listed 4 and KinTales > Drafts read 12. The 4 was the list's row cap.
+ */
+describe('Home draft counts agree (#1850)', () => {
+  const twelve = Array.from({ length: 12 }, (_, i) =>
+    draft({ _id: `gd-${String(i)}`, generatedCopy: `Tale ${String(i)}.` }),
+  );
+  const noop = (): void => undefined;
+  it('the stat card says what its number counts, not the list cap', () => {
+    wire({ generated_drafts: { status: 'ready', data: twelve } });
+    render(<StatsWidget {...statsNav()} />);
+    const card = screen.getByRole('button', { name: /KinTales to review/ });
+    expect(card.querySelector('.den-stat-value')?.textContent).toBe('12');
+    expect(card).toHaveTextContent('drafts waiting to send');
+    expect(screen.queryByText(/recent draft/)).toBeNull();
+  });
+  it('KinTales pending says it shows the newest four of the twelve', () => {
+    wire({ generated_drafts: { status: 'ready', data: twelve } });
+    render(<KinTalesPendingWidget onReviewTales={noop} />);
+    expect(document.querySelectorAll('.tale-row__item')).toHaveLength(4);
+    expect(screen.getByTestId('kintales-pending-shown')).toHaveTextContent('Newest 4 of 12 drafts.');
+  });
+  it('no such line when the list holds every draft waiting', () => {
+    wire({ generated_drafts: { status: 'ready', data: twelve.slice(0, 3) } });
+    render(<KinTalesPendingWidget onReviewTales={noop} />);
+    expect(screen.queryByTestId('kintales-pending-shown')).toBeNull();
+  });
+  it('a sent draft counts nowhere', () => {
+    wire({ generated_drafts: { status: 'ready', data: [...twelve.slice(0, 2), draft({ _id: 'gd-sent', status: 'sent' })] } });
+    render(<StatsWidget {...statsNav()} />);
+    const card = screen.getByRole('button', { name: /KinTales to review/ });
+    expect(card.querySelector('.den-stat-value')?.textContent).toBe('2');
+  });
+  it('an empty queue reads all caught up', () => {
+    wire({ generated_drafts: { status: 'ready', data: [] } });
+    render(<StatsWidget {...statsNav()} />);
+    expect(screen.getByRole('button', { name: /KinTales to review/ })).toHaveTextContent('all caught up');
+  });
+});

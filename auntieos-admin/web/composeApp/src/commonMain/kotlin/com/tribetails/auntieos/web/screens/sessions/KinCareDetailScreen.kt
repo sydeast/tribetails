@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.sessions
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -875,12 +876,10 @@ internal fun shortIso(
         if (iso.length < 16) return@runCatchingCancellable iso
         val at = com.tribetails.auntieos.web.screens.schedule.businessDateTimeOf(iso.trim(), zone)
             ?: return@runCatchingCancellable iso
-        val month = MONTHS[at.monthNumber - 1]
-        val time  = "${at.hour.toString().padStart(2, '0')}:${at.minute.toString().padStart(2, '0')}"
-        if (at.year == currentYear) "$month ${at.dayOfMonth} · $time" else "$month ${at.dayOfMonth}, ${at.year} · $time"
+        // #1828: the admin day and 24-hour clock, always with the year.
+        AdminTime.dateTime(at)
     }.getOrDefault(iso)
 
 private fun shortIsoTimeOnly(iso: String, zone: TimeZone = businessTimeZone()): String =
     if (iso.length >= 16) businessShortTime(iso, zone) else iso
 
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
