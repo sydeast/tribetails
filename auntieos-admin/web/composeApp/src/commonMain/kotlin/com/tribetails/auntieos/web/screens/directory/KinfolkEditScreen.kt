@@ -1093,6 +1093,9 @@ fun KinfolkEditScreen(
             dirty       = dirty,
             // #853 review: also held while a photo upload + write is in flight.
             saveEnabled = !saving && !photoSaving,
+            // #1851: after a refused press the reason sits beside Save, not
+            // only in the banner at the top of the form.
+            problem     = KINFOLK_EDIT_SAVE_PROBLEM.takeIf { attemptedSave && !canSave },
             onCancel    = { leave() },
             onSave      = { onSave() },
             saveLabel   = when {
@@ -1528,3 +1531,6 @@ private fun JoinDateField(
         error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.error) }
     }
 }
+
+/** #1851: the save bar's line after a press with fields still to fix. */
+const val KINFOLK_EDIT_SAVE_PROBLEM = "Some details still need fixing. The highlighted fields say which."

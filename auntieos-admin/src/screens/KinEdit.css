@@ -69,6 +69,10 @@
   margin-top: var(--space-4);
 }
 
+/* #1851: the save problem sits under the buttons, where the press was. */
+.kedit__save-error {
+  margin-top: var(--space-3);
+}
 .kedit__actions-right {
   display: flex;
   /* #1492: stays on the right when an Auntie has no Archive control beside it. */

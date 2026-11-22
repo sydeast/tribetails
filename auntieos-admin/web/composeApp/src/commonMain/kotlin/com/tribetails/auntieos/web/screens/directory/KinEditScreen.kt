@@ -585,6 +585,8 @@ fun KinEditScreen(
             // whole-document Save cannot race it (build() carries the optimistic
             // photoUrl, which the pipeline reverts if its write fails).
             saveEnabled = canSave && !saving && !photoSaving,
+            // #1851: the refusal beside the button, every one of them.
+            problem     = kinEditSaveProblem(ageError, weightError),
             onCancel    = onBack,
             onSave      = { doSave() },
             saveLabel   = when {
@@ -996,3 +998,10 @@ internal suspend fun runKinPhotoUploadPipeline(
         }
     }
 }
+
+/**
+ * #1851: what the save bar says when Save is refused for a bad age or weight,
+ * naming both when both are bad. Null when neither is.
+ */
+fun kinEditSaveProblem(ageError: String?, weightError: String?): String? =
+    listOfNotNull(ageError, weightError).joinToString(" ").ifBlank { null }

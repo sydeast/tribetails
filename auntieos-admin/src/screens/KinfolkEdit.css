@@ -196,3 +196,7 @@
 .kfedit__save-error {
   margin-top: var(--space-3);
 }
+/* #1851: a wrapper only for its mousedown guard; it adds no box of its own. */
+.kfedit__save-hold {
+  display: contents;
+}
