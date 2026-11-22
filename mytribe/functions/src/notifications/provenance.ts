@@ -451,7 +451,9 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.upcoming.reminder': [
     {
-      trigger: 'The nightly reminder sweep finds a visit coming up soon.',
+      // #1884: this row picks the channels. The Booking rules switch decides whether the check runs.
+      trigger:
+        'The hourly check finds a visit starting in 24 to 48 hours. It runs only while "Remind kinfolk 24 to 48 hours before a visit" is on in Booking rules.',
       source: 'src/scheduled/kincareReminderCron.ts',
       dataKeys: ['kinfolkId', 'bookingId', 'serviceName', 'startTimeMs', 'timeBlockId', 'serviceId'],
     },

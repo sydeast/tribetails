@@ -264,7 +264,12 @@ internal fun overlapNote(names: List<String>): String =
  */
 internal const val VISIT_REMINDER_TIMING = "24 to 48 hours before"
 internal const val VISIT_REMINDER_TOGGLE_TITLE = "Remind kinfolk $VISIT_REMINDER_TIMING a visit"
-internal const val VISIT_REMINDER_TOGGLE_DESCRIPTION = "Turning this off stops it for everyone."
+/**
+ * #1884: two stored settings, in series. This switch decides whether the reminder
+ * check runs at all; the Notifications row picks the channels. Both must be on.
+ */
+internal const val VISIT_REMINDER_TOGGLE_DESCRIPTION =
+    "Turns every visit reminder on or off. While this is off, none go out, whatever Notifications says. Notifications picks email, text or push."
 
 /** ISSUE #1612: names the switch it depends on, rather than "the switch above". */
 internal const val ARRIVAL_RADIUS_NOTE =
