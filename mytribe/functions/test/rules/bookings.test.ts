@@ -53,7 +53,7 @@ describe('rules: /families/{fid}/bookings/{batchId}/kinCares/{visitId}', () => {
     );
   });
 
-  it('kinfolk can diffOnly(status,notes,title,window,updatedAt) on a kinCare', async () => {
+  it('kinfolk can edit notes, title and window on a kinCare, and its status stays', async () => {
     const env = await getEnv();
     await seedFamily({
       fid: 'f1',
@@ -67,15 +67,16 @@ describe('rules: /families/{fid}/bookings/{batchId}/kinCares/{visitId}', () => {
         auntieDisplayName: null,
       });
     });
-    await assertSucceeds(
-      asUser(env, 'u-sec').firestore().doc('families/f1/bookings/b1/kinCares/v1').update({
-        status: 'cancelled',
-        notes: 'please skip',
-        title: 'Evening walk',
-        window: '17:00-18:00',
-        updatedAt: new Date(),
-      }),
-    );
+    const edit = {
+      notes: 'please skip',
+      title: 'Evening walk',
+      window: '17:00-18:00',
+      updatedAt: new Date(),
+    };
+    const visit = asUser(env, 'u-sec').firestore().doc('families/f1/bookings/b1/kinCares/v1');
+    await assertFails(visit.update({ ...edit, status: 'cancelled' }));
+    await assertSucceeds(visit.update({ ...edit, status: 'requested' }));
+    await assertSucceeds(visit.update(edit));
   });
 
   it('kinfolk cannot change auntieDisplayName on a kinCare', async () => {

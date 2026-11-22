@@ -1033,8 +1033,26 @@ service cloud.firestore {
                || !(visitStatusIs(request.resource.data, 'ARRIVED')
                     && visitStatusIs(resource.data, 'DEPARTED'));
       }
+      // #2546: a visit's household and booking links are set when the visit is
+      // made, and an Auntie's work on the visit leaves them as they were. The
+      // household's notices and timeline are addressed from these four. Compared
+      // by value, with absent, null and '' read as the same empty link, because
+      // an older installed build may send a link back unchanged, or send an
+      // empty one for a visit that never had it.
+      function sessionLinkEmpty(data, k) {
+        return data.get(k, null) == null || data.get(k, null) == '';
+      }
+      function sessionLinkKept(k) {
+        return request.resource.data.get(k, null) == resource.data.get(k, null)
+               || (sessionLinkEmpty(request.resource.data, k) && sessionLinkEmpty(resource.data, k));
+      }
+      function sessionLinksKept() {
+        return sessionLinkKept('kinfolkId') && sessionLinkKept('sourceBookingId')
+               && sessionLinkKept('kinCareBatchId') && sessionLinkKept('kinCareVisitId');
+      }
       allow update: if (isOwner() || testOwnsExisting()
-                        || (isCaretaker() && caretakerMoneyUnchanged() && caretakerStartRuleHolds()))
+                        || (isCaretaker() && caretakerMoneyUnchanged() && caretakerStartRuleHolds()
+                            && sessionLinksKept()))
                     && bookingTerminalFieldsUntouched()
                     && departureNotTakenBack();
       allow delete: if isOwner() || testOwnsExisting();
@@ -1251,12 +1269,25 @@ service cloud.firestore {
  // tracks the request batch (status rollups, counts, kin/service identity).
  // Each individual visit lives at `bookings/{batchId}/kinCares/{visitId}`.
  // The envelope itself only takes kinfolk edits to notes/updatedAt; per-visit
- // mutations (status, title, window, notes) happen on the kinCare doc.
+ // edits (title, window, notes) happen on the kinCare doc.
+ //
+ // #2547: every booking a household makes starts as Requested, and only the
+ // office, or the server for it, moves it on. The envelope's state is
+ // `envelopeStatus` (portal/requestBooking.ts); `status` is held the same way.
+ // #2548: a household ends a visit by asking to cancel it, so no household
+ // member deletes a booking or a visit. Staff never held a delete here, and the
+ // callables run on the Admin SDK.
       match /bookings/{batchId} {
+        function envelopeStatusKept() {
+          return !request.resource.data.diff(resource.data).affectedKeys()
+                   .hasAny(['status', 'envelopeStatus']);
+        }
         allow read: if activeMember(fid) || isStaff();
         allow create: if activeMember(fid)
           && request.resource.data.familyId == fid
           && request.resource.data.targetType in ['KIN','KINFOLK']
+          && request.resource.data.get('envelopeStatus', null) == 'requested'
+          && request.resource.data.get('status', 'requested') == 'requested'
           && (hasPerm(fid,'billing_full')
               || (!affects(invoiceKeys()) && !affects(restrictedSitterKeys())));
         // #944: the envelope carries `billing`, a booking intent with no amount
@@ -1264,13 +1295,13 @@ service cloud.firestore {
         // envelope back and may not touch that key.
         allow update: if isOwner()
           || (isCaretaker() && caretakerMoneyUnchanged())
-          || hasPerm(fid,'billing_full')
+          || (hasPerm(fid,'billing_full') && envelopeStatusKept())
           || (activeMember(fid) && invoiceFieldsUnchanged() && sitterFieldsUnchanged()
               && diffOnly(['notes','updatedAt']));
-        allow delete: if hasPerm(fid,'billing_full');
+        allow delete: if false;
 
- // Per-visit KinCare docs. Same create gate as the envelope. Kinfolks may
- // mutate the visit's own fields (status/notes/title/window); the staff
+ // Per-visit KinCare docs. A household member creates one as Requested and may
+ // edit the visit's own fields (notes/title/window), never its status; the staff
  // update branches are the AuntieOS write-back path that lands status,
  // auntieDisplayName, auntieAvatarUrl, sourceBookingId and sessionId.
         match /kinCares/{visitId} {
@@ -1304,8 +1335,10 @@ service cloud.firestore {
  //   desktop console none; `platformPatchKinCareDoc` is a stub with no caller.
  //   MyTribe web     none; the portal reaches visits through callables only.
  //   MyTribe Android none, for the same reason.
- // `visitProgress` is kept on the staff list for older installed builds; the
- // household lists keep what they allowed before.
+ // `visitProgress` is kept on the staff list for older installed builds. No
+ // portal build has written a visit directly, so `status` is not on the
+ // household list (#2547): a household write may carry the stored value and
+ // may not change it.
  //
  // The server-only fields are named outright as well, and refused on create
  // and update for every client, so a later widening of one role's list cannot
@@ -1321,7 +1354,7 @@ service cloud.firestore {
                     'sessionId', 'visitProgress', 'updatedAt'];
           }
           function householdVisitWriteKeys() {
-            return ['status', 'notes', 'title', 'window', 'updatedAt'];
+            return ['notes', 'title', 'window', 'updatedAt'];
           }
  // The visit's links to its booking and its session are set once. The admin
  // Android write-back sets both when it approves a request, and a request is
@@ -1341,6 +1374,7 @@ service cloud.firestore {
           allow create: if activeMember(fid)
             && request.resource.data.familyId == fid
             && request.resource.data.targetType in ['KIN','KINFOLK']
+            && request.resource.data.get('status', null) == 'requested'
             && !affects(visitServerOnlyKeys())
             && (hasPerm(fid,'billing_full')
                 || (!affects(invoiceKeys()) && !affects(restrictedSitterKeys())));
@@ -1363,7 +1397,7 @@ service cloud.firestore {
             || (hasPerm(fid,'billing_full') && diffOnly(householdVisitWriteKeys().concat(invoiceKeys())))
             || (activeMember(fid) && invoiceFieldsUnchanged() && sitterFieldsUnchanged()
                 && diffOnly(householdVisitWriteKeys())));
-          allow delete: if hasPerm(fid,'billing_full');
+          allow delete: if false;
 
  // KinCare notes, server-written via addBookingNote callable.
  // Trigger fires kincare.note.kinfolk only when authorRole='kinfolk'.
