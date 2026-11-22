@@ -475,7 +475,7 @@ export function InvoiceDetail() {
                     )}
                   </div>
                   <div className="party">
-                    <div className="lbl">Client</div>
+                    <div className="lbl">Kinfolk</div>
                     <div className="who">{inv.client ?? inv.kinfolkName ?? 'Not set'}</div>
                     {inv.address && (
                       <>

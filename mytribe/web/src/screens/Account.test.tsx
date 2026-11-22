@@ -340,7 +340,7 @@ describe('Account: kin list and Messages link are gone (#1465)', () => {
     expect(queryByText('Your tribe')).toBeNull();
     expect(queryByRole('link', { name: 'The Kin' })).toBeNull();
     expect(container.querySelector('.kinrow')).toBeNull();
-    expect(queryByText(/Loading your kin/)).toBeNull();
+    expect(queryByText(/Loading your kin/i)).toBeNull();
   });
 
   it('never asks for the kin roster', async () => {

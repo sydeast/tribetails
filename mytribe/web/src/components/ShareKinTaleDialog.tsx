@@ -10,6 +10,11 @@ import { useWarmOnOpen } from '../lib/useWarmOnOpen';
 const MIN_EXPIRES_DAYS = 1;
 const MAX_EXPIRES_DAYS = 90;
 const DEFAULT_EXPIRES_DAYS = 7;
+
+/** #1900: the chip beside the expiry slider. "1 Day", never "1 Days". The same words as ShareKinTaleModal.kt's `expiryDaysLabel`. */
+export function expiryDaysLabel(days: number): string {
+  return days === 1 ? '1 Day' : `${days} Days`;
+}
 const MAX_PASSCODE_LENGTH = 8;
 const MIN_PASSCODE_LENGTH = 4;
 
@@ -169,7 +174,7 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
             <div className="skd-expiry">
               <div className="skd-expiryhead">
                 <span>Link Expiration</span>
-                <span className="skd-expirypill">{expiresInDays} Days</span>
+                <span className="skd-expirypill">{expiryDaysLabel(expiresInDays)}</span>
               </div>
               <input
                 type="range"

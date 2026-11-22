@@ -1066,30 +1066,40 @@ describe('InvoiceDetail lines-versus-total disagreement banner', () => {
     // isAuntie()` over the whole collection and postInvoiceEvent merges an
     // arbitrary payload, so both bypass every callable.
     render(<InvoiceDetail invoice={entry({ lineItems: lines, totalCents: 4000, total: 40 })} onClose={vi.fn()} />);
-    const banner = screen.getByText(/disagrees with itself/i).closest('.banner') as HTMLElement;
+    const banner = screen.getByText('The line items do not add up to the total').closest('.banner') as HTMLElement;
     expect(banner).toBeTruthy();
     expect(banner.textContent).toContain('$75.00'); // the lines
     expect(banner.textContent).toContain('$40.00'); // the stored total
   });
   it('RECONCILES NEITHER: it says so, and changes nothing', () => {
     render(<InvoiceDetail invoice={entry({ lineItems: lines, totalCents: 4000, total: 40 })} onClose={vi.fn()} />);
-    expect(screen.getByText(/nothing has been changed to make them match/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing was changed to make them match/i)).toBeInTheDocument();
     // The stored figure still drives the money facts. The banner does not
     // quietly swap in the derived one, which would hide the drift from the only
     // person who can resolve it.
     expect(screen.getByText('Total').nextElementSibling).toHaveTextContent('$40.00');
   });
-  it('says where the stored figure came from', () => {
+
+  it('#1860: names no storage detail, and says what Edit does on an editable invoice', () => {
     render(<InvoiceDetail invoice={entry({ lineItems: lines, total: 40 })} onClose={vi.fn()} />);
-    expect(screen.getByText(/legacy dollar field/i)).toBeInTheDocument();
+    expect(screen.queryByText(/legacy dollar field|normal edit path/i)).toBeNull();
+    expect(screen.getByText(/press Edit and save them, and the total will follow/)).toBeInTheDocument();
+  });
+
+  it('#1860: on a paid invoice, says the lines are locked rather than asking for a re-save', () => {
+    render(
+      <InvoiceDetail invoice={entry({ ...PAID_STAMP, lineItems: [], totalCents: 6000, total: 60 })} onClose={vi.fn()} />,
+    );
+    expect(screen.getByText(/The line items on this invoice are locked, so they cannot be edited\./)).toBeInTheDocument();
+    expect(screen.queryByText(/press Edit/)).toBeNull();
   });
   it('shows NO banner when the two agree', () => {
     render(<InvoiceDetail invoice={entry({ lineItems: lines, totalCents: 7500, total: 75 })} onClose={vi.fn()} />);
-    expect(screen.queryByText(/disagrees with itself/i)).toBeNull();
+    expect(screen.queryByText('The line items do not add up to the total')).toBeNull();
   });
   it('shows NO banner on an un-itemized invoice, which has nothing to disagree with', () => {
     render(<InvoiceDetail invoice={entry({ total: 40, amountDue: 40 })} onClose={vi.fn()} />);
-    expect(screen.queryByText(/disagrees with itself/i)).toBeNull();
+    expect(screen.queryByText('The line items do not add up to the total')).toBeNull();
   });
 });
 describe('InvoiceDetail editing', () => {
@@ -1203,7 +1213,7 @@ describe('InvoiceDetail editing the household, client, address and discount note
     );
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     expect(screen.getByLabelText('Invoice household name')).toHaveValue('The Whitfields');
-    expect(screen.getByLabelText('Invoice client')).toHaveValue('Ana Rivera');
+    expect(screen.getByLabelText('Invoice Kinfolk')).toHaveValue('Ana Rivera');
     expect(screen.getByLabelText('Invoice address')).toHaveValue('12 Elm St');
     expect(screen.getByLabelText('Invoice discount note')).toHaveValue('10% loyalty');
   });
@@ -1212,7 +1222,7 @@ describe('InvoiceDetail editing the household, client, address and discount note
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     await userEvent.clear(screen.getByLabelText('Invoice household name'));
     await userEvent.type(screen.getByLabelText('Invoice household name'), 'The Riveras');
-    await userEvent.type(screen.getByLabelText('Invoice client'), 'Ana Rivera');
+    await userEvent.type(screen.getByLabelText('Invoice Kinfolk'), 'Ana Rivera');
     await userEvent.type(screen.getByLabelText('Invoice address'), '12 Elm St');
     await userEvent.type(screen.getByLabelText('Invoice discount note'), '10% loyalty');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
@@ -1279,8 +1289,8 @@ describe('InvoiceDetail editing the household, client, address and discount note
     );
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     expect(screen.getByText(/client, address and\s+discount note can still be corrected/i)).toBeInTheDocument();
-    await userEvent.clear(screen.getByLabelText('Invoice client'));
-    await userEvent.type(screen.getByLabelText('Invoice client'), 'Ana Rivera');
+    await userEvent.clear(screen.getByLabelText('Invoice Kinfolk'));
+    await userEvent.type(screen.getByLabelText('Invoice Kinfolk'), 'Ana Rivera');
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
     expect(updateInvoice).toHaveBeenCalledWith('inv1', { client: 'Ana Rivera' });

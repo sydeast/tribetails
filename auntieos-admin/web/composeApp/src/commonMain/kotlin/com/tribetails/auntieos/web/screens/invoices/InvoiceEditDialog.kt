@@ -20,7 +20,7 @@ import com.tribetails.auntieos.web.ui.components.PrimaryButton
 
 /**
  * The invoice editor (#1174) on the desktop console: number, date, due date,
- * terms, household, client, address, the legacy discount note (#1198), line
+ * terms, household, Kinfolk, address, the legacy discount note (#1198), line
  * items and the whole-invoice discount, saved through `updateInvoice`. Under a
  * `metadataOnly` scope the money is SHOWN read-only under the "Money is locked"
  * banner web shows; every non-money field stays editable.
@@ -60,7 +60,7 @@ internal fun InvoiceEditDialog(
                 AuntieBanner(tone = AuntieBannerTone.Warning, title = "Money is locked") {
                     Text(
                         "A payment has already been recorded against this invoice, so its line items and " +
-                            "discounts cannot change. The number, dates, terms, household, client, address and " +
+                            "discounts cannot change. The number, dates, terms, household, Kinfolk, address and " +
                             "discount note can still be corrected.",
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
@@ -119,7 +119,7 @@ internal fun InvoiceEditDialog(
             BottomBorderField(
                 value = draft.client,
                 onValueChange = { onChange(draft.copy(client = it)) },
-                label = "Client",
+                label = "Kinfolk",
                 enabled = enabled,
                 modifier = Modifier.fillMaxWidth(),
             )
