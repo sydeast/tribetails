@@ -143,8 +143,8 @@ describe('calTileFor', () => {
   });
 
   it('falls back to an em-dash tile when unparseable/absent', () => {
-    expect(calTileFor(null)).toEqual({ month: '—', day: '--' });
-    expect(calTileFor('not a date')).toEqual({ month: '—', day: '--' });
+    expect(calTileFor(null)).toEqual({ month: '--', day: '--' });
+    expect(calTileFor('not a date')).toEqual({ month: '--', day: '--' });
   });
 });
 

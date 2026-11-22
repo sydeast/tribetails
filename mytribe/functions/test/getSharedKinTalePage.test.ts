@@ -381,7 +381,7 @@ describe('getSharedKinTalePage', () => {
       await callHandler({ method: 'GET', path: '/share-t1' }, res);
       expect(captured.body).toContain('<h1>Biscuit &lt;3 the beach</h1>');
       expect(captured.body).toContain('<meta property="og:title" content="Biscuit &lt;3 the beach">');
-      expect(captured.body).toContain('<title>Biscuit &lt;3 the beach — MyTribe</title>');
+      expect(captured.body).toContain('<title>Biscuit &lt;3 the beach · MyTribe</title>');
       expect(captured.body).toContain('<div class="kick">A KinTale from TEST SANDBOX Auntie</div>');
       expect(captured.body).not.toMatch(/Auntie TEST SANDBOX Auntie/);
     });

@@ -2,6 +2,7 @@ package com.tribetails.auntieos.domain
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -229,11 +230,13 @@ class CoveragePackageTest {
         val p = pkg(visits = listOf(Visit("v", 12 * 60, "d3", "Lunch"))).copy(name = "Balance")
         val priced = pricePackage(p, PriceContext(2, 1, DEFAULT_DURATIONS, overnight))
         val text = quoteText(QuoteInput("Rex", "2026-07-01", 2, p, priced))
-        assertTrue(text.contains("TribeTails — Coverage Package"))
+        assertTrue(text.contains("TribeTails Coverage Package"))
         assertTrue(text.contains("Prepared for: Rex"))
         assertTrue(text.contains("Balance · 2 days"))
         assertTrue(text.contains("Lunch (45-min visit)"))
         assertTrue(text.contains("Total"))
+        // #1859: the quote goes to the household, and no copy carries an em dash.
+        assertFalse(text.contains("\u2014"))
     }
 
     @Test

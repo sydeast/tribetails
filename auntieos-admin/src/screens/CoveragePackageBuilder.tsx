@@ -577,7 +577,7 @@ function Builder({ settings }: BuilderProps) {
         // dismissed / unsupported → fall through to copy
       }
     }
-    setShareNote('Sharing not available here — copied the quote instead.');
+    setShareNote('Sharing is not available here, so the quote was copied instead.');
     window.setTimeout(() => setShareNote(null), 3000);
     await copyQuote();
   };
@@ -683,7 +683,7 @@ function Builder({ settings }: BuilderProps) {
             <select className="cpb__input" value={overnightDurationId} onChange={(e) => setOvernightDurationId(e.target.value)}>
               {durations.filter((d) => d.kind === 'overnight').map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.label} — ${d.price}
+                  {d.label} · ${d.price}
                 </option>
               ))}
               {durations.every((d) => d.kind !== 'overnight') ? <option value="">no overnight in your KinCare types</option> : null}
@@ -776,7 +776,7 @@ function Builder({ settings }: BuilderProps) {
                     <div>
                       {warnings.map((w, i) => (
                         <div key={i}>
-                          {w} — over your {rules.maxGapHours}h max gap on a night with no overnight
+                          {w}, over your {rules.maxGapHours}h max gap on a night with no overnight
                         </div>
                       ))}
                     </div>
@@ -817,7 +817,7 @@ function Builder({ settings }: BuilderProps) {
                 ) : null}
 
                 {nights === 0 ? (
-                  <p className="cpb__miniEmpty">{days > 0 ? 'Single day — no nights.' : dateError !== null ? 'Fix the end date above.' : 'Set a date range above.'}</p>
+                  <p className="cpb__miniEmpty">{days > 0 ? 'Single day, no nights.' : dateError !== null ? 'Fix the end date above.' : 'Set a date range above.'}</p>
                 ) : !overnightDuration ? (
                   <p className="cpb__miniEmpty">No overnight in your KinCare types (add one in Settings).</p>
                 ) : (
@@ -896,7 +896,7 @@ function Builder({ settings }: BuilderProps) {
 
       {/* Day-by-day detail + quote (also the print surface) */}
       {detail && days > 0 ? (
-        <DenPanel className="cpb__printSurface" title={`${clientName ? `${clientName} — ` : ''}${detail.pkg.name}`} detail={`${days} day${days !== 1 ? 's' : ''}${startDate ? ` · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}` : ''}`}>
+        <DenPanel className="cpb__printSurface" title={`${clientName ? `${clientName} · ` : ''}${detail.pkg.name}`} detail={`${days} day${days !== 1 ? 's' : ''}${startDate ? ` · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}` : ''}`}>
           <div className="cpb__detailActions cpb__noprint">
             <GhostButton label={copied ? 'Copied' : 'Copy quote'} leading={copied ? <CheckGlyph /> : <CopyGlyph />} onClick={() => void copyQuote()} />
             <GhostButton label="Share" leading={<ShareGlyph />} onClick={() => void shareQuote()} />
@@ -979,7 +979,7 @@ function VisitRow({
         <option value="">length…</option>
         {durations.map((d) => (
           <option key={d.id} value={d.id}>
-            {d.label} — ${d.price}
+            {d.label} · ${d.price}
           </option>
         ))}
       </select>
@@ -997,9 +997,9 @@ function DayItemsReadonly({ row }: { row: PricedDayRow }) {
           <span className="cpb__dayItemTime">{minutesToTime(it.time)}</span>
           <span className="cpb__dayItemLabel">
             {it.label} ({it.durationLabel})
-            {it.freeReason ? <span className="cpb__coverTag"> — {it.freeReason}</span> : null}
+            {it.freeReason ? <span className="cpb__coverTag">, {it.freeReason}</span> : null}
           </span>
-          <span className={it.free ? 'cpb__dayItemFree' : 'cpb__dayItemPrice'}>{it.free ? '—' : formatUsd(it.price)}</span>
+          <span className={it.free ? 'cpb__dayItemFree' : 'cpb__dayItemPrice'}>{it.free ? 'Free' : formatUsd(it.price)}</span>
         </li>
       ))}
       {row.items.length === 0 ? (
@@ -1049,7 +1049,7 @@ function DayDetailRow({
         </span>
         <span className="cpb__nightToggleNote">
           {row.isOvernight && row.overnightStartMin !== null
-            ? `Overnight — ${row.overnightLabel} from ${minutesToTime(row.overnightStartMin)}`
+            ? `Overnight: ${row.overnightLabel} from ${minutesToTime(row.overnightStartMin)}`
             : row.canOvernight
               ? 'No overnight'
               : 'Household home, no overnight'}
@@ -1078,7 +1078,7 @@ function DayDetailRow({
                     <option value="">length…</option>
                     {durations.map((d) => (
                       <option key={d.id} value={d.id}>
-                        {d.label} — ${d.price}
+                        {d.label} · ${d.price}
                       </option>
                     ))}
                   </select>
@@ -1096,7 +1096,7 @@ function DayDetailRow({
             </button>
             {row.isOvernight && row.overnightStartMin !== null ? (
               <p className="cpb__dayEditOvernight">
-                + {row.overnightLabel} from {minutesToTime(row.overnightStartMin)} — {formatUsd(row.overnightCost)}
+                + {row.overnightLabel} from {minutesToTime(row.overnightStartMin)} · {formatUsd(row.overnightCost)}
               </p>
             ) : null}
           </div>

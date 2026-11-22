@@ -225,12 +225,12 @@ export function isStartTimePending(b: Pick<VisitWhen, 'startTimePending'>): bool
 function requestedNight(b: VisitWhen): Date | null {
   return isStartTimePending(b) && b.requestedDate ? parseDateKey(b.requestedDate) : null;
 }
-/** The `.cal` tile for a booked visit: its start, or its requested night (#1098), or dashes. */
+/** The `.cal` tile for a booked visit: its start, or its requested night (#1098), or `--` (#1859: no em dash). */
 export function visitTile(b: VisitWhen): { month: string; day: string } {
   if (b.startTimeMs !== null && !isStartTimePending(b)) return calTile(b.startTimeMs);
   const night = requestedNight(b);
   if (night !== null) return calTile(night.getTime());
-  return b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
+  return b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '--', day: '--' };
 }
 /**
  * When a booked visit happens, without the Auntie: "Mon, 8:00 AM", or for a

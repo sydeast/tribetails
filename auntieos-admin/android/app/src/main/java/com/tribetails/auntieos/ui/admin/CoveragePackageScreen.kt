@@ -540,7 +540,7 @@ fun CoveragePackageScreen(
 
             // ── day-by-day detail ────────────────────────────────────────────
             if (detailPkg != null && detailPriced != null && days > 0) {
-                DenPanel(title = "${if (clientName.isNotBlank()) "$clientName — " else ""}${detailPkg.name}", detail = "$days day${if (days != 1) "s" else ""}${if (startDate.isNotBlank()) " · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}" else ""}") {
+                DenPanel(title = "${if (clientName.isNotBlank()) "$clientName · " else ""}${detailPkg.name}", detail = "$days day${if (days != 1) "s" else ""}${if (startDate.isNotBlank()) " · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}" else ""}") {
                     val quote = quoteText(QuoteInput(clientName, startDate, days, detailPkg, detailPriced))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         GhostButton(label = "Copy quote", leading = { Icon(Lucide.Copy, contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(14.dp)) }, onClick = { endFieldEdits(); clipboard.setText(AnnotatedString(quote)) })
@@ -664,7 +664,7 @@ private fun PackageCard(
         if (warnings.isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Lucide.TriangleAlert, contentDescription = null, tint = c.primary, modifier = Modifier.size(14.dp))
-                Column { warnings.forEach { Text("$it — over your ${numText(maxGapHours)}h max gap on a night with no overnight", style = AuntieTheme.typography.bodySmall, color = c.textDim) } }
+                Column { warnings.forEach { Text("$it, over your ${numText(maxGapHours)}h max gap on a night with no overnight", style = AuntieTheme.typography.bodySmall, color = c.textDim) } }
             }
         }
 
@@ -693,7 +693,7 @@ private fun PackageCard(
             }
         }
         if (nights == 0) {
-            Text(if (days > 0) "Single day — no nights." else if (datesRefused) "Fix the end date above." else "Set a date range above.", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
+            Text(if (days > 0) "Single day, no nights." else if (datesRefused) "Fix the end date above." else "Set a date range above.", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
         } else if (overnightDuration == null) {
             Text("No overnight duration defined (add one to the menu).", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
         } else {
@@ -744,7 +744,7 @@ private fun VisitEditorRow(visit: Visit, durations: List<Duration>, onPatch: ((V
             value = visit.durationId,
             options = durations.map { it.id },
             onSelect = { id -> onPatch { it.copy(durationId = id) } },
-            displayText = { id -> durations.firstOrNull { it.id == id }?.let { "${it.label} — $${money(it.price)}" } ?: "length…" },
+            displayText = { id -> durations.firstOrNull { it.id == id }?.let { "${it.label} · $${money(it.price)}" } ?: "length…" },
             modifier = Modifier.weight(1.6f),
         )
         AuntieField(value = visit.label, onValueChange = { v -> onPatch { it.copy(label = v) } }, placeholder = "Label", modifier = Modifier.weight(1f))
@@ -768,7 +768,7 @@ private fun DayDetailRow(
             Text("$${money(row.dayCost)}", style = AuntieTheme.typography.titleSmall, color = c.primary)
         }
         Text(
-            if (row.isOvernight && row.overnightStartMin != null) "Overnight — ${row.overnightLabel} from ${minutesToTime(row.overnightStartMin.toDouble())}"
+            if (row.isOvernight && row.overnightStartMin != null) "Overnight: ${row.overnightLabel} from ${minutesToTime(row.overnightStartMin.toDouble())}"
             else if (row.canOvernight) "No overnight" else "Household home, no overnight",
             style = AuntieTheme.typography.bodySmall, color = c.textDim,
         )
@@ -794,8 +794,8 @@ private fun DayDetailRow(
             row.items.forEach { it2 ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(minutesToTime(it2.time.toDouble()), style = AuntieTheme.typography.bodySmall, color = if (it2.free) c.textFaint else c.textPrimary, fontWeight = FontWeight.SemiBold)
-                    Text("${it2.label} (${it2.durationLabel})${if (it2.freeReason != null) " — ${it2.freeReason}" else ""}", style = AuntieTheme.typography.bodySmall, color = c.textDim, modifier = Modifier.weight(1f))
-                    Text(if (it2.free) "—" else "$${money(it2.price)}", style = AuntieTheme.typography.bodySmall, color = if (it2.free) c.textFaint else c.textPrimary)
+                    Text("${it2.label} (${it2.durationLabel})${if (it2.freeReason != null) ", ${it2.freeReason}" else ""}", style = AuntieTheme.typography.bodySmall, color = c.textDim, modifier = Modifier.weight(1f))
+                    Text(if (it2.free) "Free" else "$${money(it2.price)}", style = AuntieTheme.typography.bodySmall, color = if (it2.free) c.textFaint else c.textPrimary)
                 }
             }
             if (row.items.isEmpty()) Text("No visits this day", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
