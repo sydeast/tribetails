@@ -397,10 +397,7 @@ export function BookingDetail() {
                   <div className="ic">{'\u{1F469}'}</div>
                   <div>
                     <div className="lab">Auntie</div>
-                    {/* #2029: a declined request will never get an Auntie, so not "yet". */}
-                    <div className="val">
-                      {found.auntieDisplayName ?? (stage === 'declined' ? 'Not assigned' : 'Not yet assigned')}
-                    </div>
+                    <div className="val">{auntieTileLabel(found.auntieDisplayName, stage)}</div>
                   </div>
                 </div>
                 <div className="bk-field f4">
@@ -763,4 +760,17 @@ export function BookingDetail() {
       </div>
     </>
   );
+}
+
+/**
+ * The AUNTIE tile. #2029: a declined request will never get an Auntie, so not
+ * "yet". #1836: a completed visit was made by someone, so never "Not yet
+ * assigned" either, when the record names nobody. KinCareDetailScreen.kt's
+ * `auntieTileLabel` is the Android half.
+ */
+export function auntieTileLabel(name: string | null, stage: ReturnType<typeof visitStageOf>): string {
+  if (name !== null && name.trim() !== '') return name;
+  if (stage === 'declined') return 'Not assigned';
+  if (stage === 'completed') return 'Your Auntie';
+  return 'Not yet assigned';
 }

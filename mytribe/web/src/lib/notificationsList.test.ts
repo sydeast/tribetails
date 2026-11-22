@@ -73,9 +73,14 @@ describe('notificationTarget', () => {
     });
   });
 
-  it('lands on Schedule for a row about a whole booking request, whose targetId is a batch', () => {
+  it('#1865: opens the request for a row about a whole booking request, whose targetId is a batch', () => {
     expect(notificationTarget(item({ targetType: 'booking', targetId: 'b1', visitId: null, batchId: 'b1' }))).toEqual({
-      kind: 'schedule',
+      kind: 'request',
+      batchId: 'b1',
+    });
+    expect(notificationTarget(item({ targetType: 'booking', targetId: 'b1', visitId: null, batchId: '  b1 ' }))).toEqual({
+      kind: 'request',
+      batchId: 'b1',
     });
   });
 

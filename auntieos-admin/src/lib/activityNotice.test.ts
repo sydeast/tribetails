@@ -5,13 +5,12 @@ import {
   NOT_SENT_STATUS_WORDS,
   activityDetailRows,
   activityEntryDescription,
-  activityEntryShowsCode,
   activityEntryTitle,
   activityIsFailure,
   activityIsNoticeNotSent,
   activityMatchesQuery,
   activityMatchesStatus,
-  activityRowShowsTarget,
+  activityRowContext,
   activityStatusWords,
 } from './activityDetail';
 import { noticeNotSentWords } from './activityWords';
@@ -67,13 +66,12 @@ describe('#1819 a held notice stored as "dispatched"', () => {
     expect(activityEntryTitle(HELD_AS_STORED)).toBe(NOTICE_NOT_SENT_TITLE);
     expect(activityEntryTitle(HELD_AS_STORED)).toBe('Notification not sent');
     expect(activityEntryDescription(HELD_AS_STORED)).toBe(
-      'Held back "Kincare auntie on my way": notices to households are turned off',
+      'Held back "KinCare Auntie on my way": notices to households are turned off',
     );
     expect(activityStatusWords(HELD_AS_STORED)).toBe(NOT_SENT_STATUS_WORDS);
   });
 
   it('prints no stored key beside a title that contradicts it, and no id in the sentence', () => {
-    expect(activityEntryShowsCode(HELD_AS_STORED)).toBe(false);
     expect(activityEntryDescription(HELD_AS_STORED)).not.toMatch(/uid=|AbCdEf|household_notices_off|NOTIFICATION_/);
   });
 
@@ -81,8 +79,8 @@ describe('#1819 a held notice stored as "dispatched"', () => {
     const rows = activityDetailRows(HELD_AS_STORED);
     expect(rows).toContainEqual({ label: 'Status', value: 'Not sent' });
     expect(rows).not.toContainEqual({ label: 'Status', value: 'SUCCESS' });
-    // The stored key stays on the opened record: it is the evidence.
-    expect(rows).toContainEqual({ label: 'Action', value: 'NOTIFICATION_DISPATCHED' });
+    // #1818: the stored key is not on screen; it stays on the sealed entry.
+    expect(rows.some((r) => r.value === 'NOTIFICATION_DISPATCHED')).toBe(false);
   });
 
   it('is not a success under the status filter, and not a problem either', () => {
@@ -101,15 +99,15 @@ describe('#1819 a held notice stored as "dispatched"', () => {
 
   it('each stored reason has its words, and an unknown one is not printed as a key', () => {
     expect(noticeNotSentWords('kincare.auntie.arrived', 'household_prefs_suppressed')).toBe(
-      'Did not send "Kincare auntie arrived": this notification is turned off in Settings',
+      'Did not send "KinCare Auntie arrived": this notification is turned off in Settings',
     );
     expect(noticeNotSentWords('kincare.auntie.arrived', 'household_has_no_portal_account')).toBe(
-      'Did not send "Kincare auntie arrived": nobody in the household has a MyTribe sign-in',
+      'Did not send "KinCare Auntie arrived": nobody in the household has a MyTribe sign-in',
     );
     expect(noticeNotSentWords('kincare.auntie.arrived', 'no_recipient')).toBe(
-      'Did not send "Kincare auntie arrived": there was nobody to send it to',
+      'Did not send "KinCare Auntie arrived": there was nobody to send it to',
     );
-    expect(noticeNotSentWords('kincare.auntie.arrived', 'some_new_reason')).toBe('Did not send "Kincare auntie arrived"');
+    expect(noticeNotSentWords('kincare.auntie.arrived', 'some_new_reason')).toBe('Did not send "KinCare Auntie arrived"');
     expect(noticeNotSentWords('', 'household_notices_off')).toBe(
       'Held back a notification: notices to households are turned off',
     );
@@ -163,17 +161,16 @@ describe('#1819 the line the server writes now', () => {
     expect(activityIsFailure(failed)).toBe(true);
     expect(activityMatchesStatus(failed, 'problems')).toBe(true);
     expect(activityMatchesStatus(failed, 'success')).toBe(false);
-    expect(activityStatusWords(failed)).toBe('FAILURE');
+    expect(activityStatusWords(failed)).toBe('Failed');
   });
 });
 
 describe('a notice that did go out is untouched', () => {
-  it('keeps its title, its sentence, its code and its status', () => {
+  it('keeps its title, its sentence and its status, in words', () => {
     expect(activityIsNoticeNotSent(SENT)).toBe(false);
     expect(activityEntryTitle(SENT)).toBe('Notification dispatched');
-    expect(activityEntryShowsCode(SENT)).toBe(true);
     expect(activityEntryDescription(SENT)).toBe('Sending "Your Auntie is on the way" to Dre East by email');
-    expect(activityStatusWords(SENT)).toBe('SUCCESS');
+    expect(activityStatusWords(SENT)).toBe('Done');
     expect(activityMatchesStatus(SENT, 'success')).toBe(true);
   });
 
@@ -200,16 +197,19 @@ describe('a notice that did go out is untouched', () => {
   });
 });
 
-describe('#1905 a notification row does not end in a database path', () => {
-  it('drops the target from the row for every notification kind, and keeps it for the rest', () => {
-    for (const actionType of ['NOTIFICATION_DISPATCHED', 'NOTIFICATION_RECEIVED', 'NOTIFICATION_NOT_SENT', 'NOTIFICATION_VIEWED']) {
-      expect(activityRowShowsTarget(entry({ actionType }))).toBe(false);
+describe('#1905, #1818 no row ends in a database path', () => {
+  it('drops the target from every row, notification or not, and from the opened entry', () => {
+    for (const actionType of [
+      'NOTIFICATION_DISPATCHED',
+      'NOTIFICATION_RECEIVED',
+      'NOTIFICATION_NOT_SENT',
+      'VISIT_ARRIVED',
+      'BILLING_INVOICE_PAID',
+      'KINTALE_DRAFT_DELETED',
+    ]) {
+      const row = entry({ actionType, targetCollection: 'kin_care_sessions', targetId: 'vis_ABCDEFGHIJ0123456789' });
+      expect(activityRowContext(row)).not.toMatch(/kin_care_sessions|vis_|notifications\//);
     }
-    expect(activityRowShowsTarget(entry({ actionType: 'VISIT_ARRIVED' }))).toBe(true);
-    expect(activityRowShowsTarget(entry({ actionType: 'BILLING_INVOICE_PAID' }))).toBe(true);
-  });
-
-  it('the opened entry still carries the target', () => {
-    expect(activityDetailRows(SENT)).toContainEqual({ label: 'Target', value: 'notifications/n1' });
+    expect(activityDetailRows(SENT).some((r) => r.label === 'Target')).toBe(false);
   });
 });

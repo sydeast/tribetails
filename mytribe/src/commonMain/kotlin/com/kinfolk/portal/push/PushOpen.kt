@@ -145,6 +145,15 @@ fun pushTargetFromRoute(route: String?): NotificationTarget? {
                 else -> null
             }
         }
+        // #1865: a whole booking request, the path `householdRouteFor` builds for it.
+        3 -> {
+            val batchId = id(parts[2])
+            if (parts[0] == "schedule" && parts[1] == "booking" && batchId.isNotEmpty()) {
+                NotificationTarget.BookingRequest(batchId)
+            } else {
+                null
+            }
+        }
         else -> null
     }
 }

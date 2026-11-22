@@ -785,6 +785,14 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.KINTALE_DRAFT_DELETED,
   AUDIT_EVENTS.KINTALE_DRAFT_PUBLISHED,
   AUDIT_EVENTS.KINTALE_REPORT_DRAFT_DELETED,
+  // #1821: `sendKinTaleReport` writes the send's line in the send transaction.
+  AUDIT_EVENTS.CONTENT_KINTALE_SENT,
+  // #1892: `onKinTaleTemplateWrite` writes these from the committed template write.
+  AUDIT_EVENTS.KINTALE_TEMPLATE_CREATED,
+  AUDIT_EVENTS.KINTALE_TEMPLATE_SAVED,
+  AUDIT_EVENTS.KINTALE_TEMPLATE_ARCHIVED,
+  AUDIT_EVENTS.KINTALE_TEMPLATE_RESTORED,
+  AUDIT_EVENTS.KINTALE_TEMPLATE_DELETED,
   AUDIT_EVENTS.AI_TALE_TITLES_APPLIED,
   AUDIT_EVENTS.AI_TALE_TITLES_BATCH_CREATED,
   AUDIT_EVENTS.MEDIA_FILE_DELETED,
@@ -872,3 +880,42 @@ export const AUDIT_EVENT_TITLES = {
   VISIT_UNDO_ARRIVAL: 'Visit: arrival undone',
   VISIT_UNDO_DEPARTED: 'Visit: departure undone',
 } as const satisfies Partial<Record<AuditEvent, string>>;
+
+/**
+ * #1818, #1881: a stored key as words, brand words in their casing:
+ * `CREATE_KINCARE_SESSION` reads "Create KinCare session", never "Create
+ * kincare session". The admin clients' `humanizeAction` uses the same table.
+ */
+const BRAND_WORDS: Readonly<Record<string, string>> = {
+  kin: 'Kin',
+  kinfolk: 'Kinfolk',
+  kintale: 'KinTale',
+  kintales: 'KinTales',
+  kincare: 'KinCare',
+  auntie: 'Auntie',
+  tribe: 'Tribe',
+  ai: 'AI',
+  gps: 'GPS',
+  pdf: 'PDF',
+  sms: 'SMS',
+};
+export function brandWords(raw: string): string {
+  const words = raw
+    .trim()
+    .split(/[._\-\s]+/)
+    .filter((w) => w !== '')
+    .map((w) => BRAND_WORDS[w.toLowerCase()] ?? w.toLowerCase());
+  if (words.length === 0) return '';
+  const first = words[0]!;
+  words[0] = first.charAt(0).toUpperCase() + first.slice(1);
+  return words.join(' ');
+}
+
+/**
+ * #1818: the sentence a line carries when its writer gave none: the line's
+ * title in words, from `AUDIT_EVENT_TITLES` or the key itself.
+ */
+export function auditEventWords(event: string): string {
+  const titles: Readonly<Record<string, string>> = AUDIT_EVENT_TITLES;
+  return titles[event] ?? brandWords(event);
+}

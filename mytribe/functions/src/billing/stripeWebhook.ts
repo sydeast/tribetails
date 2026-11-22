@@ -286,6 +286,27 @@ export function isFinalNoticeFailure(err: unknown): boolean {
  * Stripe does not retry. If a later step throws and a retry comes, the audit
  * entry's deterministic id and the notice's ledger identity stop a repeat.
  */
+/**
+ * #1818: `Invoice 1042 paid by card` or `A card payment failed on invoice
+ * 1042`. A failed read of the number gives the words for an invoice with none:
+ * the line is still written, and the invoice id stays in its payload.
+ */
+async function cardLineWords(paid: boolean, invoiceId: string): Promise<string> {
+  const words = await import('../lib/activityWords.js');
+  let invoiceNumber: unknown = '';
+  try {
+    invoiceNumber = (await db().collection('invoices').doc(invoiceId).get()).data()?.['invoiceNumber'] ?? '';
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'stripeWebhook',
+      event: 'stripe.audit.invoiceNumber.unread',
+      extra: { invoiceId, err: (err as Error)?.message },
+    });
+  }
+  return paid ? words.cardPaymentWords(invoiceNumber) : words.cardPaymentFailedWords(invoiceNumber);
+}
+
 async function finishEventFollowup(input: {
   kind: FollowupKind;
   familyId: string;
@@ -354,6 +375,10 @@ async function finishEventFollowup(input: {
   // Loaded only on the rare path that needs it (test/coldStartImportGraph.test.ts).
   const notPayableWords =
     notPayable !== null && !input.auditDone ? (await import('../lib/activityWords.js')).cardPaymentNotPayableWords : null;
+  // #1818: the ordinary paid and failed lines carried no sentence, so the
+  // Activity Log printed the stored key alone. They name the invoice by number.
+  const cardWords =
+    notPayable === null && !input.auditDone && !unapplied ? await cardLineWords(paid, input.invoiceId) : null;
   if (!input.auditDone) {
     await writeAuditEntry({
       status: paid ? 'SUCCESS' : 'FAILURE',
@@ -369,7 +394,9 @@ async function finishEventFollowup(input: {
       familyId: input.familyId,
       ...(notPayable !== null && notPayableWords !== null
         ? { description: notPayableWords(notPayable.invoiceNumber, notPayable.reason, notPayable.amountCents) }
-        : {}),
+        : cardWords !== null
+          ? { description: cardWords }
+          : {}),
       payload: unapplied
         ? {
             invoiceId: input.invoiceId,
