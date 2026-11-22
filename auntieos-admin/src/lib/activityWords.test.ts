@@ -69,13 +69,13 @@ describe('activityDescriptionWords', () => {
  * that an old notification row names its key in words.
  */
 const STORED_ID_SHAPES: readonly (readonly [string, string])[] = [
-  ["Notification kincare.booking.confirm delivered via email", "Delivered \"Kincare booking confirm\" by email"],
+  ["Notification kincare.booking.confirm delivered via email", "Delivered \"KinCare booking confirm\" by email"],
   ["Notification invoice.new dispatched to email, push", "Sent \"Invoice new\" by email and push notification"],
   ["Notification (unknown key) dispatched to sms", "Sent a notification by text message"],
-  ["Notification kincare.changed archived", "Archived \"Kincare changed\""],
+  ["Notification kincare.changed archived", "Archived \"KinCare changed\""],
   ["Notification n8Xq2LmP0aZ restored to the active inbox", "Restored a notification to the notifications list"],
-  ["Notification kincare.changed viewed", "Viewed \"Kincare changed\""],
-  ["Notification kincare.changed marked unread", "Marked \"Kincare changed\" unread"],
+  ["Notification kincare.changed viewed", "Viewed \"KinCare changed\""],
+  ["Notification kincare.changed marked unread", "Marked \"KinCare changed\" unread"],
   ["COMPLETE on session s_9fK2: SCHEDULED -> COMPLETED", "Completed the visit: scheduled to completed"],
   ["APPROVE on session s_9fK2: PENDING -> SCHEDULED", "Approved the visit: requested to scheduled"],
   ["ARRIVED on session s_9fK2: ON_MY_WAY -> ARRIVED", "Marked the arrival: on the way to arrived"],

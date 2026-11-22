@@ -967,7 +967,8 @@ describe('#2345: a card payment on an invoice that cannot take it is held for th
     expect(docs['payments/evt_cs_1']!.needsAdminDecision).toBeUndefined();
     expect(paidLines()).toHaveLength(1);
     expect(paidLines()[0]![0].severity).toBe('info');
-    expect(paidLines()[0]![0].description).toBeUndefined();
+    // #1818: the ordinary line names the invoice in words, never the stored key.
+    expect(paidLines()[0]![0].description).toBe('Invoice 1029 paid by card');
     expect(paidLines()[0]![0].payload.cardApplyFallback).toBeUndefined();
     expect(notices('invoice.payment.applied')).toHaveLength(1);
   });
@@ -978,7 +979,7 @@ describe('#2345: a card payment on an invoice that cannot take it is held for th
     expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0, paidCents: 4000 });
     expect(docs['payments/evt_cs_1']!.needsAdminDecision).toBeUndefined();
     expect(paidLines()[0]![0].severity).toBe('info');
-    expect(paidLines()[0]![0].description).toBeUndefined();
+    expect(paidLines()[0]![0].description).toBe('Invoice 1029 paid by card');
   });
 
   it('a short card payment on an ordinary invoice: applied, and the rest stays owing', async () => {
@@ -1145,5 +1146,63 @@ describe('#2345: the line for a payment an earlier build put on an invoice that 
     expect(cardPaymentNotPayableWords('1029', 'no_recorded_balance', 6000)).toBe(
       "A card payment of $60.00 was put on invoice 1029, but nothing was owed on the invoice's total.",
     );
+  });
+});
+
+/**
+ * #1818: the paid and failed lines name the invoice by its number, read after
+ * the payment is recorded. That read failing must cost the line its number and
+ * nothing else: the payment, the line and the household's notice all still go.
+ */
+describe('#1818: a failed read of the invoice number for the card line', () => {
+  /** Fails only the read the line's words make; every other read of the invoice works. */
+  function failTheWordsRead(): void {
+    const fake = hooks.db.current as { collection: (path: string) => any };
+    const realCollection = fake.collection.bind(fake);
+    fake.collection = (path: string) => {
+      const col = realCollection(path);
+      if (path !== 'invoices') return col;
+      const realDoc = col.doc.bind(col);
+      col.doc = (id?: string) => {
+        const ref = realDoc(id);
+        const realGet = ref.get;
+        ref.get = vi.fn(async (...args: unknown[]) => {
+          if (String(new Error().stack).includes('cardLineWords')) throw new Error('firestore unavailable');
+          return realGet(...args);
+        });
+        return ref;
+      };
+      return col;
+    };
+  }
+
+  it('a paid card: applied, one line with no number, and the notice', async () => {
+    failTheWordsRead();
+    paid(1, 4000);
+
+    expect(await deliver('session-1')).toBe(200);
+
+    expect(logged('stripe.audit.invoiceNumber.unread')).toHaveLength(1);
+    expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0, paidCents: 4000 });
+    const lines = audits('BILLING_INVOICE_PAID');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]![0]).toMatchObject({
+      description: 'Invoice with no number paid by card',
+      payload: { invoiceId: 'inv1', stripeEventId: 'evt_cs_1' },
+    });
+    expect(notices('invoice.payment.applied')).toHaveLength(1);
+  });
+
+  it('a declined card: one line with no number, and the notice', async () => {
+    failTheWordsRead();
+    declined(1);
+
+    expect(await deliver('declined-1')).toBe(200);
+
+    expect(logged('stripe.audit.invoiceNumber.unread')).toHaveLength(1);
+    const lines = audits('BILLING_INVOICE_FAILED');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]![0].description).toBe('A card payment failed on an invoice with no number');
+    expect(notices('invoice.charge.failed')).toHaveLength(1);
   });
 });

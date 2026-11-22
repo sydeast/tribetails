@@ -9,11 +9,14 @@ import {
   activityChainRows,
   activityDayLabel,
   activityDetailRows,
+  activityEntryDescription,
+  activityEntryTitle,
   activityIsFailure,
   activityMatchesCategory,
   activityMatchesQuery,
   activityMatchesStatus,
   activityPayloadRows,
+  activityRowContext,
   humanizeAction,
   localDayKey,
   activityWhen,
@@ -42,21 +45,74 @@ function entry(over: Partial<ActivityLogEntry> = {}): ActivityLogEntry {
  * not about new data.
  */
 describe('activityDetailRows', () => {
-  it('names the actor and keeps the uid beside the name on the opened record (#1592)', () => {
+  it('names the actor, with no uid beside the name (#1592, #1818)', () => {
     const rows = activityDetailRows(entry({ actorId: 'u1' }), 'America/Chicago', new Map([['u1', 'Syd East']]));
     expect(rows).toContainEqual({ label: 'Actor', value: 'Syd East' });
-    expect(rows).toContainEqual({ label: 'Actor id', value: 'u1' });
-  });
-
-  it('shows an unknown actor uid as it is, with no second id row', () => {
-    const rows = activityDetailRows(entry({ actorId: 'u9' }), 'America/Chicago', new Map());
-    expect(rows).toContainEqual({ label: 'Actor', value: 'u9' });
     expect(rows.some((r) => r.label === 'Actor id')).toBe(false);
+    expect(rows.some((r) => r.value.includes('u1'))).toBe(false);
   });
 
-  it('leads with the FULL timestamp, which is the part the collapsed row truncates', () => {
-    const rows = activityDetailRows(entry());
-    expect(rows[0]).toEqual({ label: 'When', value: '2026-08-03T14:02:11.482Z' });
+  it('never shows an unknown actor uid, or an email standing in for a name (#1818)', () => {
+    const unknown = activityDetailRows(entry({ actorId: 'u9' }), 'America/Chicago', new Map());
+    expect(unknown.some((r) => r.label === 'Actor')).toBe(false);
+    const byEmail = activityDetailRows(
+      entry({ actorId: 'u2' }),
+      'America/Chicago',
+      new Map([['u2', 'e2e-admin@tribetails.com']]),
+    );
+    expect(byEmail.some((r) => r.label === 'Actor')).toBe(false);
+    expect(byEmail.some((r) => r.value.includes('@'))).toBe(false);
+  });
+
+  it('leads with one readable time in the business zone, never the raw UTC stamp (#1818)', () => {
+    const rows = activityDetailRows(entry(), 'America/Chicago');
+    expect(rows[0]).toEqual({ label: 'When', value: 'Aug 3, 2026, 9:02a' });
+    expect(rows.some((r) => r.label === 'Business time')).toBe(false);
+    expect(rows.some((r) => r.value.includes('2026-08-03T'))).toBe(false);
+  });
+
+  it('shows no stored key, request id or database path (#1818)', () => {
+    const rows = activityDetailRows(
+      entry({
+        actionType: 'CANCEL_BOOKING_SERIES',
+        familyId: 'fam1',
+        requestId: 'req-9',
+        clientRequestId: 'creq-1',
+        targetCollection: 'kin_care_sessions',
+        targetId: 'vis_ABCDEFGHIJ0123456789',
+      }),
+    );
+    const labels = rows.map((r) => r.label);
+    for (const l of ['Action', 'Actor id', 'Target', 'Request', 'Client request', 'Business time']) {
+      expect(labels).not.toContain(l);
+    }
+    // A household the roster does not hold is left out rather than shown by id.
+    expect(labels).not.toContain('Household');
+    expect(rows.map((r) => r.value).join(' ')).not.toMatch(
+      /CANCEL_BOOKING_SERIES|fam1|req-9|creq-1|kin_care_sessions|vis_/,
+    );
+  });
+
+  it('names the household from the roster (#1818)', () => {
+    const rows = activityDetailRows(
+      entry({ familyId: 'fam1' }),
+      'America/Chicago',
+      new Map(),
+      new Map(),
+      new Map([['fam1', 'The Whitfields']]),
+    );
+    expect(rows).toContainEqual({ label: 'Household', value: 'The Whitfields' });
+  });
+
+  it('says the status and severity in words (#1818)', () => {
+    const value = (over: Partial<ActivityLogEntry>, label: string) =>
+      activityDetailRows(entry(over)).find((r) => r.label === label)?.value;
+    expect(value({ status: 'SUCCESS' }, 'Status')).toBe('Done');
+    expect(value({ status: 'FAILURE' }, 'Status')).toBe('Failed');
+    expect(value({ status: 'ERROR' }, 'Status')).toBe('Failed');
+    expect(value({ status: 'PENDING' }, 'Status')).toBe('Pending');
+    expect(value({ severity: 'warn' }, 'Severity')).toBe('Warning');
+    expect(value({ severity: 'info' }, 'Severity')).toBe('Info');
   });
 
   it('surfaces the provenance fields the row never showed', () => {
@@ -73,8 +129,6 @@ describe('activityDetailRows', () => {
     const labels = rows.map((r) => r.label);
     expect(labels).toContain('Severity');
     expect(labels).toContain('Actor role');
-    expect(labels).toContain('Household');
-    expect(labels).toContain('Request');
     expect(labels).toContain('IP');
     expect(labels).toContain('User agent');
   });
@@ -96,16 +150,6 @@ describe('activityDetailRows', () => {
     expect(actorRoleLabel('SOME_NEW_ROLE')).toBe('Some new role');
   });
 
-  it('renders the target as a path, never a fabricated link', () => {
-    const rows = activityDetailRows(entry({ targetCollection: 'notifications', targetId: 'n1' }));
-    expect(rows).toContainEqual({ label: 'Target', value: 'notifications/n1' });
-  });
-
-  it('falls back to a generic collection segment rather than dropping a bare target id', () => {
-    const rows = activityDetailRows(entry({ targetId: 'n1' }));
-    expect(rows).toContainEqual({ label: 'Target', value: 'target/n1' });
-  });
-
   it('omits fields the writer did not record', () => {
     const labels = activityDetailRows(entry()).map((r) => r.label);
     expect(labels).not.toContain('IP');
@@ -120,7 +164,7 @@ describe('activityPayloadRows', () => {
    * and with which provider message id, and it was rendered nowhere in the
    * product.
    */
-  it('flattens the payload that says what actually happened', () => {
+  it('lists what happened in words, with no id, stored key or path (#1818)', () => {
     const rows = activityPayloadRows(
       entry({
         payload: {
@@ -132,33 +176,66 @@ describe('activityPayloadRows', () => {
         },
       }),
     );
+    expect(rows).toEqual([{ label: 'Channel', value: 'email' }]);
+  });
+
+  it("reads the walk's Cancel booking series row in words (#1818)", () => {
+    const rows = activityPayloadRows(
+      entry({
+        actionType: 'CANCEL_BOOKING_SERIES',
+        payload: {
+          affectedVisits: 2,
+          batchId: 'req_ABCDEFGHIJ0123456789',
+          failedVisits: 0,
+          kinfolkId: 'Xy7Kq2Lm9Pz4Rt6Vb1Nc',
+          sessionsCreated: 0,
+        },
+      }),
+    );
     expect(rows).toEqual([
-      { label: 'channel', value: 'email' },
-      { label: 'key', value: 'kincare.booking.confirm' },
-      { label: 'notificationId', value: 'n1' },
-      { label: 'providerMessageId', value: 'sg-88' },
-      { label: 'recipientUid', value: 'u1' },
+      { label: 'Affected visits', value: '2' },
+      { label: 'Failed visits', value: '0' },
+      { label: 'Sessions created', value: '0' },
+    ]);
+  });
+
+  it('hides a value that is an id or a path whatever its key, and reads times, statuses and keys as words', () => {
+    const rows = activityPayloadRows(
+      entry({
+        payload: {
+          visit: 'vis_ABCDEFGHIJ0123456789',
+          where: 'kin_care_sessions/abc',
+          status: 'ON_MY_WAY',
+          startTime: '2026-11-11T17:33:35.411Z',
+          notice: 'kincare.booking.confirm',
+          recordedAfterTheFact: false,
+        },
+      }),
+      'America/Chicago',
+    );
+    expect(rows).toEqual([
+      { label: 'Notice', value: 'KinCare booking confirm' },
+      { label: 'Recorded after the fact', value: 'no' },
+      { label: 'Start time', value: 'Nov 11, 2026, 11:33a' },
+      { label: 'Status', value: 'On my way' },
     ]);
   });
 
   it('sorts keys, so two entries of the same type are comparable by eye', () => {
-    expect(activityPayloadRows(entry({ payload: { z: 1, a: 2 } })).map((r) => r.label)).toEqual([
-      'a',
-      'z',
-    ]);
+    expect(activityPayloadRows(entry({ payload: { z: 1, a: 2 } })).map((r) => r.label)).toEqual(['A', 'Z']);
   });
 
-  it('flattens nested maps to dotted paths rather than dumping JSON', () => {
+  it('flattens nested maps rather than dumping JSON', () => {
     const rows = activityPayloadRows(entry({ payload: { result: { split: 3, scanned: 40 } } }));
     expect(rows).toEqual([
-      { label: 'result.scanned', value: '40' },
-      { label: 'result.split', value: '3' },
+      { label: 'Result scanned', value: '40' },
+      { label: 'Result split', value: '3' },
     ]);
   });
 
   it('keeps an array on one line, because it is one field', () => {
     expect(activityPayloadRows(entry({ payload: { channels: ['email', 'sms'] } }))).toEqual([
-      { label: 'channels', value: 'email, sms' },
+      { label: 'Channels', value: 'email, sms' },
     ]);
   });
 
@@ -167,16 +244,12 @@ describe('activityPayloadRows', () => {
    * so it stays on the list, but as a word the operator reads (#1592), not the
    * programming literal "null".
    */
-  it('prints a recorded null as none, and an empty map as {}', () => {
-    expect(activityPayloadRows(entry({ payload: { providerMessageId: null } }))).toEqual([
-      { label: 'providerMessageId', value: 'none' },
+  it('prints a recorded null as none, and leaves out an empty map', () => {
+    expect(activityPayloadRows(entry({ payload: { reason: null } }))).toEqual([{ label: 'Reason', value: 'none' }]);
+    expect(activityPayloadRows(entry({ payload: { channels: ['email', null] } }))).toEqual([
+      { label: 'Channels', value: 'email, none' },
     ]);
-    expect(activityPayloadRows(entry({ payload: { ids: ['a', null] } }))).toEqual([
-      { label: 'ids', value: 'a, none' },
-    ]);
-    expect(activityPayloadRows(entry({ payload: { extra: {} } }))).toEqual([
-      { label: 'extra', value: '{}' },
-    ]);
+    expect(activityPayloadRows(entry({ payload: { extra: {} } }))).toEqual([]);
   });
 
   it('is empty for an entry written with no payload, and for a malformed one', () => {
@@ -347,8 +420,11 @@ describe('activityMatchesCategory', () => {
 });
 
 describe('the collapsed row, per the mock', () => {
-  it('humanises the action code the way Android does', () => {
-    expect(humanizeAction('KINCARE_ARRIVED')).toBe('Kincare arrived');
+  it('humanises the action code the way Android does, brand words in their casing (#1881)', () => {
+    expect(humanizeAction('KINCARE_ARRIVED')).toBe('KinCare arrived');
+    expect(humanizeAction('KINTALE_DRAFT_DELETED')).toBe('KinTale draft deleted');
+    expect(humanizeAction('KINTALE_DRAFT_PUBLISHED')).toBe('KinTale draft published');
+    expect(humanizeAction('CREATE_KINCARE_SESSION')).toBe('Create KinCare session');
     expect(humanizeAction('LOGIN')).toBe('Login');
     expect(humanizeAction('')).toBe('Event');
   });
@@ -407,10 +483,9 @@ describe('activityWhen (#1585)', () => {
     expect(activityWhen('2026-11-04')).toBeNull();
     expect(activityWhen('not a date')).toBeNull();
   });
-  it('adds the business reading beside the raw stamp in the opened entry', () => {
+  it("reads the opened entry's time once, in the business zone (#1818)", () => {
     const rows = activityDetailRows(entry({ timestamp: '2026-11-04T21:34:00Z' }), 'America/Chicago');
-    expect(rows[0]).toEqual({ label: 'When', value: '2026-11-04T21:34:00Z' });
-    expect(rows[1]).toEqual({ label: 'Business time', value: '2026-11-04 3:34p' });
+    expect(rows[0]).toEqual({ label: 'When', value: 'Nov 4, 2026, 3:34p' });
   });
 });
 // #1049: saveEmergencyContacts audits every refused save. The Activity Log has no
@@ -422,14 +497,12 @@ describe('EMERGENCY_CONTACT_SAVE_REFUSED (#1049)', () => {
     status: 'FAILURE',
     payload: { kinfolkId: 'fam1', code: 'failed-precondition', reason: 'An Emergency Contact has to be someone outside the household.' },
   });
-  it('reads as a sentence, counts as a problem, and shows the household, the code and the reason', () => {
+  it('reads as a sentence, counts as a problem, and shows the reason, never the id or the error code (#1818)', () => {
     expect(humanizeAction('EMERGENCY_CONTACT_SAVE_REFUSED')).toBe('Emergency contact save refused');
     expect(activityIsFailure(refused)).toBe(true);
     expect(activityMatchesStatus(refused, 'problems')).toBe(true);
     expect(activityPayloadRows(refused)).toEqual([
-      { label: 'code', value: 'failed-precondition' },
-      { label: 'kinfolkId', value: 'fam1' },
-      { label: 'reason', value: 'An Emergency Contact has to be someone outside the household.' },
+      { label: 'Reason', value: 'An Emergency Contact has to be someone outside the household.' },
     ]);
   });
 });
@@ -488,5 +561,60 @@ describe('actorRoleFor (#1820)', () => {
   it('is what the opened row shows', () => {
     const rows = activityDetailRows({ _id: 'e', actorId: 'owner-uid', actorRole: 'PRIMARY' }, undefined, new Map(), roster);
     expect(rows).toContainEqual({ label: 'Actor role', value: 'Operator' });
+  });
+});
+describe('#1818: the collapsed row carries no id, key, path or email', () => {
+  it('drops the target path and the actor uid, and names the actor by name or role', () => {
+    const tap = entry({
+      actionType: 'VISIT_ON_MY_WAY',
+      description: 'Marked the visit on the way: scheduled to on the way',
+      actorId: 'u1',
+      actorRole: 'AUNTIE',
+      targetCollection: 'kin_care_sessions',
+      targetId: 'vis_ABCDEFGHIJ0123456789',
+    });
+    expect(activityRowContext(tap, new Map([['u1', 'Syd East']]))).toBe(
+      'Marked the visit on the way: scheduled to on the way · Syd East',
+    );
+    // Before the roster answers, and for an owner whose label is her email: the role, never the uid or email.
+    expect(activityRowContext(tap, new Map(), new Map([['u1', 'owner']]))).toBe(
+      'Marked the visit on the way: scheduled to on the way · Operator',
+    );
+    expect(activityRowContext(tap, new Map([['u1', 'e2e-admin@tribetails.com']]))).toBe(
+      'Marked the visit on the way: scheduled to on the way · Staff',
+    );
+  });
+  it('reads a stored "<KEY> uid=<id>" line as its title alone', () => {
+    const stored = entry({
+      actionType: 'CREATE_KINCARE_SESSION',
+      description: 'CREATE_KINCARE_SESSION uid=Abc123Def456Ghi789Jkl012Mno3',
+      actorId: 'Abc123Def456Ghi789Jkl012Mno3',
+      actorRole: 'AUNTIE',
+    });
+    expect(activityEntryTitle(stored)).toBe('Create KinCare session');
+    expect(activityEntryDescription(stored)).toBe('');
+    expect(activityRowContext(stored)).toBe('Staff');
+    expect(activityEntryDescription(entry({ description: 'BILLING_INVOICE_PAID' }))).toBe('');
+    expect(activityEntryDescription(entry({ description: 'CONTENT_SHARE_LINK_EXPIRED' }))).toBe('');
+  });
+  it('leaves off a sentence that only repeats the title', () => {
+    const line = entry({ actionType: 'UPDATE_KINFOLK', description: 'Kinfolk updated', actorId: '' });
+    expect(activityEntryTitle(line)).toBe('Kinfolk updated');
+    expect(activityRowContext(line)).toBe('');
+  });
+  it('reads a stored visit request in words', () => {
+    expect(activityEntryDescription(entry({ description: 'Kinfolk submitted 1 visit(s) (individual)' }))).toBe(
+      'Kinfolk asked for 1 visit (individual dates)',
+    );
+  });
+  it('titles a kind with a plain title by that title, and never prints the key (#1881)', () => {
+    expect(activityEntryTitle(entry({ actionType: 'CONTENT_KINTALE_SENT' }))).toBe('KinTale sent');
+    expect(activityEntryTitle(entry({ actionType: 'VISIT_ON_MY_WAY' }))).toBe('Visit: on my way');
+    expect(activityEntryTitle(entry({ actionType: 'KINTALE_DRAFT_DELETED' }))).toBe('KinTale draft deleted');
+  });
+  it('names an old notification by its key with the brand words cased (#1881)', () => {
+    expect(
+      activityEntryDescription(entry({ description: 'Notification kincare.booking.confirm dispatched to email' })),
+    ).toBe('Sent "KinCare booking confirm" by email');
   });
 });

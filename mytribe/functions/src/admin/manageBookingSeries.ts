@@ -237,6 +237,8 @@ export async function manageBookingSeriesHandler(
     severity: failedVisits > 0 ? 'warn' : 'info',
     actorRole: 'AUNTIE',
     actorUid: uid,
+    // #1818: words. With none the line read "CANCEL_BOOKING_SERIES uid=<id>".
+    description: (await import('../lib/activityWords.js')).bookingSeriesCancelledWords(succeeded, failedVisits),
     payload: { kinfolkId: args.kinfolkId, batchId: args.batchId, affectedVisits: succeeded, failedVisits, sessionsCreated: 0 },
   });
 
