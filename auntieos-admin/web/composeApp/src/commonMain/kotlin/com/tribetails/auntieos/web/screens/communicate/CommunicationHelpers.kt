@@ -5,6 +5,7 @@ import com.tribetails.auntieos.web.data.EmailMessage
 import com.tribetails.auntieos.web.data.SmsMessage
 import com.tribetails.auntieos.web.data.VoicemailLog
 import com.tribetails.auntieos.web.screens.cutWhole
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * Pure helpers for the Communicate recipient-context panel. No Compose, no IO —
@@ -36,6 +37,21 @@ fun commsChannelLabel(channel: String): String = when (channel) {
     "voicemail" -> "Voicemail"
     "thread" -> "MyTribe message"
     else -> "Message"
+}
+
+/**
+ * #1878: a stored instant as a local YYYY-MM-DD, so an evening message reads the
+ * day the Inbox shows it on, never the next UTC day. Anything else is returned as it is.
+ */
+@OptIn(kotlin.time.ExperimentalTime::class)
+fun commsLocalDay(
+    timestamp: String,
+    zone: kotlinx.datetime.TimeZone = kotlinx.datetime.TimeZone.currentSystemDefault(),
+): String {
+    if ('T' !in timestamp) return timestamp
+    return runCatching {
+        kotlin.time.Instant.parse(timestamp.trim()).toLocalDateTime(zone).date.toString()
+    }.getOrDefault(timestamp)
 }
 
 data class LatestComm(

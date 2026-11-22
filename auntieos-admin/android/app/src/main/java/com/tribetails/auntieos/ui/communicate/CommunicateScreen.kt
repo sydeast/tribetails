@@ -1563,7 +1563,7 @@ private fun LastCommunicationBox(state: CommunicateUiState, viewModel: Communica
                     is CommsBoxState.RawLatest -> {
                         AuntieFieldLabel(text = "Latest message")
                         Text(
-                            text = "${commsChannelLabel(cb.latest.channel)} · ${humanizeDate(cb.latest.timestamp)} · ${cb.latest.snippet}",
+                            text = "${commsChannelLabel(cb.latest.channel)} · ${humanizeDate(commsLocalDay(cb.latest.timestamp))} · ${cb.latest.snippet}",
                             style = AuntieTheme.typography.bodyMedium,
                             color = c.textPrimary,
                         )

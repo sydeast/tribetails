@@ -38,6 +38,16 @@ fun commsChannelLabel(channel: String): String = when (channel) {
     else -> "Message"
 }
 
+/**
+ * #1878: a stored instant as a local YYYY-MM-DD, so an evening message reads the
+ * day the Inbox shows it on, never the next UTC day. Anything else is returned as it is.
+ */
+fun commsLocalDay(timestamp: String, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String {
+    if ('T' !in timestamp) return timestamp
+    return runCatching { java.time.Instant.parse(timestamp.trim()).atZone(zone).toLocalDate().toString() }
+        .getOrDefault(timestamp)
+}
+
 data class LatestComm(
     val channel: String,   // "sms" | "email" | "call" | "voicemail"
     val timestamp: String, // ISO-8601 UTC string

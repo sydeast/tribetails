@@ -28,6 +28,7 @@ const { getFeatureFlags } = vi.hoisted(() => ({ getFeatureFlags: vi.fn() }));
 vi.mock('../api/featureFlags', () => ({ getFeatureFlags }));
 
 import { RecipientContextPanel } from './RecipientContextPanel';
+import { commsLocalDay } from '../lib/recipientContext';
 
 // NOTE: mocks reset in setup(), called at the top of EACH test body rather than
 // from a shared beforeEach, the deviation api/invoicesWrite.test.ts documents.
@@ -392,6 +393,18 @@ describe('the last-communication box', () => {
     render(<RecipientContextPanel kinfolkId="kf1" />);
     expect(await screen.findByText(/Holiday plans/)).toBeInTheDocument();
     expect(screen.queryByText(/Running ten late\./)).toBeNull();
+  });
+});
+
+describe('commsLocalDay (#1878)', () => {
+  it('reads an instant as its local day', () => {
+    const at = new Date(2026, 10, 1, 21, 30);
+    expect(commsLocalDay(at.toISOString())).toBe('2026-11-01');
+  });
+
+  it('leaves a bare date and an unreadable value alone', () => {
+    expect(commsLocalDay('2026-11-02')).toBe('2026-11-02');
+    expect(commsLocalDay('not a dateTtime')).toBe('not a dateTtime');
   });
 });
 

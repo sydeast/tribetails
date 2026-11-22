@@ -58,6 +58,13 @@ class CommunicationHelpersTest {
         assertEquals("sms", latest?.channel)
     }
 
+    @Test fun comms_day_is_the_local_day() {
+        val chicago = kotlinx.datetime.TimeZone.of("America/Chicago")
+        assertEquals("2026-11-01", commsLocalDay("2026-11-02T02:30:00Z", chicago))
+        assertEquals("2026-11-02", commsLocalDay("2026-11-02", chicago))
+        assertEquals("not a dateTtime", commsLocalDay("not a dateTtime", chicago))
+    }
+
     @Test fun latest_null_when_all_empty() {
         assertNull(latestCommunication(emptyList(), emptyList(), emptyList(), emptyList()))
     }

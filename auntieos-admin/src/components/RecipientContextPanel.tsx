@@ -21,6 +21,7 @@ import {
   kinMetaLine,
   latestCommunication,
   commsBoxState,
+  commsLocalDay,
   threadCommsRow,
   type CommsRow,
   type CommsChannel,
@@ -396,7 +397,7 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
         {box.kind === 'latest' && (
           <>
             <p className="context__latest">
-              {CHANNEL_LABEL[box.latest.channel]} · {humanizeDate(box.latest.timestamp, localDateIso(new Date()))}:{' '}
+              {CHANNEL_LABEL[box.latest.channel]} · {humanizeDate(commsLocalDay(box.latest.timestamp), localDateIso(new Date()))}:{' '}
               {box.latest.snippet}
             </p>
             {box.disclosedFallback && recapError === null && (

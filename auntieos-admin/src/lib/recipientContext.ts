@@ -121,6 +121,20 @@ export function threadCommsRow(latest: { preview: string; createdAtMs: number } 
   };
 }
 
+/**
+ * #1878: a stored instant as a local YYYY-MM-DD, so an evening message reads the
+ * day the Inbox shows it on, never the next UTC day. A value with no time, or
+ * one that does not parse, is returned as it is. Pure.
+ */
+export function commsLocalDay(timestamp: string): string {
+  if (!timestamp.includes('T')) return timestamp;
+  const at = new Date(timestamp);
+  if (Number.isNaN(at.getTime())) return timestamp;
+  const month = String(at.getMonth() + 1).padStart(2, '0');
+  const day = String(at.getDate()).padStart(2, '0');
+  return `${String(at.getFullYear())}-${month}-${day}`;
+}
+
 export interface LatestComm {
   channel: CommsChannel;
   timestamp: string;
