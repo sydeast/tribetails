@@ -754,6 +754,17 @@ class FirestoreClient {
         }
     }
 
+    /** #1888: whether this household's primary is already on the portal, from `listMembers`. */
+    suspend fun householdHasActivePrimary(kinfolkId: String): WriteResult<Boolean> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("listMembers", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.directory.decodeHasActivePrimary(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "members decode failed") }
+        }
+    }
+
     suspend fun replyToConversation(kinfolkId: String, body: String): WriteResult<String> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(kinfolkId))

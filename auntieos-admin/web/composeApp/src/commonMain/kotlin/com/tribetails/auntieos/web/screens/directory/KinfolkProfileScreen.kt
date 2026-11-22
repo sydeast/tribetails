@@ -174,6 +174,13 @@ fun KinfolkProfileScreen(
     var inviteBusy by remember { mutableStateOf(false) }
     // #1602: the ask before the invite goes out.
     var confirmPortalInvite by remember { mutableStateOf(false) }
+    // #1888: null until read, and after a failed read (the server still refuses a repeat).
+    var portalPrimaryActive by remember(kinfolkId) { mutableStateOf<Boolean?>(null) }
+    var portalPrimaryReading by remember(kinfolkId) { mutableStateOf(true) }
+    LaunchedEffect(kinfolkId) {
+        portalPrimaryActive = (client.householdHasActivePrimary(kinfolkId) as? WriteResult.Ok)?.value
+        portalPrimaryReading = false
+    }
     // #1271: true while a household tag write is unanswered. Holds the header's
     // Back so the screen is not left with the write in flight.
     var tagsSaving by remember { mutableStateOf(false) }
@@ -186,7 +193,10 @@ fun KinfolkProfileScreen(
             inviteToast = when (val r = client.inviteKinfolkToPortal(kinfolkId)) {
                 is WriteResult.Ok -> when (r.value.status) {
                     "sent" -> "Portal invite emailed to ${k.email}" to ToastKind.Success
-                    "already_active" -> "${k.displayName} already has portal access" to ToastKind.Info
+                    "already_active" -> {
+                        portalPrimaryActive = true
+                        "${k.displayName} already has portal access" to ToastKind.Info
+                    }
                     "no_email" -> "No email on file for ${k.displayName}" to ToastKind.Error
                     else -> "Invite: ${r.value.status}" to ToastKind.Info
                 }
@@ -402,8 +412,9 @@ fun KinfolkProfileScreen(
                 trailing = {
                     // #1602: asks first and names the address, never one click.
                     GhostButton(
-                        label = if (inviteBusy) "Sending" else "Invite to portal",
-                        enabled = !inviteBusy && kinfolk.email.isNotBlank(),
+                        label = portalInviteLabel(inviteBusy, portalPrimaryReading, portalPrimaryActive),
+                        enabled = !inviteBusy && !portalPrimaryReading && portalPrimaryActive != true &&
+                            kinfolk.email.isNotBlank(),
                         onClick = { confirmPortalInvite = true },
                     )
                     AuntieDialog(
@@ -1176,6 +1187,26 @@ private fun EmptyKin(message: String) {
 
 /** `INVITE_TTL_DAYS` in `mytribe/functions/src/lib/schema.ts`. */
 internal const val PORTAL_INVITE_TTL_DAYS = 14
+
+/** #1888: the button's words, so a household already on the portal reads so from the start. Pure. */
+internal fun portalInviteLabel(busy: Boolean, reading: Boolean, hasActivePrimary: Boolean?): String = when {
+    busy -> "Sending"
+    reading -> "Checking portal…"
+    hasActivePrimary == true -> "Already on the portal"
+    else -> "Invite to portal"
+}
+
+/** #1888: true when `listMembers` holds an ACTIVE PRIMARY. Throws on a reply with no members. */
+internal fun decodeHasActivePrimary(dataJson: String): Boolean {
+    val root = kotlinx.serialization.json.Json.parseToJsonElement(dataJson) as kotlinx.serialization.json.JsonObject
+    val rows = root["members"] as? kotlinx.serialization.json.JsonArray
+        ?: error("listMembers: response carried no members")
+    return rows.any { row ->
+        val m = row as? kotlinx.serialization.json.JsonObject ?: return@any false
+        fun text(key: String) = (m[key] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        text("role") == "PRIMARY" && text("status") == "ACTIVE"
+    }
+}
 
 /**
  * #1602: what the confirm says before a portal invite goes out. It names the

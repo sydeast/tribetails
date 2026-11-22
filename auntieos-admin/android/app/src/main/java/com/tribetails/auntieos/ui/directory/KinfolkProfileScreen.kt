@@ -77,6 +77,8 @@ fun KinfolkProfileScreen(
     val state by viewModel.profileState.collectAsState()
     // #14: portal invite state + Toast feedback on each outcome.
     val inviteBusy by viewModel.inviteBusy.collectAsState()
+    val portalPrimaryActive by viewModel.portalPrimaryActive.collectAsState()
+    val portalPrimaryReading by viewModel.portalPrimaryReading.collectAsState()
     // #1602: the ask before the invite goes out.
     var confirmPortalInvite by remember { mutableStateOf(false) }
     val inviteMessage by viewModel.inviteMessage.collectAsState()
@@ -107,6 +109,9 @@ fun KinfolkProfileScreen(
 
     LaunchedEffect(kinfolkId) {
         viewModel.loadProfile(kinfolkId)
+    }
+    LaunchedEffect(kinfolkId) {
+        viewModel.loadPortalAccess(kinfolkId)
     }
     // Q6: the Account credit section, its own read.
     val creditState by viewModel.accountCredit.state.collectAsState()
@@ -265,10 +270,11 @@ fun KinfolkProfileScreen(
                     ) {
                         // #1602: asks first and names the address, never one click.
                         PrimaryButton(
-                            label   = if (inviteBusy) "Sending…" else "Invite to portal",
+                            label   = portalInviteLabel(inviteBusy, portalPrimaryActive),
                             onClick = { confirmPortalInvite = true },
-                            enabled = !inviteBusy && portalInviteBlocker(kinfolk.email, null) == null,
-                            loading = inviteBusy,
+                            enabled = !inviteBusy && !portalPrimaryReading &&
+                                portalInviteBlocker(kinfolk.email, portalPrimaryActive) == null,
+                            loading = inviteBusy || portalPrimaryReading,
                             modifier = Modifier.weight(1f),
                         )
                         // Phase 3: rebuild this household's dossier + every pet's

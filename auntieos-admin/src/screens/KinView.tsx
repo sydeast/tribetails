@@ -52,6 +52,9 @@ interface KinViewProps {
    */
   openedFrom: 'directory' | 'profile';
   onBack: () => void;
+  /** #1893: under a route, the address holds whether the edit form is open. */
+  editing?: boolean;
+  onEditingChange?: (editing: boolean) => void;
 }
 
 /**
@@ -141,8 +144,18 @@ function checklistLines(checklist: string): string[] {
  * identity block rather than a page banner (#690); there is no "New KinTale"
  * action, since a KinTale is only ever started from a KinCare (#676).
  */
-export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinViewProps) {
+export function KinView({
+  kinId,
+  kinName: rowName,
+  household,
+  openedFrom,
+  onBack,
+  editing: routedEditing,
+  onEditingChange,
+}: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
+  // #1893: a reload arrives before the Directory's row does, so the doc names the Kin.
+  const kinName = rowName || (kin.status === 'ready' ? kin.data.name : '');
   // #2007: the tab names the Kin, never the id the heading falls back to.
   useRecordTitle(kinName || null);
   // The pet's 411, read alongside the doc rather than joined into it: a 411 that
@@ -151,7 +164,9 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
   const [the411, setThe411] = useState<Async<Kin411 | null>>({ status: 'loading' });
   // The editor is a sub-view of this detail screen: Edit swaps to KinEdit, and a
   // save/archive returns here + reloads so the fresh doc renders.
-  const [editing, setEditing] = useState(false);
+  const [localEditing, setLocalEditing] = useState(false);
+  const editing = routedEditing ?? localEditing;
+  const setEditing = (next: boolean) => (onEditingChange ? onEditingChange(next) : setLocalEditing(next));
   // The tag editor (ProfileTagsSection) stays the same component, just no
   // longer permanently on screen as its own panel: the pills next to the name
   // are the default view, and this toggle is the smaller of the two ways to
@@ -232,6 +247,11 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
 
   useEffect(() => load(), [load]);
 
+  // #1893: an edit form reloaded cold waits for the name, so its title is never an id.
+  if (editing && kinName === '' && kin.status === 'loading') {
+    return <LoadingRow label="Loading Kin…" />;
+  }
+
   if (editing) {
     return (
       <KinEdit
@@ -298,9 +318,9 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
             ? { label: 'Directory', link: linkOptions({ to: '/directory' }) }
             : { label: 'Directory', onSelect: onBack },
           ...householdCrumb,
-          { label: kinName || kinId },
+          { label: kinName || 'Kin' },
         ]}
-        title={kinName || kinId}
+        title={kinName || 'Kin'}
         {...(heroLine !== '' ? { detail: heroLine } : {})}
         leading={
           loaded !== null && (

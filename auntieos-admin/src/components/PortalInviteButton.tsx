@@ -4,6 +4,7 @@ import { describePortalInviteOutcome, inviteKinfolkToPortal, INVITE_TTL_DAYS } f
 import { Dialog } from './Dialog';
 import { GhostButton, PrimaryButton } from './Buttons';
 import { useToast } from './Toast';
+import './PortalInviteButton.css';
 
 /**
  * "Invite to portal" on the household profile (#1603).
@@ -59,6 +60,9 @@ export function PortalInviteButton({
   const { showToast } = useToast();
   const callerKnows = knownActivePrimary !== undefined;
   const [readActivePrimary, setHasActivePrimary] = useState<boolean | null>(null);
+  // #1888: "still reading" is not "read failed". Only a failed read leaves the
+  // button on; while the answer is out it is off, so it cannot look live and then grey.
+  const [reading, setReading] = useState(!callerKnows);
   const hasActivePrimary = callerKnows ? knownActivePrimary : readActivePrimary;
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -67,6 +71,7 @@ export function PortalInviteButton({
   useEffect(() => {
     if (callerKnows) return undefined;
     let live = true;
+    setReading(true);
     listHouseholdMembers(kinfolkId)
       .then((members) => {
         if (live) setHasActivePrimary(members.some((m) => m.role === 'PRIMARY' && m.status === 'ACTIVE'));
@@ -74,6 +79,9 @@ export function PortalInviteButton({
       .catch(() => {
         // Unknown, not "no primary": the button stays on and the server decides.
         if (live) setHasActivePrimary(null);
+      })
+      .finally(() => {
+        if (live) setReading(false);
       });
     return () => {
       live = false;
@@ -81,6 +89,7 @@ export function PortalInviteButton({
   }, [kinfolkId, callerKnows]);
 
   const blocker = portalInviteBlocker(email, hasActivePrimary);
+  const checking = !callerKnows && reading && blocker === null;
   const open = () => {
     setError(null);
     setConfirming(true);
@@ -111,16 +120,25 @@ export function PortalInviteButton({
 
   return (
     <>
-      {primary ? (
-        <PrimaryButton label="Invite to portal" onClick={open} disabled={blocker !== null} />
-      ) : (
-        <GhostButton label="Invite to portal" onClick={open} disabled={blocker !== null} />
-      )}
-      {blocker !== null && (
-        <span className="kinfolk-profile__action-note" data-testid="portal-invite-blocker">
-          {blocker}
-        </span>
-      )}
+      {/* #1888: the note hangs under the button, out of the row's flow, so its
+          arrival never moves the buttons beside this one. */}
+      <span className="portal-invite">
+        {primary ? (
+          <PrimaryButton label="Invite to portal" onClick={open} disabled={blocker !== null || checking} />
+        ) : (
+          <GhostButton label="Invite to portal" onClick={open} disabled={blocker !== null || checking} />
+        )}
+        {blocker !== null && (
+          <span className="kinfolk-profile__action-note portal-invite__note" data-testid="portal-invite-blocker">
+            {blocker}
+          </span>
+        )}
+        {checking && (
+          <span className="kinfolk-profile__action-note portal-invite__note" role="status">
+            Checking the portal…
+          </span>
+        )}
+      </span>
       {confirming && (
         <Dialog
           title="Invite to portal"

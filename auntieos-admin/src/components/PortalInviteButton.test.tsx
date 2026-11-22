@@ -71,12 +71,33 @@ describe('PortalInviteButton (#1603)', () => {
     expect(screen.getByRole('button', { name: 'Invite to portal' })).toBeDisabled();
   });
 
+  // #1888
+  it('is off from the first paint while the read is out, then settles once', async () => {
+    let answer!: (rows: unknown[]) => void;
+    api.listHouseholdMembers.mockReturnValue(new Promise((res) => (answer = res)));
+    render(<PortalInviteButton kinfolkId="k1" householdName="Dre East" email="catch@hanasamku.com" />);
+    expect(screen.getByRole('button', { name: 'Invite to portal' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Checking the portal');
+    answer([primary('ACTIVE')]);
+    expect(await screen.findByText('Already on the portal.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Invite to portal' })).toBeDisabled();
+    expect(screen.queryByText(/Checking the portal/)).toBeNull();
+  });
+
+  it('turns on once the read says nobody is on the portal', async () => {
+    api.listHouseholdMembers.mockResolvedValue([]);
+    render(<PortalInviteButton kinfolkId="k1" householdName="Dre East" email="catch@hanasamku.com" />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Invite to portal' })).toBeEnabled());
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
   it('stays on when the members read fails, and shows the server answer in the dialog', async () => {
     api.listHouseholdMembers.mockRejectedValue(new Error('permission-denied'));
     api.inviteKinfolkToPortal.mockResolvedValue({ kinfolkId: 'k1', status: 'already_active' });
     render(<PortalInviteButton kinfolkId="k1" householdName="Dre East" email="catch@hanasamku.com" />);
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Invite to portal' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Invite to portal' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Invite to portal' }));
     await userEvent.click(screen.getByRole('button', { name: 'Send invite' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('already has an active portal account');
     expect(api.showToast).not.toHaveBeenCalled();
@@ -85,7 +106,8 @@ describe('PortalInviteButton (#1603)', () => {
   it('names a failed send in the dialog', async () => {
     api.inviteKinfolkToPortal.mockRejectedValue(new Error('internal'));
     render(<PortalInviteButton kinfolkId="k1" householdName="Dre East" email="catch@hanasamku.com" />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Invite to portal' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Invite to portal' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Invite to portal' }));
     await userEvent.click(screen.getByRole('button', { name: 'Send invite' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The portal invite was not sent: internal');
   });

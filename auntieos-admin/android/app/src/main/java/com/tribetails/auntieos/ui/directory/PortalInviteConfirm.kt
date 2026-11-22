@@ -33,6 +33,16 @@ internal fun portalInviteBlocker(email: String, hasActivePrimary: Boolean?): Str
     else -> null
 }
 
+/**
+ * #1888: the button's words. A household already on the portal says so on the
+ * button itself, so no line appears under it and nothing on the screen moves.
+ */
+internal fun portalInviteLabel(busy: Boolean, hasActivePrimary: Boolean?): String = when {
+    busy -> "Sending…"
+    hasActivePrimary == true -> "Already on the portal"
+    else -> "Invite to portal"
+}
+
 /** The ask before `inviteKinfolkToPortal` runs. Nothing is sent until Send invite. */
 @Composable
 internal fun PortalInviteConfirmDialog(

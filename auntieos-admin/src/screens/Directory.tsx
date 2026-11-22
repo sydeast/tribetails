@@ -385,6 +385,9 @@ interface DirectoryProps {
   /** The open profile's sub-view from the URL, and where to report a switch (#1594). */
   profileView?: ProfileSubView;
   onProfileViewChange?: (view: ProfileView) => void;
+  /** #1893: the Kin page the address names, and where to report opening or leaving it. */
+  routedKin?: { id: string; edit: boolean } | null;
+  onKinRouteChange?: (next: { id: string; edit: boolean } | null) => void;
 }
 
 /**
@@ -413,6 +416,8 @@ export function Directory({
   initialKinInCare = false,
   profileView,
   onProfileViewChange,
+  routedKin,
+  onKinRouteChange,
 }: DirectoryProps) {
   const kinfolkState = useKinfolkRoster();
   const kinState = useCollection<Kin>(KIN_QUERY);
@@ -449,7 +454,7 @@ export function Directory({
   // it (the mock's trail is Directory / Lorna Wren / Biscuit) and the kin doc
   // only holds an id. Resolved here, from streams this screen already has, and
   // left undefined when it cannot be resolved rather than guessed at.
-  const [openKinId, setOpenKinId] = useState<OpenKin | null>(null);
+  const [localOpenKin, setOpenKinId] = useState<OpenKin | null>(null);
 
   // Roving-tabindex keyboard nav for the Kinfolk/Kin tablist below
   // (Left/Right, Home/End, roving tabIndex).
@@ -557,6 +562,18 @@ export function Directory({
   // is, so its Back button and its trail can name the destination correctly
   // (#689). It is read off the mount, not stored: a profile that is open is a
   // profile this view was drilled into from.
+  // #1893: under a route the address says which Kin is open, so a reload finds
+  // it. Its name and household come from the streams once they arrive.
+  const routedRow =
+    routedKin && kinState.status === 'ready' ? kinState.data.find((k) => k._id === routedKin.id) : undefined;
+  const routedHousehold = routedRow ? householdOf(routedRow) : undefined;
+  const openKinId: OpenKin | null = routedKin
+    ? {
+        id: routedKin.id,
+        name: routedRow ? str(routedRow.name) : '',
+        ...(routedHousehold ? { household: routedHousehold } : {}),
+      }
+    : localOpenKin;
   if (openKinId !== null) {
     return (
       <KinView
@@ -564,7 +581,13 @@ export function Directory({
         kinName={openKinId.name}
         {...(openKinId.household ? { household: openKinId.household } : {})}
         openedFrom={openKinfolkId !== null ? 'profile' : 'directory'}
-        onBack={() => setOpenKinId(null)}
+        onBack={() => (onKinRouteChange ? onKinRouteChange(null) : setOpenKinId(null))}
+        {...(routedKin && onKinRouteChange
+          ? {
+              editing: routedKin.edit,
+              onEditingChange: (edit: boolean) => onKinRouteChange({ id: routedKin.id, edit }),
+            }
+          : {})}
       />
     );
   }
@@ -595,6 +618,10 @@ export function Directory({
         // so the profile's rows go through the same one rather than inventing a
         // second way in.
         onOpenKin={(k) => {
+          if (onKinRouteChange) {
+            onKinRouteChange({ id: k._id, edit: false });
+            return;
+          }
           const household = householdOf(k);
           setOpenKinId({
             id: k._id,
@@ -857,6 +884,10 @@ export function Directory({
                     onClick={() => {
                       if (onSelectKin) {
                         onSelectKin(k._id);
+                        return;
+                      }
+                      if (onKinRouteChange) {
+                        onKinRouteChange({ id: k._id, edit: false });
                         return;
                       }
                       const household = householdOf(k);
