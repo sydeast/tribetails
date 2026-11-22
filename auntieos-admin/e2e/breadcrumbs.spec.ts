@@ -77,12 +77,12 @@ test('the household profile trails back to the Directory list', async ({ page })
 
 /**
  * The case that decided the API. A kin card opens `KinView` as a sibling view
- * of the list with no navigation at all, so this trail is rendered AT
- * `/directory` with a Directory step that points at `/directory`. As a `<Link>`
- * that click would have been a no-op and the operator would still be staring at
- * the pet. The household step beside it IS a link, because it goes somewhere.
+ * of the list, so this trail is rendered on the `/directory` route (since #1893
+ * with `?kin=` on it) with a Directory step that closes the Kin. As a `<Link>`
+ * to the route it is already on, that click would not reliably close the pet.
+ * The household step beside it IS a link, because it goes somewhere.
  */
-test('the trail escapes a kin opened without changing the URL', async ({ page }) => {
+test('the trail escapes a kin opened on the Directory route', async ({ page }) => {
   await page.goto('/directory');
   await page.getByRole('tab', { name: /^Kin(\s|·|$)/ }).click();
   await page.getByRole('button', { name: new RegExp(KIN_NAME) }).click();
@@ -93,11 +93,27 @@ test('the trail escapes a kin opened without changing the URL', async ({ page })
     'href',
     `/directory/${HOUSEHOLD_ID}`,
   );
-  await expect(page).toHaveURL(/\/directory$/);
+  await expect(page).toHaveURL(/\/directory\?kin=/);
 
   await crumbs.getByRole('button', { name: 'Directory' }).click();
   await expect(trail(page)).toHaveCount(0);
+  await expect(page).toHaveURL(/\/directory$/);
   await expect(page.getByRole('tab', { name: /^Kinfolk/ })).toBeVisible();
+});
+
+/** #1893: the Kin page has its own address, so a reload stays and Back leaves it. */
+test('a Kin page survives a reload, and Back returns to the list', async ({ page }) => {
+  await page.goto('/directory');
+  await page.getByRole('tab', { name: /^Kin(\s|·|$)/ }).click();
+  await page.getByRole('button', { name: new RegExp(KIN_NAME) }).click();
+  await expect(page).toHaveURL(/\/directory\?kin=/);
+
+  await page.reload();
+  await expect(trail(page).getByText(KIN_NAME)).toHaveAttribute('aria-current', 'page');
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/directory$/);
+  await expect(trail(page)).toHaveCount(0);
 });
 
 /**
