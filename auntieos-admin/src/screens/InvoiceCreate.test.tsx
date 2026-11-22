@@ -453,6 +453,23 @@ describe('InvoiceCreate terms and due date', () => {
     await screen.findByRole('checkbox');
   }
 
+  // #1903
+  it('a discount over the subtotal says so once, and never asks to tick a visit', async () => {
+    await pick();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    fireEvent.change(screen.getByLabelText('Whole invoice discount in dollars'), { target: { value: '500' } });
+    expect(await screen.findAllByText(/is larger than the subtotal/)).toHaveLength(1);
+    expect(screen.queryByText(/Tick a visit above/)).toBeNull();
+    expect(screen.getByRole('button', { name: /create invoice for 1 visit/i })).toBeDisabled();
+    expect(createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('with nothing ticked it still says how to start', async () => {
+    await pick();
+    await userEvent.click(screen.getByRole('checkbox'));
+    expect(await screen.findByText(/Tick a visit above, or add a line of your own/)).toBeInTheDocument();
+  });
+
   it('works the due date out from the terms, and leaves nowhere to type it', async () => {
     await pick();
     const due = screen.getByLabelText('Invoice due date');

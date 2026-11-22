@@ -323,6 +323,19 @@ export interface EditorPreview {
 }
 
 /**
+ * #1903: the sentences the editor is already showing beside its fields, so the
+ * create button's reason is not printed a second time. Pure.
+ */
+export function editorProblemsShown(
+  drafts: readonly DraftLine[],
+  invoiceDiscountText: string,
+  fixedLines: readonly InvoiceLineItemInput[] = [],
+): string[] {
+  const preview = editorPreviewOf(drafts, invoiceDiscountText, fixedLines);
+  return [preview.invoiceDiscountProblem, ...preview.lineProblems].filter((p): p is string => p !== null);
+}
+
+/**
  * The live totals under the editor, from whatever currently PARSES.
  *
  * #1593: WHEN THE MONEY IS INVALID THERE IS NO TOTAL. A discount larger than
