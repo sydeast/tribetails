@@ -33,7 +33,7 @@ import { useDocById } from '../lib/firestore';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, StatCard, EmptyHint, InfoTip } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { Banner } from '../components/Banner';
 import { APP_ONLY_NOTE } from '../lib/invoiceReminder';
@@ -264,6 +264,18 @@ function rowViewsFor(rows: InvoiceEntry[], todayIso: string): RowView[] {
   });
 }
 
+/**
+ * #1827: the counts the coverage sentences carried, as the Invoices panel's
+ * value. Undefined while nothing has loaded, or when the page is the whole
+ * window and nothing was left out.
+ */
+export function invoicesPanelDetail(loaded: number | null, hasMore: boolean, misdatedHidden: number): string | undefined {
+  if (loaded === null) return undefined;
+  const parts: string[] = [];
+  if (hasMore) parts.push(`${String(loaded)} loaded so far`);
+  if (misdatedHidden > 0) parts.push(`${String(misdatedHidden)} with no real date left out`);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
 /**
  * Admin Invoices list ("The Den · Invoices"). Reads the flat `invoices`
  * collection a PAGE at a time through `usePagedCollection` (invoice `date` desc,
@@ -666,9 +678,14 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
       {/* What the three totals above actually cover. "Billed total" especially:
           summed across a partial page it reads like a book figure and is not
           one, so the line reads off `hasMore` rather than assuming a full page. */}
-      {statsNote !== null && <p className="invoices__stats-note">{statsNote}</p>}
 
-      <DenPanel title="Invoices" subtitle="By invoice date, newest first, a page at a time.">
+      {/* #1827: the sentences are a tip; the counts stay on screen as the
+          panel's value, so a partial page and a dropped invoice still show. */}
+      <DenPanel
+        title="Invoices"
+        subtitle="By invoice date, newest first, a page at a time."
+        detail={invoicesPanelDetail(loaded, hasMore, misdatedHidden)}
+      >
         <ListToolbar
           label="Filter invoices"
           search={search}
@@ -695,7 +712,10 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           ]}
           note={
             <>
-              {scopeNote}
+              {/* #1827: what the search reaches and what the totals cover is
+                  guidance, so it is an info tip rather than a paragraph under
+                  the title. The figures themselves stay on the stat cards. */}
+              <InfoTip text={statsNote === null ? scopeNote : `${scopeNote} ${statsNote}`} />
               {households.status === 'error' && (
                 <span className="invoices__facet-error">
                   {' '}

@@ -90,6 +90,7 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
+import com.tribetails.auntieos.web.ui.components.AuntieInfoTip
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
@@ -203,11 +204,8 @@ fun KinTaleLogsScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(6.dp))
-        Text(
-            text  = "Filters the KinTales loaded here, not the full archive.",
-            style = AuntieTheme.typography.labelSmall,
-            color = AuntieTheme.colors.textFaint,
-        )
+        // #1827: what the search reaches is guidance, an info tip, not a line under the field.
+        AuntieInfoTip("Filters the KinTales loaded here, not the full archive.")
         Spacer(Modifier.height(12.dp))
         // KT1: operator-chosen ordering so the Sent bucket can be organized, not just
         // an ever-growing newest-first scroll. Applied before bucketing below.

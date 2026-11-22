@@ -35,6 +35,7 @@ import {
   DenPanel,
   StatusPill,
   EmptyHint,
+  InfoTip,
   type DenTone,
 } from '../components/DenScreenKit';
 import { IconTile } from '../components/IconTile';
@@ -308,6 +309,15 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
 
   // THE HONESTY LINE. Two forms, because before the first page lands there is no
   // count to state and inventing one is the whole failure class this app refuses.
+  // What the bucket counts actually count. They are a fact about the rows that
+  // have been LOADED, which is the whole window only once the cursor is
+  // exhausted, so the sentence reads off `hasMore` rather than guessing.
+  const statsNote =
+    loaded === null || loaded === 0
+      ? null
+      : hasMore
+        ? `These counts cover the ${String(loaded)} KinTale${plural} loaded so far, not all of ${windowLabel}.`
+        : `These counts cover ${everyOne} KinTale${plural} in ${windowLabel}.`;
   const scopeNote =
     loaded === null
       ? `Search covers household and headline, within ${windowLabel}.`
@@ -427,7 +437,10 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
                   {countLabel}
                 </span>
               )}
-              {scopeNote}
+              {/* #1827: what the search reaches and what the counts cover is
+                  guidance, an info tip beside the count chip rather than a line
+                  under the title. */}
+              <InfoTip text={statsNote === null ? scopeNote : `${scopeNote} ${statsNote}`} />
               {/* A facet whose options failed to load is a control that silently
                   offers nothing. Say so beside it rather than rendering an
                   empty dropdown that looks like an empty directory. */}
@@ -441,17 +454,6 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
           }
         />
 
-        {/* What the bucket counts below actually count. They are a fact about the
-            rows that have been LOADED, which is the whole window only once the
-            cursor is exhausted, so the line reads off `hasMore` rather than
-            guessing from the page size. */}
-        {loaded !== null && (
-          <p className="kintales__stats-note">
-            {hasMore
-              ? `These counts cover the ${String(loaded)} KinTale${plural} loaded so far, not all of ${windowLabel}.`
-              : `These counts cover ${everyOne} KinTale${plural} in ${windowLabel}.`}
-          </p>
-        )}
 
         {draftsNote !== '' && (
           <p className="kintales__stats-note" {...(drafts.status === 'error' ? { role: 'alert' } : {})}>

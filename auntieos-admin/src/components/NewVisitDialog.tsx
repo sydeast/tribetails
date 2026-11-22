@@ -212,6 +212,7 @@ export function NewVisitDialog({
   return (
     <Dialog
       title="New visit"
+      titleTip="Puts a confirmed visit on the calendar now. To send a household a request they approve, use New booking on Bookings."
       onClose={closeUnlessSaving}
       footer={
         <>
@@ -233,10 +234,6 @@ export function NewVisitDialog({
         </>
       }
     >
-      <p className="new-visit__hint">
-        Puts a confirmed visit on the calendar now. To send a household a request they approve, use New
-        booking on Bookings.
-      </p>
 
       <fieldset className="new-visit__fields" disabled={saving}>
         <legend className="new-visit__legend">Visit details</legend>

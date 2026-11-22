@@ -68,6 +68,10 @@ vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => catalogRef
 
 import { KinTales } from './KinTales';
 
+/** #1827: the scope and coverage sentences live in an info tip, not under a title. */
+const inTip = (text: string) => (_: string, el: Element | null) =>
+  el?.getAttribute('role') === 'tooltip' && (el.textContent ?? '').includes(text);
+
 /**
  * `NeedsTriageSection` calls `useToast()`, which throws outside a
  * `<ToastProvider>` (a swallowed confirmation is indistinguishable from a
@@ -465,7 +469,9 @@ describe('KinTales screen: the head', () => {
 
   it('keeps the explanation as the heading tooltip, not a line of copy', () => {
     render(<KinTales />);
-    expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent(/Every recap that goes home/);
+    expect(document.querySelector('.den-heading-subtitle[role="tooltip"]')).toHaveTextContent(
+      /Every recap that goes home/,
+    );
   });
 });
 
@@ -658,7 +664,7 @@ describe('KinTales screen: search, and what it admits to searching', () => {
     render(<KinTales />);
     expect(
       screen.getByText(
-        'Searching the 2 KinTales loaded from the last 7 days, by household and headline.',
+        inTip('Searching the 2 KinTales loaded from the last 7 days, by household and headline.'),
       ),
     ).toBeInTheDocument();
   });
@@ -668,7 +674,7 @@ describe('KinTales screen: search, and what it admits to searching', () => {
     render(<KinTales />);
     expect(
       screen.getByText(
-        'Searching the 2 KinTales loaded from the last 7 days, by household and headline. Load more to reach further back.',
+        inTip('Searching the 2 KinTales loaded from the last 7 days, by household and headline. Load more to reach further back.'),
       ),
     ).toBeInTheDocument();
   });
@@ -677,7 +683,7 @@ describe('KinTales screen: search, and what it admits to searching', () => {
     usePagedCollection.mockReturnValue(paged([], { state: { status: 'loading' } }));
     render(<KinTales />);
     expect(
-      screen.getByText('Search covers household and headline, within the last 7 days.'),
+      screen.getByText(inTip('Search covers household and headline, within the last 7 days.')),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Searching the 0 KinTales/)).toBeNull();
   });
@@ -822,7 +828,7 @@ describe('KinTales screen: the bucket counts say what they count', () => {
     usePagedCollection.mockReturnValue(paged(four));
     render(<KinTales />);
     expect(
-      screen.getByText('These counts cover all 4 KinTales in the last 7 days.'),
+      screen.getByText(inTip('These counts cover all 4 KinTales in the last 7 days.')),
     ).toBeInTheDocument();
   });
 
@@ -831,7 +837,7 @@ describe('KinTales screen: the bucket counts say what they count', () => {
     render(<KinTales />);
     expect(
       screen.getByText(
-        'These counts cover the 4 KinTales loaded so far, not all of the last 7 days.',
+        inTip('These counts cover the 4 KinTales loaded so far, not all of the last 7 days.'),
       ),
     ).toBeInTheDocument();
   });
@@ -840,6 +846,13 @@ describe('KinTales screen: the bucket counts say what they count', () => {
     usePagedCollection.mockReturnValue(paged([], { state: { status: 'loading' } }));
     render(<KinTales />);
     expect(screen.queryByText(/These counts cover/)).toBeNull();
+  });
+  // #1827: the walk read both sentences as grey paragraphs under the chips.
+  it('keeps the scope and coverage sentences out of any paragraph on the page', () => {
+    usePagedCollection.mockReturnValue(paged(four));
+    render(<KinTales />);
+    expect(screen.queryByText(/These counts cover|Searching the/, { selector: 'p' })).toBeNull();
+    expect(screen.getByText(inTip('These counts cover all 4 KinTales'))).toBeInTheDocument();
   });
 });
 
@@ -880,7 +893,7 @@ describe('KinTales screen: paging', () => {
     render(<KinTales />);
     expect(document.querySelectorAll('.kintales__row')).toHaveLength(250);
     expect(screen.getByText('Household 249')).toBeInTheDocument();
-    expect(screen.getByText('These counts cover all 250 KinTales in the last 7 days.')).toBeInTheDocument();
+    expect(screen.getByText(inTip('These counts cover all 250 KinTales in the last 7 days.'))).toBeInTheDocument();
   });
 });
 
@@ -984,7 +997,7 @@ describe('KinTales screen: a draft is a KinTale', () => {
     setDrafts([draft()]);
     render(<KinTales />);
     expect(
-      screen.getByText('These counts cover all 2 KinTales in the last 7 days.'),
+      screen.getByText(inTip('These counts cover all 2 KinTales in the last 7 days.')),
     ).toBeInTheDocument();
   });
   it('searches drafts alongside reports, over the same loaded rows', async () => {
