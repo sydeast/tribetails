@@ -877,7 +877,8 @@ private fun InvoiceDetailBody(
                 )
                 DetailRow("Last reminder", lastReminderLabel(lastReminderAtMs, appOnly = lastReminderAppOnly, heldAtMs = invoice.reminderHeldAtMs))
                 if (invoice.terms.isNotBlank()) DetailRow("Terms", invoice.terms)
-                if (invoice.address.isNotBlank()) DetailRow("Address", invoice.address)
+                invoiceBillingFacts(invoice.kinfolkName, invoice.client, invoice.address, invoice.discount)
+                    .forEach { (label, value) -> DetailRow(label, value) }
             }
         }
 
@@ -1661,6 +1662,25 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
             tone  = AuntieStatusTone.Neutral,
         )
     }
+}
+
+/**
+ * #1899: the saved name, address and discount note, so an edit to them can be
+ * seen on the invoice. A blank one is left out, and so is a name that only
+ * repeats the household already at the top of the sheet. Pure.
+ */
+internal fun invoiceBillingFacts(
+    kinfolkName: String,
+    client: String,
+    address: String,
+    discount: String,
+): List<Pair<String, String>> {
+    val name = client.trim()
+    return listOf(
+        "Kinfolk" to if (name.equals(kinfolkName.trim(), ignoreCase = true)) "" else name,
+        "Address" to address.trim(),
+        "Discount note" to discount.trim(),
+    ).filter { it.second.isNotEmpty() }
 }
 
 @Composable

@@ -80,6 +80,7 @@ import {
   parseInvoiceTermsCode,
   type InvoiceTermsCode,
 } from '../lib/invoiceTerms';
+import { InvoiceBillingFacts } from './InvoiceBillingFacts';
 import { dueDateOrderProblem } from '../lib/invoiceDueOrder';
 import { noticePreviewSentence } from '../lib/invoiceNoticePreview';
 import { failedToLead } from '../lib/callableErrorText';
@@ -2095,6 +2096,7 @@ export function InvoiceDetail({ invoice, initialAction, onEdited, onClose }: Inv
             <dt>Last reminder</dt>
             <dd>{lastReminderLabel(lastReminderAt, undefined, lastReminderAppOnly, invoice.reminderHeldAtMs)}</dd>
           </div>
+          <InvoiceBillingFacts invoice={invoice} />
         </dl>
 
         {/* FIRST OF THE BANNERS, above the disagreement one, because money that
