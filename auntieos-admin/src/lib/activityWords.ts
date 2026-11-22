@@ -45,16 +45,92 @@ const DRAFT_PATH = /(?:generated_drafts|kin_care_reports)\/[\w-]+/g;
  * old notification row names the notification by its key in words, because
  * the catalog label lives on the server.
  */
-function humanizeKey(raw: string): string {
+/**
+ * #1818, #1881: a stored key as words, brand words in their casing:
+ * `CREATE_KINCARE_SESSION` reads "Create KinCare session", never "Create
+ * kincare session". Same table as the server's `brandWords`
+ * (`mytribe/functions/src/lib/auditEvents.ts`), Android and the desktop console.
+ */
+const BRAND_WORDS: Readonly<Record<string, string>> = {
+  kin: 'Kin',
+  kinfolk: 'Kinfolk',
+  kintale: 'KinTale',
+  kintales: 'KinTales',
+  kincare: 'KinCare',
+  auntie: 'Auntie',
+  tribe: 'Tribe',
+  ai: 'AI',
+  gps: 'GPS',
+  pdf: 'PDF',
+  sms: 'SMS',
+};
+
+export function brandWords(raw: string): string {
   const words = raw
+    .trim()
+    .split(/[._\-\s]+/)
+    .filter((w) => w !== '')
+    .map((w) => BRAND_WORDS[w.toLowerCase()] ?? w.toLowerCase());
+  if (words.length === 0) return '';
+  const first = words[0]!;
+  words[0] = first.charAt(0).toUpperCase() + first.slice(1);
+  return words.join(' ');
+}
+
+const humanizeKey = brandWords;
+const lowerWords = (raw: string): string =>
+  raw
     .trim()
     .split(/[._\-\s]+/)
     .filter((w) => w !== '')
     .join(' ')
     .toLowerCase();
-  return words === '' ? '' : words.charAt(0).toUpperCase() + words.slice(1);
+/**
+ * #1818: the plain title of a line, for the kinds that have one. The same words
+ * as the server's `AUDIT_EVENT_TITLES` (`mytribe/functions/src/lib/auditEvents.ts`),
+ * Android and the desktop console. A kind not listed reads as its key through
+ * {@link brandWords}.
+ */
+export const ACTIVITY_TITLES: Readonly<Record<string, string>> = {
+  OPERATOR_CROSSTENANT_ACCESS: 'Household opened',
+  NOTIFICATION_MARKED_UNREAD: 'Notification marked unread',
+  BILLING_PAYMENT_PARTIAL: 'Part payment recorded',
+  NOTIFICATION_NOT_SENT: 'Notification not sent',
+  UPDATE_KINFOLK: 'Kinfolk updated',
+  UPDATE_KINFOLK_TAGS: 'Kinfolk tags changed',
+  ARCHIVE_KINFOLK: 'Kinfolk archived',
+  RESTORE_KINFOLK: 'Kinfolk restored',
+  CREATE_KIN: 'Kin added',
+  UPDATE_KIN: 'Kin updated',
+  UPDATE_KIN_TAGS: 'Kin tags changed',
+  SECONDARY_KINFOLK_SAVED: 'Secondary Kinfolk saved',
+  SECONDARY_KINFOLK_REMOVED: 'Secondary Kinfolk removed',
+  HOUSEHOLD_DATA_SAVED: 'Household details saved',
+  CONTENT_KINTALE_SENT: 'KinTale sent',
+  KINTALE_TEMPLATE_CREATED: 'KinTale template created',
+  KINTALE_TEMPLATE_SAVED: 'KinTale template saved',
+  KINTALE_TEMPLATE_ARCHIVED: 'KinTale template archived',
+  KINTALE_TEMPLATE_RESTORED: 'KinTale template restored',
+  KINTALE_TEMPLATE_DELETED: 'KinTale template deleted',
+  TEMPLATE_CREATED: 'Template created',
+  TEMPLATE_SAVED: 'Template saved',
+  TEMPLATE_DELETED: 'Template deleted',
+  TEMPLATE_ASSIGNED: 'Template assigned',
+  TEMPLATE_UNASSIGNED: 'Template unassigned',
+  TEMPLATE_CONVERTED: 'Template converted to visual',
+  VISIT_ON_MY_WAY: 'Visit: on my way',
+  VISIT_ARRIVED: 'Visit: arrived',
+  VISIT_DEPARTED: 'Visit: departed',
+  VISIT_UNDO_ARRIVAL: 'Visit: arrival undone',
+  VISIT_UNDO_DEPARTED: 'Visit: departure undone',
+};
+
+/** A line's title: its plain title, or its key in words. Never the key itself. */
+export function activityTitleWords(actionType: string): string {
+  const key = actionType.trim().toUpperCase();
+  if (key === '') return 'Event';
+  return ACTIVITY_TITLES[key] ?? brandWords(key);
 }
-const lowerWords = (raw: string): string => humanizeKey(raw).toLowerCase();
 
 const CHANNEL_WORDS: Record<string, string> = { email: 'email', sms: 'text message', push: 'push notification' };
 const channelWords = (c: string): string => CHANNEL_WORDS[c.trim().toLowerCase()] ?? lowerWords(c);
@@ -68,6 +144,7 @@ function channelList(raw: string): string {
   if (words.length === 1) return ` by ${words[0]}`;
   return ` by ${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
+
 /** A stored notification key, or the id that stood in when the key was missing. */
 function notificationQuoted(keyOrId: string): string {
   const k = keyOrId.trim();
@@ -99,6 +176,7 @@ const ACTION_WORDS: Record<string, { done: string; attempt: string }> = {
   UNDO_ARRIVAL: { done: 'Undid the arrival', attempt: 'undo the arrival' },
   UNDO_DEPARTED: { done: 'Undid the departure', attempt: 'undo the departure' },
 };
+
 const done = (a: string): string => ACTION_WORDS[a]?.done ?? humanizeKey(a);
 const attempt = (a: string): string => ACTION_WORDS[a]?.attempt ?? lowerWords(a);
 
@@ -108,6 +186,7 @@ const ARRIVAL_CHECK_WORDS: Record<string, string> = {
   unverified: 'location not verified',
   household_location_unknown: "the household's location is not set",
 };
+
 const PATTERN_WORDS: Record<string, string> = { individual: 'individual dates', weekly: 'weekly' };
 const SESSION_FIELD_WORDS: Record<string, string> = {
   serviceType: 'service',
@@ -116,6 +195,7 @@ const SESSION_FIELD_WORDS: Record<string, string> = {
   kinIds: 'kin',
   kinNames: 'kin',
 };
+
 function editedFields(raw: string): string {
   const words = [
     ...new Set(
@@ -138,6 +218,7 @@ function editedFields(raw: string): string {
 export function visitTransitionWords(action: string, from: string, to: string): string {
   return `${done(action.trim().toUpperCase())}: ${statusWords(from)} to ${statusWords(to)}`;
 }
+
 const ACTION = '(APPROVE|REJECT|CANCEL|COMPLETE|ON_MY_WAY|ARRIVED|DEPARTED|UNDO_ARRIVAL)';
 const ACTION_ON_SESSION = `^${ACTION} on session \\S+: `;
 
@@ -218,6 +299,19 @@ const ID_SHAPES: readonly (readonly [RegExp, (m: RegExpExecArray) => string])[] 
   // ("OPERATOR_CROSSTENANT_ACCESS uid=<id> target=<id>"). Same words as
   // Android and the desktop console.
   [/^OPERATOR_CROSSTENANT_ACCESS(?: uid=\S+)?(?: target=\S+)?$/, () => ACTIVITY_WORDS.householdOpened],
+  // #1818: a visit request, stored with the pattern as its key.
+  [
+    /^Kinfolk submitted (\d+) visit\(s\) \(([^)]*)\)$/,
+    (m) => {
+      const n = Number(m[1]);
+      const p = PATTERN_WORDS[m[2]!.trim()] ?? lowerWords(m[2]!);
+      return `Kinfolk asked for ${n} ${n === 1 ? 'visit' : 'visits'}${p === '' ? '' : ` (${p})`}`;
+    },
+  ],
+  // #1818: a line whose writer gave no sentence, stored as its key and the
+  // actor's uid ("CREATE_KINCARE_SESSION uid=<id>", "<KEY> (client-actor=<id>)").
+  // The title already says it, so the line adds nothing.
+  [/^[A-Z][A-Z0-9_]*(?: uid=\S*)?(?: target=\S*)?(?: \(client-actor=[^)]*\))?$/, () => ''],
 ];
 
 /**
@@ -233,6 +327,7 @@ const NOT_SENT_REASON_WORDS: Record<string, string> = {
   household_has_no_portal_account: 'nobody in the household has a MyTribe sign-in',
   no_recipient: 'there was nobody to send it to',
 };
+
 export function noticeNotSentWords(key: string, reason: string): string {
   const name = notificationQuoted(key);
   const r = reason.trim();
@@ -240,6 +335,7 @@ export function noticeNotSentWords(key: string, reason: string): string {
   const why = NOT_SENT_REASON_WORDS[r];
   return why === undefined ? `Did not send ${name}` : `Did not send ${name}: ${why}`;
 }
+
 /** A stored description as the operator reads it. Text with no id or path passes through. */
 export function activityDescriptionWords(description: string): string {
   const text = description.trim();

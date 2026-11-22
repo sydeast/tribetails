@@ -148,3 +148,7 @@
 /* #1554: the category description, read by screen readers as the fold
    button's description; sighted readers get it from the InfoTip. */
 .nf-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* #1904: the card a tap was on says Saving, Saved or Not saved in its own bar. */
+.nf-cardstatus { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 12px; letter-spacing: .04em; }
+.nf-cardstatus-ok { color: var(--teal); animation: rise .4s var(--ease) both; }
+.nf-cardstatus-failed { color: var(--coral); }

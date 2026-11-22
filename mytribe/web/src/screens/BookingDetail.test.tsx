@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BookingDetail } from './BookingDetail';
+import { BookingDetail, auntieTileLabel } from './BookingDetail';
 import type { GetBookingPolicyResult, GetBusinessClosuresResult } from '../api/bookingApi';
 import type {
   AddBookingNoteResult,
@@ -927,6 +927,18 @@ describe('BookingDetail: a visit that is over (#1285, #1303)', () => {
     expect(screen.queryByText(/before this visit/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /save note/i })).toBeNull();
   });
+
+  it('#1836: a completed visit the office worked itself reads "Your Auntie", never "Not yet assigned"', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done({ auntieDisplayName: null })] }));
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    renderScreen();
+    await screen.findByText('COMPLETED', { selector: '.chip' });
+    expect(screen.getByText('Your Auntie')).toBeInTheDocument();
+    expect(screen.queryByText('Not yet assigned')).toBeNull();
+    expect(screen.getByRole('link', { name: /Read the KinTale/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing has been sent/)).toBeNull();
+  });
+
   it('#1285: or on a cancelled one', async () => {
     mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [done({ status: 'cancelled' })] }));
     renderScreen();
@@ -1160,5 +1172,20 @@ describe('BookingDetail: a declined request (#2029)', () => {
     renderScreen();
     expect(await screen.findByText('DECLINED')).toBeInTheDocument();
     expect(await screen.findByText('We are full that week.')).toBeInTheDocument();
+  });
+});
+
+describe('auntieTileLabel (#2029, #1836)', () => {
+  it('names the Auntie on record', () => {
+    expect(auntieTileLabel('Maya', 'completed')).toBe('Maya');
+    expect(auntieTileLabel('Maya', 'confirmed')).toBe('Maya');
+  });
+
+  it('says who is left when the record names nobody', () => {
+    expect(auntieTileLabel(null, 'completed')).toBe('Your Auntie');
+    expect(auntieTileLabel('  ', 'completed')).toBe('Your Auntie');
+    expect(auntieTileLabel(null, 'declined')).toBe('Not assigned');
+    expect(auntieTileLabel(null, 'confirmed')).toBe('Not yet assigned');
+    expect(auntieTileLabel(null, 'requested')).toBe('Not yet assigned');
   });
 });

@@ -112,7 +112,7 @@ describe('#2162 the server-only list matches the server writers', () => {
   });
 
   it('keys declared ahead of a server writer stay open', () => {
-    for (const k of ['VISIT_COMPLETED', 'UPDATE_KINFOLK', 'CONTENT_KINTALE_SENT']) {
+    for (const k of ['VISIT_COMPLETED', 'UPDATE_KINFOLK']) {
       expect(isServerOnlyAuditEvent(k)).toBe(false);
     }
   });

@@ -294,6 +294,19 @@ const bookingDetailRoute = createRoute({
 });
 
 /**
+ * #1865: a whole booking request, by its batch. A notice about the request
+ * (its approval, a decline) opens it here: one KinCare goes on to that
+ * KinCare's page, several are listed.
+ */
+const bookingRequestRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/schedule/booking/$batchId',
+  staticData: { title: 'Schedule' },
+  beforeLoad: requireActiveTribe,
+  component: lazyRouteComponent(() => import('./screens/BookingRequest'), 'BookingRequest'),
+});
+
+/**
  * Everything /schedule/book reads out of the URL, which is one boolean.
  *
  * "Set up a recurring visit" (Schedule.tsx) starts the wizard pre-set to the
@@ -520,6 +533,7 @@ const routeTree = rootRoute.addChildren([
   homeRoute,
   scheduleRoute,
   bookingDetailRoute,
+  bookingRequestRoute,
   bookingWizardRoute,
   messagesRoute,
   kinRoute,
