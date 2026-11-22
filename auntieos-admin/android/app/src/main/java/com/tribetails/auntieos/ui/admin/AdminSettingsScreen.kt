@@ -1625,7 +1625,7 @@ private fun NotifRowDetail(
         NotifDetailBlock(
             title = "WHO RECEIVES IT",
             lines = notifRecipientLines(entry, matrix.businessAdminCount),
-            empty = "The server sent no recipient rule for this row. Update MyTribe functions to see it.",
+            empty = NOTIF_NO_RECIPIENTS_LINE,
         )
         if (notifReachesBusinessAdmins(entry)) {
             NotifBusinessAdminRosterBlock()
@@ -1656,10 +1656,9 @@ private fun NotifRowDetail(
         NotifDetailBlock(
             title = "WHAT THE BODY CAN CARRY",
             lines = if (fields.isEmpty()) emptyList() else listOf(
-                "Anything here can appear in the message, and so reach whoever the recipient rule " +
-                    "above resolves to: " + fields.joinToString(", "),
+                notifBodyCarryLine(fields),
             ) + entry.emitters.mapNotNull { it.dataNote },
-            empty = "No merge fields are recorded for this row.",
+            empty = "Nothing is listed for this notice yet.",
         )
         NotifDeliveryEvidenceBlock(notificationKey = entry.key)
     }
@@ -4019,3 +4018,11 @@ private fun AddVetClinicCard(onCreate: (VetClinic) -> Unit, onCancel: () -> Unit
         }
     }
 }
+
+/** #1883: the owner's words for what the body can carry, never the data model's. */
+internal fun notifBodyCarryLine(fields: List<String>): String =
+    "Anything here can appear in the message, so everyone who gets this notice can read it: " +
+        fields.joinToString(", ")
+
+/** #1883: a notice the server sent without its recipients, in plain words. */
+internal const val NOTIF_NO_RECIPIENTS_LINE = "Who gets this notice is not listed yet."

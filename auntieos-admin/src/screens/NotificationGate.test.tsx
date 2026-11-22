@@ -362,6 +362,16 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
       expect(screen.queryByText(key)).not.toBeInTheDocument();
     }
   });
+  // #1883: the owner's words. "the recipient rule above resolves to" was the
+  // data model talking.
+  it('says who can read the body in plain words', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    await open();
+    expect(
+      await screen.findByText(/Anything on this list can appear in the message, so everyone who gets this notice can read it\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/recipient rule|resolves to|therefore/)).not.toBeInTheDocument();
+  });
   it('#1592: shows the server words for a merge field when it sends them', async () => {
     getNotificationMatrix.mockResolvedValue(
       matrix({
