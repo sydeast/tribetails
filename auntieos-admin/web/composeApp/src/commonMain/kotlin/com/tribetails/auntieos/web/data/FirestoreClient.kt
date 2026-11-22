@@ -3632,7 +3632,7 @@ fun assignedAuntieLabel(assignedUid: String?, storedName: String?, roster: List<
  * A uid with neither is left out, so the caller keeps whatever it showed before.
  */
 fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
-    staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+    staff.associate { m -> m.uid to staffByline(m) }
 
 /**
  * #1882: a staff member's name, else the word for their role ("Office" for the

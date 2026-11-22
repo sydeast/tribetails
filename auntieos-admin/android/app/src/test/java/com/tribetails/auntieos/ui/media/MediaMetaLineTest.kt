@@ -51,14 +51,16 @@ class MediaMetaLineTest {
     }
 
     @Test
-    fun staffNamesByUidUsesNameThenEmail() {
+    fun staffNamesByUidUsesNameThenRoleNeverEmail() {
         val names = com.tribetails.auntieos.data.repository.staffNamesByUid(
             listOf(
                 com.tribetails.auntieos.data.repository.StaffMember("a", "E2E Admin", null),
-                com.tribetails.auntieos.data.repository.StaffMember("b", null, "catch@hanasamku.com"),
-                com.tribetails.auntieos.data.repository.StaffMember("c", null, null),
+                com.tribetails.auntieos.data.repository.StaffMember("b", null, "catch@hanasamku.com", role = "owner"),
+                com.tribetails.auntieos.data.repository.StaffMember("c", "pawsome@hanasamku.com", null, role = "auntie"),
+                com.tribetails.auntieos.data.repository.StaffMember("d", null, null),
             ),
         )
-        assertEquals(mapOf("a" to "E2E Admin", "b" to "catch@hanasamku.com"), names)
+        // #1882: no name on file reads as the role, the words the visit notes sign with.
+        assertEquals(mapOf("a" to "E2E Admin", "b" to "Office", "c" to "Auntie", "d" to "Staff"), names)
     }
 }

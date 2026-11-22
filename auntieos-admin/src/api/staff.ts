@@ -65,11 +65,11 @@ export async function listStaff(): Promise<StaffMember[]> {
 }
 
 /**
- * uid -> the label `staffLabel` gives, for screens that hold a staff uid and
- * must show a person (#1564: the Gallery's uploader line showed a raw uid).
+ * uid -> the byline a screen shows for a staff member who wrote, uploaded or
+ * saved something (#1564: the Gallery's uploader line showed a raw uid).
  */
 export function staffNamesByUid(staff: readonly StaffMember[]): Map<string, string> {
-  return new Map(staff.map((m) => [m.uid, staffLabel(m)]));
+  return new Map(staff.map((m) => [m.uid, staffByline(m)]));
 }
 
 /** True for a value shaped like an email address, which is never a name. */
