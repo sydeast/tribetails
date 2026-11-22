@@ -529,10 +529,11 @@ private fun BookingListScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // #1826: this counts the office's drafts, not the household requests.
             StatRowCard(
-                label = "Visit requests",
+                label = "Drafts",
                 value = if (pendingState is FirestoreResult.Loading) "…" else pending.size.toString(),
-                trend = "awaiting a reply",
+                trend = "not yet approved",
                 tone  = AuntieStatusTone.Orange,
                 feature = true,
                 modifier = Modifier.weight(1f),
@@ -636,19 +637,20 @@ private fun BookingListScreen(
             Spacer(Modifier.height(18.dp))
         }
 
-        // ── Pending approval (real DRAFT requests) ────────────────────────────
+        // ── Drafts (DRAFT sessions the office saved) ─────────────────────────
+        // #1826: titled apart from the household Visit requests panel above.
         DenPanel(
-            title    = "Visit requests",
-            subtitle = "New booking requests waiting on your call.",
+            title    = "Drafts",
+            subtitle = "Bookings saved as drafts, waiting for you to approve them.",
             trailing = { SectionCount(if (pendingState is FirestoreResult.Loading) "" else "${pending.size}") },
         ) {
             when {
                 pendingState is FirestoreResult.Loading ->
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { repeat(2) { ShimmerCard(height = 92.dp) } }
                 pendingState is FirestoreResult.Error ->
-                    EmptyHint("Couldn't load booking requests: ${(pendingState as FirestoreResult.Error).message}", error = true)
+                    EmptyHint("Couldn't load drafts: ${(pendingState as FirestoreResult.Error).message}", error = true)
                 pending.isEmpty() ->
-                    EmptyHint("No requests waiting. New bookings land here for approval.")
+                    EmptyHint("No drafts.")
                 else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     pending.forEach { booking ->
                         BookingCard(

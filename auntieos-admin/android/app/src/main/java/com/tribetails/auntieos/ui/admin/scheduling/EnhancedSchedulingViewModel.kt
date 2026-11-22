@@ -428,7 +428,7 @@ internal fun bulkRescheduleApplies(status: BookingStatus): Boolean = status == B
 /** Why a selected booking is not offered a new time, in the operator's words. */
 internal fun bulkRescheduleSkipReason(status: BookingStatus): String = when (status) {
     BookingStatus.DRAFT ->
-        "It is still awaiting a reply, so it has no visit on the books to move. Confirm it first."
+        "It is not approved yet, so it has no visit on the books to move. Confirm it first."
     BookingStatus.COMPLETED -> "It has already been completed."
     BookingStatus.REJECTED -> "It has already been cancelled."
     // Exhaustive over the enum, never an `else`: a status added to
