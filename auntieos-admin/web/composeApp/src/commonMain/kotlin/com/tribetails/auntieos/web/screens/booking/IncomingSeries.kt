@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.booking
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import com.tribetails.auntieos.web.data.KinCareVisit
 import com.tribetails.auntieos.web.data.StaffMember
 import kotlin.time.ExperimentalTime
@@ -58,8 +59,6 @@ fun BookingSeries.declineConfirmTitle(): String = "Turn down this request${house
 fun BookingSeries.detailTitle(): String = "New request${householdSuffix(kinfolkName, "from")}"
 
 private val WEEKDAYS = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-private val MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
 /**
  * One line per visit in the request, on the business clock: "Wed, Jun 3 at
  * 9:00 AM". A start that is not an instant is shown as it came, and a blank
@@ -71,10 +70,7 @@ fun BookingSeries.visitLines(zone: TimeZone): List<String> = visits.map { v ->
     if (raw.isEmpty()) return@map "Time not on file"
     val instant = runCatching { Instant.parse(raw) }.getOrNull() ?: return@map raw
     val t = instant.toLocalDateTime(zone)
-    val hour12 = if (t.hour % 12 == 0) 12 else t.hour % 12
-    val ampm = if (t.hour < 12) "AM" else "PM"
-    val minute = t.minute.toString().padStart(2, '0')
-    "${WEEKDAYS[t.dayOfWeek.ordinal]}, ${MONTHS[t.month.ordinal]} ${t.day} at $hour12:$minute $ampm"
+    "${WEEKDAYS[t.dayOfWeek.ordinal]}, ${AdminTime.dateTime(t)}"
 }
 
 /**

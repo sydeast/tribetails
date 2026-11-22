@@ -444,7 +444,7 @@ describe('KinTaleCompose: the composer mock', () => {
     expect(within(nav).getByText('New tale')).toHaveAttribute('aria-current', 'page');
     expect(within(hero).getByRole('heading', { level: 1 })).toHaveTextContent(/^New tale$/);
     // The mock's cover eyebrow, "Visit · <when> · <service>", as the detail line.
-    expect(hero.querySelector('.den-heading-detail')).toHaveTextContent(/^Visit · 07-16 \d\d:\d\d · Dog Walk$/);
+    expect(hero.querySelector('.den-heading-detail')).toHaveTextContent(/^Visit · Jul 16, 2026 \d\d:\d\d · Dog Walk$/);
     expect(within(hero).getByText('Draft')).toHaveClass('den-statuspill');
     expect(within(hero).getByText('Draft')).toHaveAttribute('data-tone', 'orange');
     // A nested screen carries the trail, never the list's kicker.

@@ -10,7 +10,6 @@ import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
-import java.util.Locale
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FormSchema pure helpers. Extracted as top-level functions per
@@ -41,7 +40,7 @@ const val NO_UPDATED_AT_LABEL = "date unknown"
  *
  * Three input classes, three honest outputs, never a crash and never a
  * fabricated date:
- *  - a real instant  -> `08-02 05:15`
+ *  - a real instant  -> `Aug 2, 2026 05:15` (#1828, the admin shape)
  *  - blank / absent  -> [NO_UPDATED_AT_LABEL]. `FormSchemaSummary.updatedAt` is
  *    a non-null String on this platform, so a schema saved before the field
  *    existed arrives as `""`. Not "never updated": absent is unknown, not proof
@@ -53,14 +52,7 @@ fun formSchemaUpdatedLabel(updatedAt: String): String {
     val raw = updatedAt.trim()
     if (raw.isEmpty()) return NO_UPDATED_AT_LABEL
     val local = parseFormSchemaInstant(raw) ?: return raw
-    return String.format(
-        Locale.US,
-        "%02d-%02d %02d:%02d",
-        local.monthValue,
-        local.dayOfMonth,
-        local.hour,
-        local.minute,
-    )
+    return com.tribetails.auntieos.domain.AdminTime.DATE_TIME.format(local)
 }
 
 /**

@@ -90,7 +90,7 @@ class BookingWizardAvailabilityTest {
         val busy = availability.dayAvailability(tuesday, today = LocalDate.of(2027, 1, 1))
         assertEquals(BookingDayBadge.BLOCKED, busy.badge)
         assertTrue("a busy block is overridable, so the operator may still pick it", busy.pickable)
-        assertEquals(listOf("8:00 AM to 12:00 PM"), busy.blockedWindows)
+        assertEquals(listOf("08:00 to 12:00"), busy.blockedWindows)
     }
 
     @Test
@@ -120,7 +120,7 @@ class BookingWizardAvailabilityTest {
             blockedByDate = mapOf("2027-08-02" to listOf(slot("2027-08-02", "08:00", "12:00"))),
         )
         assertEquals(
-            listOf("Aug 2 at 10:00 AM: blocked time from 8:00 AM to 12:00 PM."),
+            listOf("Aug 2 at 10:00: blocked time from 08:00 to 12:00."),
             bookingSelectionWarnings(listOf(visitAt(monday, 10)), availability, zone),
         )
     }
@@ -146,7 +146,7 @@ class BookingWizardAvailabilityTest {
             availability,
             zone,
         )
-        assertEquals(listOf("Aug 3 at 7:00 PM: outside business hours (9:00 AM to 5:00 PM)."), warnings)
+        assertEquals(listOf("Aug 3 at 19:00: outside business hours (09:00 to 17:00)."), warnings)
         assertTrue(warnings.none { it.startsWith("Aug 2") })
     }
 
@@ -180,7 +180,7 @@ class BookingWizardAvailabilityTest {
         )
         assertEquals(
             listOf(
-                "Aug 2 at 7:00 PM: outside business hours (9:00 AM to 5:00 PM).",
+                "Aug 2 at 19:00: outside business hours (09:00 to 17:00).",
                 "Aug 7: the business is closed that day.",
             ),
             bookingSelectionWarnings(
@@ -229,10 +229,10 @@ class BookingWizardAvailabilityTest {
 
     @Test
     fun `clock formatting handles both midnights and both noons`() {
-        assertEquals("12:00 AM", formatClock(0, 0))
-        assertEquals("12:30 PM", formatClock(12, 30))
-        assertEquals("1:05 PM", formatClock(13, 5))
-        assertEquals("11:59 PM", formatClock(23, 59))
+        assertEquals("00:00", formatClock(0, 0))
+        assertEquals("12:30", formatClock(12, 30))
+        assertEquals("13:05", formatClock(13, 5))
+        assertEquals("23:59", formatClock(23, 59))
     }
 
     @Test

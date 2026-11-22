@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.tribetails.auntieos.data.repository.StaffMember
 import com.tribetails.auntieos.data.repository.staffNamesByUid
 import com.tribetails.auntieos.data.repository.staffRolesByUid
@@ -654,12 +655,9 @@ internal fun activityDetailRows(
     return rows
 }
 
-/** `Nov 11, 2026, 11:33a`: an entry's time as the opened entry reads it (#1818). */
-internal fun activityWhenWords(w: ActivityWhen): String {
-    val month = MONTHS.getOrNull(w.dayKey.substring(5, 7).toInt() - 1) ?: w.dayKey.substring(5, 7)
-    val day = w.dayKey.substring(8, 10).toInt()
-    return "$month $day, ${w.dayKey.take(4)}, ${w.clock}"
-}
+/** `Nov 11, 2026 11:33`: an entry's time as the opened entry reads it (#1818), in the admin shape (#1828). */
+internal fun activityWhenWords(w: ActivityWhen): String =
+    "${com.tribetails.auntieos.domain.AdminTime.dayKeyLabel(w.dayKey)} ${w.clock}"
 
 private val SEVERITY_WORDS = mapOf("info" to "Info", "warn" to "Warning", "critical" to "Critical")
 private fun severityWords(raw: String): String {

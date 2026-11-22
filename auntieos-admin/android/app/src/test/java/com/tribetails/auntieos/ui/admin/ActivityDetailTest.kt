@@ -51,7 +51,7 @@ class ActivityDetailTest {
     fun detailLeadsWithOneReadableTimeInTheBusinessZone() {
         // #1818: never the raw UTC stamp, and no second "Business time" row.
         val rows = activityDetailRows(entry(), java.time.ZoneId.of("America/Chicago"))
-        assertEquals("When" to "Aug 3, 2026, 9:02a", rows.first())
+        assertEquals("When" to "Aug 3, 2026 09:02", rows.first())
         assertTrue(rows.none { it.first == "Business time" || it.second.contains("2026-08-03T") })
     }
 
@@ -155,7 +155,7 @@ class ActivityDetailTest {
             listOf(
                 "Notice" to "KinCare booking confirm",
                 "Recorded after the fact" to "no",
-                "Start time" to "Nov 11, 2026, 11:33a",
+                "Start time" to "Nov 11, 2026 11:33",
                 "Status" to "On my way",
             ),
             rows,

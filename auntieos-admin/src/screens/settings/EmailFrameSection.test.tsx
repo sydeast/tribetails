@@ -158,7 +158,7 @@ describe('Email frame section', () => {
       api.getEmailFrame.mockResolvedValue(state({ footerText: 'Thanks' }, '2026-11-11T19:45:00.000Z'));
       render(<EmailFrameSection />);
       await screen.findByLabelText('Accent hex');
-      expect(screen.getByText(/^Last saved \S+ \S+$/)).toBeInTheDocument();
+      expect(screen.getByText(/^Last saved \w{3} \d{1,2}, \d{4} \d\d:\d\d$/)).toBeInTheDocument();
       expect(document.body.textContent).not.toContain(OWNER_UID);
     });
 

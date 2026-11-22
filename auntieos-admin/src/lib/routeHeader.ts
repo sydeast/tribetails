@@ -1,4 +1,5 @@
 import { formatClockDuration, formatMiles } from '@tribetails/geo';
+import { formatHHmm } from './time';
 
 /**
  * The dark strip that sits over the Kin Care route map (#760).
@@ -62,7 +63,7 @@ function instant(iso: string | undefined): Date | null {
 }
 
 /**
- * LOCAL `h:mma`, the reference report's shape: "12:05pm", "9:01am".
+ * LOCAL 24-hour `HH:mm`, "12:05", "09:01" (#1828: the admin clock).
  *
  * Local, not UTC, for the AO-18 reason `lib/time.ts` states: the operator's
  * clock is their wall clock, and a UTC slice would print every afternoon visit
@@ -71,10 +72,7 @@ function instant(iso: string | undefined): Date | null {
 export function clockTime(iso: string | undefined): string {
   const d = instant(iso);
   if (!d) return '';
-  const h24 = d.getHours();
-  const h = h24 % 12 === 0 ? 12 : h24 % 12;
-  const m = String(d.getMinutes()).padStart(2, '0');
-  return `${h}:${m}${h24 < 12 ? 'am' : 'pm'}`;
+  return formatHHmm(d.getHours(), d.getMinutes());
 }
 
 const MINUTE = 60_000;

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
+import com.tribetails.auntieos.domain.AdminTime
 import com.tribetails.auntieos.data.model.BookingTimeSlot
 import com.tribetails.auntieos.data.model.BusinessHours
 import com.tribetails.auntieos.data.repository.NewBookingVisit
@@ -188,15 +189,8 @@ fun formatDayAndDate(date: LocalDate): String {
     return "$day, ${formatShortDate(date)}"
 }
 
-/** 24h wall clock to "9:00 AM". */
-fun formatClock(hour: Int, minute: Int): String {
-    val suffix = if (hour < 12) "AM" else "PM"
-    val h = when {
-        hour % 12 == 0 -> 12
-        else -> hour % 12
-    }
-    return "$h:%02d %s".format(minute, suffix)
-}
+/** 24h wall clock to "09:00" (#1828: the admin clock is 24-hour). */
+fun formatClock(hour: Int, minute: Int): String = AdminTime.clock(hour, minute)
 
 /**
  * "8:00 AM to 12:00 PM" from two "HH:mm" strings. Falls back to the raw strings

@@ -536,6 +536,8 @@ data class EditKinfolkUiState(
 /** #1583: why an age / weight on the pet form is refused, or null for each that passes. */
 data class KinMeasureErrors(val age: String? = null, val weight: String? = null) {
     val first: String? get() = age ?: weight
+    /** #1851: every refusal, for the message beside Save. Naming only the first hid a bad weight. */
+    val all: String? get() = listOfNotNull(age, weight).joinToString(" ").ifBlank { null }
 }
 data class AddKinUiState(
     val kinfolkId: String = "",
@@ -2116,7 +2118,7 @@ class DirectoryViewModel(
 
         // #1583: age and weight are numbers. A value left as loaded passes even if
         // it is old free text, so a record with a bad legacy value stays editable.
-        val measureError = editKinMeasureErrors(state).first
+        val measureError = editKinMeasureErrors(state).all
         if (measureError != null) {
             _editKinState.value = state.copy(error = measureError)
             return

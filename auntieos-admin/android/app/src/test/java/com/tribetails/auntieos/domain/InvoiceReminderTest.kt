@@ -77,21 +77,21 @@ class InvoiceReminderTest {
 
     @Test
     fun `#1507 last reminder label says app only for an explicit true flag alone`() {
-        assertEquals("Sep 14, 3:05 PM, app only", lastReminderLabel(t, utc, appOnly = true, nowMs = t))
-        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, utc, appOnly = false, nowMs = t))
-        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, utc, appOnly = null, nowMs = t))
+        assertEquals("Sep 14, 2025 15:05, app only", lastReminderLabel(t, utc, appOnly = true, nowMs = t))
+        assertEquals("Sep 14, 2025 15:05", lastReminderLabel(t, utc, appOnly = false, nowMs = t))
+        assertEquals("Sep 14, 2025 15:05", lastReminderLabel(t, utc, appOnly = null, nowMs = t))
         assertEquals("none sent", lastReminderLabel(null, utc, appOnly = true))
     }
 
     @Test
     fun `#2515 a reminder held at its send time reads held, not sent`() {
         val heldAt = t + 5 * 60 * 1000
-        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, utc, appOnly = false, nowMs = t, heldAtMs = heldAt))
-        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, utc, appOnly = true, nowMs = t, heldAtMs = heldAt))
-        assertEquals("Sep 14, 3:05 PM, held, not sent", lastReminderLabel(t, utc, nowMs = t, heldAtMs = t))
+        assertEquals("Sep 14, 2025 15:05, held, not sent", lastReminderLabel(t, utc, appOnly = false, nowMs = t, heldAtMs = heldAt))
+        assertEquals("Sep 14, 2025 15:05, held, not sent", lastReminderLabel(t, utc, appOnly = true, nowMs = t, heldAtMs = heldAt))
+        assertEquals("Sep 14, 2025 15:05, held, not sent", lastReminderLabel(t, utc, nowMs = t, heldAtMs = t))
         // A reminder sent after the hold stamps a later time and reads as sent.
-        assertEquals("Sep 14, 4:10 PM", lastReminderLabel(heldAt + 60 * 60 * 1000, utc, nowMs = t, heldAtMs = heldAt))
-        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, utc, nowMs = t, heldAtMs = null))
+        assertEquals("Sep 14, 2025 16:10", lastReminderLabel(heldAt + 60 * 60 * 1000, utc, nowMs = t, heldAtMs = heldAt))
+        assertEquals("Sep 14, 2025 15:05", lastReminderLabel(t, utc, nowMs = t, heldAtMs = null))
         assertEquals("none sent", lastReminderLabel(null, utc, heldAtMs = heldAt))
     }
 
@@ -99,25 +99,25 @@ class InvoiceReminderTest {
     fun `#2515 the list line says held instead of reminded`() {
         val heldAt = t + 5 * 60 * 1000
         assertEquals("reminder held, not sent", reminderListLine(t, false, heldAt, utc, t))
-        assertEquals("reminded Sep 14, 3:05 PM, app only", reminderListLine(t, true, null, utc, t))
-        assertEquals("reminded Sep 14, 4:10 PM", reminderListLine(heldAt + 60 * 60 * 1000, false, heldAt, utc, t))
+        assertEquals("reminded Sep 14, 2025 15:05, app only", reminderListLine(t, true, null, utc, t))
+        assertEquals("reminded Sep 14, 2025 16:10", reminderListLine(heldAt + 60 * 60 * 1000, false, heldAt, utc, t))
         assertEquals("reminded none sent", reminderListLine(null, false, heldAt, utc, t))
     }
 
     @Test
     fun `formats month, day and clock time`() {
-        assertEquals("Sep 14, 3:05 PM", formatReminderTime(t, utc, t))
+        assertEquals("Sep 14, 2025 15:05", formatReminderTime(t, utc, t))
     }
 
     @Test
     fun `each reason reads as its own sentence`() {
         assertEquals("Reminder sent.", reminderOutcomeMessage(ReminderOutcome(true, "sent", t, t + day), utc, t))
         assertEquals(
-            "Not sent: a reminder already went out Sep 14, 3:05 PM. The next one can go out after Sep 15, 3:05 PM.",
+            "Not sent: a reminder already went out Sep 14, 2025 15:05. The next one can go out after Sep 15, 2025 15:05.",
             reminderOutcomeMessage(ReminderOutcome(false, "recent", t, t + day), utc, t),
         )
         assertEquals(
-            "Not sent: a reminder for this invoice is already being sent. If it does not arrive, try again after Sep 14, 3:05 PM.",
+            "Not sent: a reminder for this invoice is already being sent. If it does not arrive, try again after Sep 14, 2025 15:05.",
             reminderOutcomeMessage(ReminderOutcome(false, "in-progress", null, t), utc, t),
         )
         assertEquals(
@@ -130,7 +130,7 @@ class InvoiceReminderTest {
     fun `last reminder label reads none sent for null or zero`() {
         assertEquals("none sent", lastReminderLabel(null))
         assertEquals("none sent", lastReminderLabel(0L))
-        assertEquals("Sep 14, 3:05 PM", lastReminderLabel(t, utc, nowMs = t))
+        assertEquals("Sep 14, 2025 15:05", lastReminderLabel(t, utc, nowMs = t))
     }
 
     // ── #1511: the four more send results ─────────────────────────────────────

@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.schedule
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -174,12 +175,8 @@ internal fun visitNoteByline(
     }
     val whenText = note.createdAtMs?.let { ms ->
         val t = Instant.fromEpochMilliseconds(ms).toLocalDateTime(zone)
-        val month = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[t.monthNumber - 1]
-        val h12 = if (t.hour % 12 == 0) 12 else t.hour % 12
-        val ampm = if (t.hour < 12) "AM" else "PM"
-        // #1599: the year when the note is from another one.
-        val year = if (t.year == currentYear) "" else ", ${t.year}"
-        "$month ${t.dayOfMonth}$year, $h12:${t.minute.toString().padStart(2, '0')} $ampm"
+        // #1828: the admin day and 24-hour clock, always with the year.
+        AdminTime.dateTime(t)
     }
     return listOfNotNull(if (note.visibility == "adminOnly") "Admin only" else null, who, whenText).joinToString(" · ")
 }

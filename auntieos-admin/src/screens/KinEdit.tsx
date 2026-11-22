@@ -209,10 +209,17 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
     // #1583: age and weight are numbers. A value left as it loaded passes even
     // if it is old free text, so a record with a bad legacy value stays editable.
     const base = loaded.status === 'ready' ? toForm(loaded.data) : null;
-    const measureError =
-      validateKinAge(form.age, base?.age) ?? validateKinWeight(form.weight, base?.weight);
-    if (measureError !== null) {
-      setError(measureError);
+    // #1851: every refused value is named, not only the first, and the first
+    // field that needs fixing takes focus, which scrolls it into view.
+    const problems = [
+      validateKinAge(form.age, base?.age),
+      validateKinWeight(form.weight, base?.weight),
+    ].filter((p): p is string => p !== null);
+    if (problems.length > 0) {
+      setError(problems.join(' '));
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('[data-screen="kin-edit"] [aria-invalid="true"]')?.focus();
+      });
       return;
     }
     setSaving(true);
@@ -303,19 +310,13 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   const isOwner = access?.status === 'admin';
 
   return (
-    <div className="screen">
+    <div className="screen" data-screen="kin-edit">
       <DenScreenHeading
         kicker={navKicker('directory')}
         title={`Edit ${kinName || kinId}`}
         subtitle="Kin profile editor."
         trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={busy} />}
       />
-
-      {error !== null && (
-        <Banner tone="error" title="Save failed" onDismiss={() => setError(null)}>
-          {error}
-        </Banner>
-      )}
 
       <AsyncRegion
         state={loaded}
@@ -504,6 +505,19 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                   />
                 </div>
               </div>
+              {/* #1851: what stopped the save or the archive, beside the button
+                  that was pressed. At the top of the page it was off screen,
+                  and its arrival pushed the button out of view. */}
+              {error !== null && (
+                <Banner
+                  tone="error"
+                  title="That didn't save"
+                  onDismiss={() => setError(null)}
+                  className="kedit__save-error"
+                >
+                  {error}
+                </Banner>
+              )}
             </>
           )
         }

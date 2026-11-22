@@ -252,7 +252,7 @@ class IncomingSeriesTest {
         assertEquals("Long walk", series.serviceName(catalog))
         assertEquals("2 visits · recurring series · Long walk · Rex", series.subject(catalog))
         assertEquals(
-            listOf("Wed, Jun 3 at 9:00 AM", "Wed, Jun 10 at 9:00 AM · Bath time"),
+            listOf("Wed, Jun 3, 2026 09:00", "Wed, Jun 10, 2026 09:00 · Bath time"),
             series.visitLines(ZoneId.of("America/Chicago"), catalog),
         )
     }
@@ -269,7 +269,7 @@ class IncomingSeriesTest {
             ),
         ).single()
         assertEquals(
-            listOf("Wed, Jun 3 at 9:00 AM", "Night of Fri, Jun 12, start time not set · Overnight"),
+            listOf("Wed, Jun 3, 2026 09:00", "Night of Fri, Jun 12, start time not set · Overnight"),
             series.visitLines(ZoneId.of("America/Chicago")),
         )
     }

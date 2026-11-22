@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web.screens.schedule
 
+import com.tribetails.auntieos.web.ui.AdminTime
 import com.tribetails.auntieos.web.screens.LocalServiceCatalog
 import com.tribetails.auntieos.web.screens.ServiceCatalog
 import com.tribetails.auntieos.web.screens.bookingServiceTone
@@ -1435,20 +1436,11 @@ private fun positionalMinutes(iso: String): Int? = runCatchingCancellable {
     hour * 60 + minute
 }.getOrNull()
 
-/** Compact hour label for the time gutter (8a, 12p, 1p). */
-private fun hourLabel(hour24: Int): String {
-    val ap = if (hour24 < 12) "a" else "p"
-    val h = hour24 % 12
-    val hh = if (h == 0) 12 else h
-    return "$hh$ap"
-}
+/** Hour label for the time gutter (08:00, 12:00, 13:00; #1828: 24-hour). */
+private fun hourLabel(hour24: Int): String = AdminTime.clock(hour24, 0)
 
 private fun hourMinuteLabel(minutes: Int): String {
-    val h = minutes / 60
-    val m = minutes % 60
-    val hh = h % 12
-    val h12 = if (hh == 0) 12 else hh
-    return "$h12:${m.toString().padStart(2, '0')}"
+    return AdminTime.clock(minutes / 60, minutes % 60)
 }
 
 /**
@@ -1460,18 +1452,10 @@ private fun hourMinuteLabel(minutes: Int): String {
 @OptIn(ExperimentalTime::class)
 private fun displayTime(iso: String, zone: TimeZone): String {
     val ldt = parseToLocal(iso, zone)
-    if (ldt != null) {
-        val ampm = if (ldt.hour >= 12) "PM" else "AM"
-        val hour12 = when (ldt.hour % 12) { 0 -> 12; else -> ldt.hour % 12 }
-        return "$hour12:${ldt.minute.toString().padStart(2, '0')} $ampm"
-    }
+    if (ldt != null) return AdminTime.clock(ldt.hour, ldt.minute)
     return runCatchingCancellable {
         if (iso.length < 16) return@runCatchingCancellable iso
-        val hour = iso.substring(11, 13).toInt()
-        val minute = iso.substring(14, 16)
-        val ampm = if (hour >= 12) "PM" else "AM"
-        val hour12 = when (hour % 12) { 0 -> 12; else -> hour % 12 }
-        "$hour12:$minute $ampm"
+        AdminTime.clock(iso.substring(11, 13).toInt(), iso.substring(14, 16).toInt())
     }.getOrDefault(iso)
 }
 

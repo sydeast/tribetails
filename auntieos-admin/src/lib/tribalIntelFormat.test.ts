@@ -59,7 +59,7 @@ describe('tribalIntelWhen', () => {
   it('shows the LOCAL clock time, not the UTC hour (AO-18) or the raw ISO string', () => {
     // 2026-07-16 20:00 America/Chicago (CDT, UTC-5) round-trips as this UTC
     // instant, matching createTrainingDocument.ts's `new Date().toISOString()`.
-    expect(tribalIntelWhen('2026-07-17T01:00:00.000Z')).toBe('07-16 20:00');
+    expect(tribalIntelWhen('2026-07-17T01:00:00.000Z')).toBe('Jul 16, 2026 20:00');
   });
 });
 

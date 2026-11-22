@@ -107,7 +107,7 @@ describe('businessHoursForDay', () => {
 describe('dayHoursLabel', () => {
   it('renders 12h for an open day, the raw text for an unreadable one', () => {
     expect(dayHoursLabel({ kind: 'open', startHHmm: '09:00', endHHmm: '17:00' })).toBe(
-      '9:00 AM to 5:00 PM',
+      '09:00 to 17:00',
     );
     expect(dayHoursLabel({ kind: 'unreadable', raw: 'by appt' })).toBe('by appt');
     expect(dayHoursLabel({ kind: 'closed' })).toBe('Closed');
@@ -140,12 +140,12 @@ describe('blockedWindows and clashingBlocks', () => {
   ];
 
   it('labels each window for display', () => {
-    expect(blockedWindows(SLOTS).map((w) => w.label)).toEqual(['8:00 AM to 12:00 PM', 'Time TBD']);
+    expect(blockedWindows(SLOTS).map((w) => w.label)).toEqual(['08:00 to 12:00', 'Time TBD']);
   });
 
   it('flags a start inside a window, half-open at each end', () => {
     const windows = blockedWindows(SLOTS);
-    expect(clashingBlocks('09:00', windows).map((w) => w.label)).toEqual(['8:00 AM to 12:00 PM']);
+    expect(clashingBlocks('09:00', windows).map((w) => w.label)).toEqual(['08:00 to 12:00']);
     expect(clashingBlocks('08:00', windows)).toHaveLength(1);
     expect(clashingBlocks('12:00', windows)).toHaveLength(0);
     expect(clashingBlocks('07:59', windows)).toHaveLength(0);
@@ -167,7 +167,7 @@ describe('dayBadge', () => {
     expect(dayBadge(day({ past: true, hours: { kind: 'closed' } }))).toBeNull();
   });
   it('ranks blocked above closed above a visit count', () => {
-    const blocked = [{ label: '8:00 AM to 12:00 PM', startHHmm: '08:00', endHHmm: '12:00' }];
+    const blocked = [{ label: '08:00 to 12:00', startHHmm: '08:00', endHHmm: '12:00' }];
     expect(dayBadge(day({ blocked, hours: { kind: 'closed' }, sessionCount: 2 }))).toBe('Blocked');
     expect(dayBadge(day({ hours: { kind: 'closed' }, sessionCount: 2 }))).toBe('Closed');
     expect(dayBadge(day({ sessionCount: 2 }))).toBe('2');
@@ -179,7 +179,7 @@ describe('dayBadge', () => {
     expect(dayBadge(day({ scheduleKnown: false, sessionCount: 4 }))).toBeNull();
   });
   it('marks a company holiday Closed even over a blocked window or a visit count', () => {
-    const blocked = [{ label: '8:00 AM to 12:00 PM', startHHmm: '08:00', endHHmm: '12:00' }];
+    const blocked = [{ label: '08:00 to 12:00', startHHmm: '08:00', endHHmm: '12:00' }];
     expect(dayBadge(day({ holidayName: 'Independence Day', blocked, sessionCount: 2 }))).toBe('Closed');
   });
   it('a past day stays unmarked even if it would also be a holiday', () => {
@@ -189,7 +189,7 @@ describe('dayBadge', () => {
 
 describe('dayDescription', () => {
   it('speaks the open window a sighted operator only sees implicitly', () => {
-    expect(dayDescription(day())).toBe('open 9:00 AM to 5:00 PM');
+    expect(dayDescription(day())).toBe('open 09:00 to 17:00');
   });
   it('says a past day is not available', () => {
     expect(dayDescription(day({ past: true }))).toBe('in the past, not available');
@@ -202,11 +202,11 @@ describe('dayDescription', () => {
   it('names the blocked windows and the existing visit count', () => {
     const d = day({
       hours: { kind: 'closed' },
-      blocked: [{ label: '8:00 AM to 12:00 PM', startHHmm: '08:00', endHHmm: '12:00' }],
+      blocked: [{ label: '08:00 to 12:00', startHHmm: '08:00', endHHmm: '12:00' }],
       sessionCount: 1,
     });
     expect(dayDescription(d)).toBe(
-      'business closed, blocked 8:00 AM to 12:00 PM, 1 visit already scheduled',
+      'business closed, blocked 08:00 to 12:00, 1 visit already scheduled',
     );
   });
   it('names the holiday and does not also say "business closed" (one reason, not two)', () => {
@@ -229,15 +229,15 @@ describe('selectionWarnings', () => {
 
   it('names an out-of-hours start and quotes the real window', () => {
     expect(selectionWarnings([day()], '19:00')).toEqual([
-      'Aug 3: 19:00 is outside business hours (9:00 AM to 5:00 PM).',
+      'Aug 3: 19:00 is outside business hours (09:00 to 17:00).',
     ]);
   });
 
   it('names a blocked window the start lands in', () => {
     const d = day({
-      blocked: [{ label: '9:00 AM to 11:00 AM', startHHmm: '09:00', endHHmm: '11:00' }],
+      blocked: [{ label: '09:00 to 11:00', startHHmm: '09:00', endHHmm: '11:00' }],
     });
-    expect(selectionWarnings([d], '10:00')).toEqual(['Aug 3: blocked time at 9:00 AM to 11:00 AM.']);
+    expect(selectionWarnings([d], '10:00')).toEqual(['Aug 3: blocked time at 09:00 to 11:00.']);
   });
 
   it('stays silent about a day whose availability could not be read', () => {
@@ -254,7 +254,7 @@ describe('selectionWarnings', () => {
     );
     expect(warnings).toEqual([
       'Aug 3: the business is closed that day.',
-      'Aug 5: 19:00 is outside business hours (9:00 AM to 5:00 PM).',
+      'Aug 5: 19:00 is outside business hours (09:00 to 17:00).',
     ]);
   });
 

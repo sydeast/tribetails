@@ -100,7 +100,7 @@ describe('NeedsTriageSection: the row', () => {
   it('shows when it was written, a friendly channel label, and the body preview, with all three actions', async () => {
     listOrphanReports.mockResolvedValue([orphan()]);
     render(<NeedsTriageSection kinfolk={readyKinfolk([])} candidateReports={[]} />);
-    expect(await screen.findByText(/^05-1[67] \d\d:\d\d$/)).toBeInTheDocument();
+    expect(await screen.findByText(/^May 1[67], 2026 \d\d:\d\d$/)).toBeInTheDocument();
     // #1592: never the document id.
     expect(screen.queryByText(/legacy_79/)).toBeNull();
     expect(screen.getByText('imported')).toBeInTheDocument(); // legacy_visit_logs collapses, never leaks raw

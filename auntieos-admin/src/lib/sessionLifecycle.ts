@@ -1,5 +1,6 @@
 import { type SessionState } from './sessionFormat';
 import { type VisitLifecycleAction } from '../api/sessionsWrite';
+import { formatWhenInZone } from './time';
 
 /**
  * WHAT THE AUNTIE TIME DETAIL OFFERS, and the one text transform it applies.
@@ -256,26 +257,18 @@ const NOTE_STAMP = /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\]/g;
 
 /**
  * The visit notes as the operator reads them (#1592): each stored
- * `[2026-11-05T21:32:52Z]` stamp shows as `[Nov 5, 3:32 PM]` in `timeZone`
- * (the business zone), with the year when it is not this year. The STORED
+ * `[2026-11-05T21:32:52Z]` stamp shows as `[Nov 5, 2026 15:32]` in `timeZone`
+ * (the business zone; #1828 admin shape). The STORED
  * text is untouched: both clients write and parse that format.
  */
 export function readableVisitNotes(notes: string, timeZone: string, now: Date = new Date()): string {
-  const yearOf = (d: Date) => new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric' }).format(d);
-  const thisYear = yearOf(now);
+  // #1828: "[Nov 5, 2026 15:32]", the admin day and 24-hour clock, always with
+  // the year. `now` no longer changes the result.
+  void now;
   return notes.replace(NOTE_STAMP, (whole, iso: string) => {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return whole;
-    const sameYear = yearOf(d) === thisYear;
-    const label = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      month: 'short',
-      day: 'numeric',
-      ...(sameYear ? {} : { year: 'numeric' }),
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(d);
-    return `[${label}]`;
+    return `[${formatWhenInZone(d, timeZone)}]`;
   });
 }
 

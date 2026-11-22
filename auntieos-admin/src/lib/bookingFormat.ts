@@ -1,6 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import type { TimeBlockDefinition } from '../api/settings';
 import { str } from './coerce';
+import { formatHHmm, formatYmd } from './time';
 import { householdBlockFor, type HouseholdTimeSettings } from './householdVisitTime';
 import { serviceDurationMinutes, storedDurationMinutes } from './newBooking';
 
@@ -142,8 +143,6 @@ export function initialsFor(name: string): string {
   return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
 }
 
-const pad = (n: number): string => String(n).padStart(2, '0');
-
 /**
  * Parses a stored booking timestamp STRING (not a Firestore Timestamp, see
  * `BookingWhenInput`'s doc). `kin_care_sessions.startTime` /`.completedAt` /
@@ -183,37 +182,28 @@ export function parseFlexibleDate(raw: string): Date | null {
   return null;
 }
 
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
 /**
- * "Jul 16" in the LOCAL zone, or "Jul 16, 2025" when [d] is not in [now]'s
- * year (#1599: the Bookings list spans more than a year). The date half of
- * {@link formatLocalDateTime}. `now` is for tests.
+ * "Jul 16, 2026" in the LOCAL zone, always with the year (#1828: the one admin
+ * day shape, from lib/time.ts). The date half of {@link formatLocalDateTime}.
+ * `now` is kept for older callers and no longer changes the result.
  */
 export function formatLocalDate(d: Date, now: Date = new Date()): string {
-  const monthDay = `${MONTH_NAMES[d.getMonth()] ?? ''} ${d.getDate()}`;
-  return d.getFullYear() === now.getFullYear() ? monthDay : `${monthDay}, ${d.getFullYear()}`;
+  void now;
+  return formatYmd(d.getFullYear(), d.getMonth() + 1, d.getDate());
 }
-
-/** "9:00 AM" in the LOCAL zone. The clock half of {@link formatLocalDateTime}. */
+/** "09:00" in the LOCAL zone, 24-hour (#1828). The clock half of {@link formatLocalDateTime}. */
 export function formatLocalTime(d: Date): string {
-  let hours = d.getHours();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  if (hours === 0) hours = 12;
-  return `${hours}:${pad(d.getMinutes())} ${ampm}`;
+  return formatHHmm(d.getHours(), d.getMinutes());
 }
-
 /**
- * "Jul 16, 9:00 AM" in the LOCAL zone. Uses `Date`'s local getters
- * (getMonth/getDate/getHours/getMinutes), never `toISOString()`, the same
- * AO-18 discipline lib/time.ts applies to real Firestore Timestamps, applied
- * here to this collection's free-text timestamp-shaped strings.
+ * "Jul 16, 2026 09:00" in the LOCAL zone, lib/time.ts's `formatWhen` shape.
+ * Uses `Date`'s local getters, never `toISOString()`, the same AO-18
+ * discipline lib/time.ts applies to real Firestore Timestamps, applied here to
+ * this collection's free-text timestamp-shaped strings.
  */
 export function formatLocalDateTime(d: Date, now: Date = new Date()): string {
-  return `${formatLocalDate(d, now)}, ${formatLocalTime(d)}`;
+  return `${formatLocalDate(d, now)} ${formatLocalTime(d)}`;
 }
-
 /**
  * What `bookingWhen` needs. `createdAt` IS a real Firestore Timestamp
  * (`FieldValue.serverTimestamp()`, stamped by both createKinCareSession.ts and
@@ -407,7 +397,8 @@ export function bookingMetaLine(
   const when =
     raw !== '' ? parseFlexibleDate(raw) : row.createdAt ? row.createdAt.toDate() : null;
   if (when === null) return `${service} · ${raw !== '' ? raw : 'Date pending'}`;
-  const base = `${service} · ${formatLocalDate(when)} · ${formatLocalTime(when)}`;
+  // #1828: one moment, one shape ("Nov 10, 2026 22:32"), not a date and a clock apart.
+  const base = `${service} · ${formatLocalDateTime(when)}`;
   if (household === null) return base;
   const block = householdBlockFor(
     { startMs: when.getTime(), timeBlockId: row.timeBlockId ?? null, serviceId: service },

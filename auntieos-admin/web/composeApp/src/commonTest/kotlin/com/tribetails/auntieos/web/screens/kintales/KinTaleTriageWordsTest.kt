@@ -10,14 +10,14 @@ class KinTaleTriageWordsTest {
 
     @Test
     fun anOrphanRowLeadsWithWhenItWasWritten() {
-        assertEquals("May 17 · 10:00", reportWhen(KinCareReport(_id = "legacy_79", createdAt = "2026-05-17T10:00:00Z"), 2026))
+        assertEquals("May 17, 2026 05:00", reportWhen(KinCareReport(_id = "legacy_79", createdAt = "2026-05-17T10:00:00Z"), 2026))
         assertEquals("Date TBD", reportWhen(KinCareReport(_id = "legacy_80"), 2026))
     }
 
     @Test
     fun aDuplicateCandidateIsWhoseAndWhen() {
         val canon = KinCareReport(_id = "tale1", kinfolkName = "The Whitfields", visitDate = "2025-09-03T14:02:00Z")
-        assertEquals("The Whitfields · Sep 3, 2025 · 14:02", duplicateCandidateLabel(canon, 2026))
+        assertEquals("The Whitfields · Sep 3, 2025 09:02", duplicateCandidateLabel(canon, 2026))
         assertEquals("Unnamed Kinfolk · Date TBD", duplicateCandidateLabel(KinCareReport(_id = "tale2"), 2026))
     }
 

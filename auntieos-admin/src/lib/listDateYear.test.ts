@@ -36,16 +36,16 @@ describe('the test zone', () => {
 });
 describe('formatWhen (KinTales, Notifications, Tribal Intel)', () => {
   it('omits the year for this year', () => {
-    expect(formatWhen(new Date(2026, 6, 2, 14, 2), NOW_2026)).toBe('07-02 14:02');
+    expect(formatWhen(new Date(2026, 6, 2, 14, 2), NOW_2026)).toBe('Jul 2, 2026 14:02');
   });
   it('leads with the year for another year', () => {
-    expect(formatWhen(new Date(2025, 6, 2, 14, 2), NOW_2026)).toBe('2025-07-02 14:02');
+    expect(formatWhen(new Date(2025, 6, 2, 14, 2), NOW_2026)).toBe('Jul 2, 2025 14:02');
   });
   it('reads the year in Chicago at the boundary: 23:30 Dec 31 is still 2026', () => {
-    expect(formatWhen(NEW_YEARS_EVE_CHICAGO, NOW_2026)).toBe('12-31 23:30');
+    expect(formatWhen(NEW_YEARS_EVE_CHICAGO, NOW_2026)).toBe('Dec 31, 2026 23:30');
   });
   it('and 00:30 Jan 1 is already 2027', () => {
-    expect(formatWhen(NEW_YEAR_CHICAGO, NOW_2026)).toBe('2027-01-01 00:30');
+    expect(formatWhen(NEW_YEAR_CHICAGO, NOW_2026)).toBe('Jan 1, 2027 00:30');
   });
 });
 describe('humanizeDate (invoice rows, Link visits)', () => {
@@ -62,16 +62,16 @@ describe('humanizeDate (invoice rows, Link visits)', () => {
   });
 });
 describe('bookings rows: formatLocalDate / formatLocalDateTime', () => {
-  it('omits the year this year', () => {
-    expect(formatLocalDate(new Date(2026, 6, 16), NOW_2026)).toBe('Jul 16');
-    expect(formatLocalDateTime(new Date(2026, 6, 16, 9, 0), NOW_2026)).toBe('Jul 16, 9:00 AM');
+  it('#1828: carries the year this year too', () => {
+    expect(formatLocalDate(new Date(2026, 6, 16), NOW_2026)).toBe('Jul 16, 2026');
+    expect(formatLocalDateTime(new Date(2026, 6, 16, 9, 0), NOW_2026)).toBe('Jul 16, 2026 09:00');
   });
   it('names the year for another year', () => {
     expect(formatLocalDate(new Date(2025, 6, 16), NOW_2026)).toBe('Jul 16, 2025');
-    expect(formatLocalDateTime(new Date(2025, 6, 16, 9, 0), NOW_2026)).toBe('Jul 16, 2025, 9:00 AM');
+    expect(formatLocalDateTime(new Date(2025, 6, 16, 9, 0), NOW_2026)).toBe('Jul 16, 2025 09:00');
   });
   it('reads the boundary in Chicago', () => {
-    expect(formatLocalDate(NEW_YEARS_EVE_CHICAGO, NOW_2026)).toBe('Dec 31');
+    expect(formatLocalDate(NEW_YEARS_EVE_CHICAGO, NOW_2026)).toBe('Dec 31, 2026');
     expect(formatLocalDate(NEW_YEAR_CHICAGO, NOW_2026)).toBe('Jan 1, 2027');
   });
 });
@@ -95,16 +95,16 @@ describe('visit note and reminder stamps', () => {
   it('noteWhen names the year only outside the current business-zone year', () => {
     const jul2026 = Date.parse('2026-07-02T20:00:00Z');
     const jul2025 = Date.parse('2025-07-02T20:00:00Z');
-    expect(noteWhen(jul2026, CHICAGO, NOW_2026)).toBe('Jul 2, 3:00 PM');
-    expect(noteWhen(jul2025, CHICAGO, NOW_2026)).toBe('Jul 2, 2025, 3:00 PM');
+    expect(noteWhen(jul2026, CHICAGO, NOW_2026)).toBe('Jul 2, 2026 15:00');
+    expect(noteWhen(jul2025, CHICAGO, NOW_2026)).toBe('Jul 2, 2025 15:00');
     expect(noteWhen(null, CHICAGO, NOW_2026)).toBe('');
   });
   it('noteWhen reads the year boundary in the business zone', () => {
-    expect(noteWhen(NEW_YEARS_EVE_CHICAGO.getTime(), CHICAGO, NOW_2026)).toBe('Dec 31, 11:30 PM');
-    expect(noteWhen(NEW_YEAR_CHICAGO.getTime(), CHICAGO, NOW_2026)).toBe('Jan 1, 2027, 12:30 AM');
+    expect(noteWhen(NEW_YEARS_EVE_CHICAGO.getTime(), CHICAGO, NOW_2026)).toBe('Dec 31, 2026 23:30');
+    expect(noteWhen(NEW_YEAR_CHICAGO.getTime(), CHICAGO, NOW_2026)).toBe('Jan 1, 2027 00:30');
   });
   it('formatReminderTime names the year only outside the current year', () => {
-    expect(formatReminderTime(Date.parse('2026-09-14T20:05:00Z'), CHICAGO, NOW_2026)).toBe('Sep 14, 3:05 PM');
-    expect(formatReminderTime(Date.parse('2025-09-14T20:05:00Z'), CHICAGO, NOW_2026)).toBe('Sep 14, 2025, 3:05 PM');
+    expect(formatReminderTime(Date.parse('2026-09-14T20:05:00Z'), CHICAGO, NOW_2026)).toBe('Sep 14, 2026 15:05');
+    expect(formatReminderTime(Date.parse('2025-09-14T20:05:00Z'), CHICAGO, NOW_2026)).toBe('Sep 14, 2025 15:05');
   });
 });

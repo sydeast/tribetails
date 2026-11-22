@@ -226,7 +226,7 @@ describe('BookingDetailModal fact rows', () => {
     expect(factValue('Kinfolk')).toHaveTextContent('The Whitfields');
     expect(factValue('Requested services')).toHaveTextContent('Dog Walk');
     expect(factValue('Duration')).toHaveTextContent('1 hr 30 min');
-    expect(factValue('When')).toHaveTextContent('Thu, Jul 16 at 2:00 PM');
+    expect(factValue('When')).toHaveTextContent('Thu, Jul 16, 2026 14:00');
     expect(factValue('Status')).toHaveTextContent('SCHEDULED');
     // #1580: the session's own notes text is the first row of the internal-notes list now, not a fact.
     expect(screen.queryByText('Office note')).not.toBeInTheDocument();
