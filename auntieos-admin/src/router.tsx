@@ -279,7 +279,8 @@ const directoryRoute = createRoute({
   staticData: { title: navTitle('directory') },
   // `tab=kin` opens the Kin tab; `inCare=1` narrows it to the pets Home's "Kin
   // in care" card counts (#1601).
-  validateSearch: optionalIdSearch(['tab', 'inCare'] as const),
+  // `kin` is an open Kin page and `kinView=edit` its edit form (#1893).
+  validateSearch: optionalIdSearch(['tab', 'inCare', 'kin', 'kinView'] as const),
   component: lazyRouteComponent(() => import('./routes/DirectoryView'), 'DirectoryView'),
 });
 
@@ -316,7 +317,8 @@ const directoryProfileRoute = createRoute({
   // `?section=unapplied-payments&paymentId=...`, which opens the Account credit
   // panel's "Payments needing a decision" list and that payment's dialog.
   // `view` is the profile's sub-view (#1594): `household` or `edit`.
-  validateSearch: optionalIdSearch(['section', 'paymentId', 'view'] as const),
+  // `kin` / `kinView`: the Kin page opened from this profile, and its edit form (#1893).
+  validateSearch: optionalIdSearch(['section', 'paymentId', 'view', 'kin', 'kinView'] as const),
   component: lazyRouteComponent(
     () => import('./routes/DirectoryProfileView'),
     'DirectoryProfileView',

@@ -35,6 +35,8 @@ import com.tribetails.auntieos.domain.invoicesForKinfolk
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.MembersRepository
+import kotlinx.coroutines.ensureActive
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.joinDateForEdit
@@ -639,6 +641,9 @@ class DirectoryViewModel(
     private val invoiceRepository: InvoiceRepository,
     // W4-3: the household's visit history and its KinTales are KinCare domain.
     private val kinCareRepository: KinCareRepository,
+    // #1888: whether a primary is on the portal. A provider, so a test never builds Firebase.
+    private val readMembers: suspend (String) -> Result<List<MembersRepository.Member>> =
+        { MembersRepository().listMembers(it) },
 ) : ViewModel() {
 
     private val _directoryState = MutableStateFlow(DirectoryUiState())
@@ -796,12 +801,41 @@ class DirectoryViewModel(
     }
 
     /** Invite a single kinfolk to the portal (inviteKinfolkToPortal callable). */
+    private var portalAccessJob: kotlinx.coroutines.Job? = null
+    private val _portalPrimaryActive = MutableStateFlow<Boolean?>(null)
+    /** #1888: true or false once read. Null while reading, and after a failed read. */
+    val portalPrimaryActive: StateFlow<Boolean?> = _portalPrimaryActive.asStateFlow()
+    private val _portalPrimaryReading = MutableStateFlow(true)
+    val portalPrimaryReading: StateFlow<Boolean> = _portalPrimaryReading.asStateFlow()
+
+    /**
+     * #1888: the household's portal standing, for Invite to portal. A failed read
+     * leaves the button on, because the server still refuses a second invite.
+     */
+    fun loadPortalAccess(kinfolkId: String) {
+        // This view model outlives one profile, so a late answer about the last
+        // household must never set this household's button.
+        portalAccessJob?.cancel()
+        _portalPrimaryActive.value = null
+        _portalPrimaryReading.value = true
+        portalAccessJob = viewModelScope.launch {
+            val read = readMembers(kinfolkId)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val active = read.getOrNull()?.any {
+                it.role == MembersRepository.MemberRole.PRIMARY && it.status == MembersRepository.MemberStatus.ACTIVE
+            }
+            _portalPrimaryActive.value = active
+            _portalPrimaryReading.value = false
+        }
+    }
+
     fun inviteKinfolkToPortal(kinfolkId: String, kinfolkName: String) {
         if (_inviteBusy.value) return
         viewModelScope.launch {
             _inviteBusy.value = true
             repository.inviteKinfolkToPortal(kinfolkId).fold(
                 onSuccess = { status ->
+                    if (status == "already_active") _portalPrimaryActive.value = true
                     _inviteMessage.value = when (status) {
                         "sent" -> "Portal invite emailed."
                         "already_active" -> "$kinfolkName already has portal access."

@@ -1,0 +1,12 @@
+/* #1888: the reason sits below the button and takes no room in the row. */
+.portal-invite {
+  position: relative;
+  display: inline-flex;
+}
+
+.portal-invite__note {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  white-space: nowrap;
+}

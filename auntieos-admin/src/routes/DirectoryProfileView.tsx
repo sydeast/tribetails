@@ -4,6 +4,7 @@ import { isAuntieAccess } from '../lib/access';
 import { UNAPPLIED_PAYMENTS_SECTION } from '../lib/notificationActions';
 import { Directory } from '../screens/Directory';
 import type { ProfileSubView } from '../screens/KinfolkProfile';
+import { useKinRoute } from './useKinRoute';
 
 /** `?view=` values the profile knows; anything else is the profile itself. */
 function subView(raw: string | undefined): ProfileSubView | undefined {
@@ -25,7 +26,7 @@ function subView(raw: string | undefined): ProfileSubView | undefined {
  */
 export function DirectoryProfileView() {
   const { kinfolkId } = useParams({ from: '/admin/directory/$kinfolkId' });
-  const { section, paymentId, view } = useSearch({ from: '/admin/directory/$kinfolkId' });
+  const { section, paymentId, view, kin, kinView } = useSearch({ from: '/admin/directory/$kinfolkId' });
   const navigate = useNavigate();
   const router = useRouter();
   const { access } = useRouteContext({ from: '/admin' });
@@ -33,10 +34,16 @@ export function DirectoryProfileView() {
   // pops that entry instead of stacking a second copy of the profile.
   const pushedSubView = useRef(false);
   const profileView = subView(view);
+  // #1893: the Kin page and Edit kin keep an address of their own.
+  const { routedKin, onKinRouteChange } = useKinRoute(kin, kinView, (search, replace) => {
+    void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId }, search, replace });
+  });
   return (
     <Directory
       isAuntie={isAuntieAccess(access)}
       initialKinfolkId={kinfolkId}
+      routedKin={routedKin}
+      onKinRouteChange={onKinRouteChange}
       // #1003: opened from the `invoice.payment.unapplied` notice.
       openUnappliedPayments={section === UNAPPLIED_PAYMENTS_SECTION}
       {...(paymentId ? { unappliedPaymentId: paymentId } : {})}
