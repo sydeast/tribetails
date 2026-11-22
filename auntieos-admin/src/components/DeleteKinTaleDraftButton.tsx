@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { GhostButton, PrimaryButton } from './Buttons';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
+import { HoldLeaveWhile } from './HoldLeaveWhile';
 import { useToast } from './Toast';
 import { deleteKinTaleReportDraft } from '../api/kinTaleReportDraftDelete';
 
@@ -26,19 +27,24 @@ export function DeleteKinTaleDraftButton({ reportId, household, onDeleted, disab
   const [open, setOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteWork, setDeleteWork] = useState<Promise<unknown> | null>(null);
 
   async function runDelete() {
     if (deleting) return;
     setDeleting(true);
     setError(null);
     try {
-      await deleteKinTaleReportDraft(reportId);
+      const work = deleteKinTaleReportDraft(reportId);
+      setDeleteWork(work);
+      await work;
+      setDeleteWork(null);
       setDeleting(false);
       setOpen(false);
       // A toast, not local state: the caller unmounts this on `onDeleted`.
       showToast('Draft deleted.');
       onDeleted();
     } catch (err) {
+      setDeleteWork(null);
       setDeleting(false);
       setError(err instanceof Error ? err.message : 'Delete failed.');
     }
@@ -47,6 +53,7 @@ export function DeleteKinTaleDraftButton({ reportId, household, onDeleted, disab
   const who = household.trim();
   return (
     <>
+      <HoldLeaveWhile work={deleteWork} />
       <GhostButton
         label="Delete draft"
         disabled={disabled === true || deleting}

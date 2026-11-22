@@ -754,6 +754,21 @@ class FirestoreClient {
         }
     }
 
+    /**
+     * #1878: the newest message of the household's thread, or null for no thread.
+     * Read-only: [getConversationThread] marks the thread read, and choosing a
+     * recipient on Communicate is not opening it.
+     */
+    suspend fun latestThreadMessage(kinfolkId: String): WriteResult<com.tribetails.auntieos.web.screens.communicate.LatestThreadMessage?> {
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
+        return when (val r = platformInvokeCallable("getLatestConversationMessage", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable {
+                WriteResult.Ok(com.tribetails.auntieos.web.screens.communicate.decodeLatestThreadMessage(r.value))
+            }.getOrElse { WriteResult.Err(it.message ?: "latest message decode failed") }
+        }
+    }
+
     suspend fun replyToConversation(kinfolkId: String, body: String): WriteResult<String> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(kinfolkId))

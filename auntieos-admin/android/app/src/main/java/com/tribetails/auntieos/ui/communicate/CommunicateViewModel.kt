@@ -143,6 +143,8 @@ data class CommunicateUiState(
     val commsBox: CommsBoxState = CommsBoxState.Empty,
     val commsBoxLoading: Boolean = false,
     val commsRecapError: String? = null,
+    /** #1878: the thread read failed, so "no messages" cannot be claimed. */
+    val commsThreadFailed: Boolean = false,
 
     // Generation
     val isGenerating: Boolean = false,
@@ -357,6 +359,7 @@ class CommunicateViewModel(
             kin411Map = emptyMap(),
             commsBox = CommsBoxState.Empty,
             commsRecapError = null,
+            commsThreadFailed = false,
         )
         if (kinfolk != null) loadProfiles(kinfolk)
     }
@@ -371,7 +374,7 @@ class CommunicateViewModel(
      */
     fun loadCommsBox(kinfolkId: String, recapFlagOn: Boolean) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(commsBoxLoading = true, commsRecapError = null)
+            _uiState.value = _uiState.value.copy(commsBoxLoading = true, commsRecapError = null, commsThreadFailed = false)
             val comms = repo.recentCommsForKinfolk(kinfolkId).getOrElse {
                 AuntieLog.e("loadCommsBox: recent comms read failed for $kinfolkId", it)
                 _uiState.value = _uiState.value.copy(
@@ -381,7 +384,10 @@ class CommunicateViewModel(
                 )
                 return@launch
             }
-            val latest = latestCommunication(comms.sms, comms.emails, comms.calls, comms.voicemails)
+            val threadRead = repo.latestThreadMessage(kinfolkId)
+            val latest = latestCommunication(
+                comms.sms, comms.emails, comms.calls, comms.voicemails, threadRead.getOrNull(),
+            )
             var recap: String? = null
             var recapErr: String? = null
             if (recapFlagOn) {
@@ -396,6 +402,7 @@ class CommunicateViewModel(
                 commsBoxLoading = false,
                 commsBox = commsBoxState(recapFlagOn, recap, latest),
                 commsRecapError = recapErr,
+                commsThreadFailed = threadRead.isFailure,
             )
         }
     }
@@ -1400,6 +1407,8 @@ class CommunicateViewModel(
 
     fun sendBroadcast() {
         val s = _uiState.value
+        // #1879: the button is off for this too; the server refuses it as well.
+        if ((s.bcReach as? BroadcastReachState.Ready)?.preview?.targeted == 0) return
         val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
         val problem = broadcastProblem(s)
         if (problem != null) { _uiState.value = s.copy(broadcastError = problem, bcConfirmOpen = false); return }

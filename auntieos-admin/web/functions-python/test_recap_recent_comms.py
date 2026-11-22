@@ -69,6 +69,58 @@ def test_collect_orders_newest_first_and_filters_by_kinfolk():
     assert "not mine" not in " ".join(e["text"] for e in out)
 
 
+class FakeThreadQuery:
+    def __init__(self, docs):
+        self._docs = docs
+    def order_by(self, field, direction=None):
+        return FakeThreadQuery(sorted(self._docs, key=lambda d: d._data[field], reverse=direction == "DESCENDING"))
+    def limit(self, n):
+        return FakeThreadQuery(self._docs[:n])
+    def stream(self):
+        return iter(self._docs)
+
+
+class FakeConversationDoc:
+    def __init__(self, docs):
+        self._docs = docs
+    def collection(self, name):
+        assert name == "messages"
+        return FakeThreadQuery(self._docs)
+
+
+class FakeConversations(FakeCollection):
+    def __init__(self, threads):
+        super().__init__([])
+        self._threads = threads
+    def document(self, kinfolk_id):
+        rows = self._threads.get(kinfolk_id, {})
+        return FakeConversationDoc([FakeSnap(k, v) for k, v in rows.items()])
+
+
+class FakeDbWithThreads(FakeDb):
+    def __init__(self, threads):
+        super().__init__()
+        self._threads = threads
+    def collection(self, name):
+        if name == "conversations":
+            return FakeConversations(self._threads)
+        return super().collection(name)
+
+
+def test_collect_includes_the_household_thread_as_plain_text():
+    """#1878: a thread message is part of what the recap reads, newest first."""
+    db = FakeDbWithThreads({
+        "kf1": {"m1": {"createdAtMs": 1782000000000, "body": "<p>See you <b>Sunday</b> &amp; thanks</p>"}},
+        "OTHER": {"m9": {"createdAtMs": 1790000000000, "body": "not mine"}},
+    })
+    db.data["sms_messages"] = {"s1": {"kinfolkId": "kf1", "timestamp": "2026-01-01T10:00:00Z", "body": "older sms"}}
+    out = rc.collect_recent_comms(db, "kf1")
+    assert [e["channel"] for e in out] == ["message", "sms"]
+    assert out[0]["text"] == "See you Sunday & thanks"
+    assert out[0]["timestamp"].endswith("Z")
+    assert "not mine" not in " ".join(e["text"] for e in out)
+
+
 def test_collect_empty_when_no_match():
     db = FakeDb()
     db.data["sms_messages"] = {"s1": {"kinfolkId": "OTHER", "timestamp": "2026-06-01T10:00:00Z", "body": "x"}}

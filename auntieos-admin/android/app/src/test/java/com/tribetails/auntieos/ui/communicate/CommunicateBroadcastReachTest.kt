@@ -41,6 +41,7 @@ class CommunicateBroadcastReachTest {
         repo = mockk()
         coEvery { repo.getKinfolk() } returns Result.success(TestFixtures.allKinfolk)
         coEvery { repo.recentCommsForKinfolk(any()) } returns Result.success(RecentComms())
+        coEvery { repo.latestThreadMessage(any()) } returns Result.success(null)
         coEvery { repo.getHouseholdBank(any()) } returns Result.success(null)
     }
 
@@ -67,6 +68,28 @@ class CommunicateBroadcastReachTest {
         assertTrue(reachLine(preview).startsWith("12 kinfolk match this audience"))
         assertTrue(reachLine(preview).contains("2 have no first name on file and will read \"Kinfolk\""))
         coVerify(exactly = 0) { repo.broadcastMessage(any(), any(), any(), any(), any(), any()) }
+    }
+
+    // #1879: an audience of nobody cannot be sent, and the note does not promise it.
+    @Test fun `a count of zero blocks Send and the view model sends nothing`() = runTest(testDispatcher) {
+        val nobody = BroadcastAudiencePreview(targeted = 0, withEmail = 0, withPhone = 0, withApp = 0, withoutFirstName = 0)
+        coEvery { repo.previewBroadcastAudience(any(), any()) } returns Result.success(nobody)
+        val vm = ready()
+        vm.requestBroadcast()
+        advanceUntilIdle()
+        val reach = vm.uiState.value.bcReach
+        assertTrue(broadcastSendBlocked(reach))
+        assertTrue(broadcastConfirmNote(reach).startsWith("Nobody matches this audience"))
+        vm.sendBroadcast()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { repo.broadcastMessage(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test fun `Send waits for the count, and a failed count leaves the choice open`() {
+        assertTrue(broadcastSendBlocked(BroadcastReachState.Loading))
+        assertFalse(broadcastSendBlocked(BroadcastReachState.Failed("unavailable")))
+        assertFalse(broadcastSendBlocked(BroadcastReachState.Ready(preview)))
+        assertTrue(broadcastConfirmNote(BroadcastReachState.Ready(preview)).startsWith("This goes out right now."))
     }
 
     @Test fun `a count that fails to load says so and keeps the confirm open`() = runTest(testDispatcher) {

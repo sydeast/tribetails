@@ -154,6 +154,7 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // She is the counterparty on these threads, not an observer of them.
   'listConversations',
   'getConversationThread',
+  'getLatestConversationMessage',
   'replyToConversation',
   'markConversationRead',
   'markConversationUnread',

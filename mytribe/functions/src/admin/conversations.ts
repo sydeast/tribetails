@@ -11,6 +11,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import {
   appendMessage,
   readThread,
+  previewOf,
   markMessagesRead,
   MAX_MESSAGE_HTML,
   CONVERSATIONS_COLLECTION,
@@ -24,6 +25,7 @@ import {
  *
  *   listConversations    -> thread list for the AuntieOS Inbox (newest first)
  *   getConversationThread -> one thread's messages (and clears the admin unread)
+ *   getLatestConversationMessage -> the newest message only, and changes nothing (#1878)
  *   replyToConversation  -> auntie replies (creates the thread if needed)
  *   markConversationRead -> clears the admin-side unread flag + stamps readAt
  *   markConversationUnread -> puts the admin-side unread flag back (#1611)
@@ -101,6 +103,55 @@ export async function getConversationThreadHandler(
 export const getConversationThread = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('getConversationThread', getConversationThreadHandler),
+);
+
+// ---------------------------------------------------------------------------
+
+export interface LatestConversationMessage {
+  senderRole: string;
+  /** One line of plain text, markup stripped (`previewOf`). */
+  preview: string;
+  createdAtMs: number;
+}
+
+/**
+ * #1878: the newest message of one household's thread, for Communicate's
+ * Recipient context. That panel read the SMS, email, call and voicemail logs
+ * and never this thread, so a household with a full Inbox thread read "No
+ * messages on file yet."
+ *
+ * A separate callable because `getConversationThread` marks the thread read.
+ * Choosing a recipient on Communicate is not opening their thread, and must not
+ * clear the unread flag the owner relies on in the Inbox. This one only reads.
+ */
+export async function getLatestConversationMessageHandler(
+  req: CallableRequest<unknown>,
+): Promise<{ ok: true; kinfolkId: string; message: LatestConversationMessage | null }> {
+  initSentry();
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+
+  let args: z.infer<typeof ThreadArgs>;
+  try {
+    args = ThreadArgs.parse(req.data);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      throw new HttpsError('invalid-argument', 'getLatestConversationMessage validation failed');
+    }
+    throw err;
+  }
+
+  const [newest] = await readThread(args.kinfolkId, 1);
+  const message =
+    newest === undefined
+      ? null
+      : { senderRole: newest.senderRole, preview: previewOf(newest.body), createdAtMs: newest.createdAtMs };
+  return { ok: true, kinfolkId: args.kinfolkId, message };
+}
+
+export const getLatestConversationMessage = onCall(
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  wrapAdminCallable('getLatestConversationMessage', getLatestConversationMessageHandler),
 );
 
 // ---------------------------------------------------------------------------

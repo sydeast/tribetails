@@ -61,6 +61,18 @@ export function reachLine(p: BroadcastAudiencePreview): string {
   return `${base} ${who} no first name on file and will read "${KINFOLK_NAME_STAND_IN}" where you wrote {{firstName}}.`;
 }
 
+/**
+ * #1879: the confirm's Send stays off while the count is out, and for an
+ * audience the count says is nobody. A count that failed to load does not block:
+ * the owner may still decide, and the server refuses an empty audience itself.
+ */
+export function broadcastSendBlocked(reach: { status: 'loading' | 'error' } | { status: 'ready'; preview: BroadcastAudiencePreview }): boolean {
+  return reach.status === 'loading' || (reach.status === 'ready' && reach.preview.targeted === 0);
+}
+
+/** #1879: the line under the reach. It must not promise a send that cannot happen. Pure. */
+export const BROADCAST_NOBODY_NOTE = 'Nobody matches this audience, so nothing can be sent. Cancel and choose a different audience.';
+
 /** Splits a comma-separated field into trimmed, non-blank entries. Pure. */
 export function splitList(raw: string): string[] {
   return raw
@@ -619,7 +631,7 @@ export function CommunicateCompose() {
               <PrimaryButton
                 label={sending ? 'Sending…' : 'Send now'}
                 onClick={() => void confirmSend()}
-                disabled={sending}
+                disabled={sending || broadcastSendBlocked(reach)}
                 busy={sending}
               />
             </>
@@ -651,8 +663,9 @@ export function CommunicateCompose() {
                 : reachLine(reach.preview)}
           </p>
           <p className="compose__confirm-note">
-            This goes out right now. A household that switched a channel off does not get it there; the result shows who was
-            reached.
+            {reach.status === 'ready' && reach.preview.targeted === 0
+              ? BROADCAST_NOBODY_NOTE
+              : 'This goes out right now. A household that switched a channel off does not get it there; the result shows who was reached.'}
           </p>
         </Dialog>
       )}

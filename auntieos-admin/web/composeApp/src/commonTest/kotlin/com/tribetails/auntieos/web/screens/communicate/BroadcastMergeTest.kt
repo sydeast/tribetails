@@ -40,6 +40,25 @@ class BroadcastMergeTest {
         assertFailsWith<IllegalArgumentException> { decodeBroadcastAudiencePreview("""{"ok":true}""") }
     }
 
+    // #1879: an audience of nobody cannot be sent, and the note does not promise it.
+    @Test fun `Send is off for a count of zero and while the count is out`() {
+        assertEquals(true, broadcastSendBlocked(0, countFailed = false))
+        assertEquals(true, broadcastSendBlocked(null, countFailed = false))
+        assertEquals(false, broadcastSendBlocked(12, countFailed = false))
+        assertEquals(false, broadcastSendBlocked(null, countFailed = true))
+        assertEquals(true, broadcastConfirmNote(0).startsWith("Nobody matches this audience"))
+        assertEquals(true, broadcastConfirmNote(12).startsWith("This goes out right now."))
+    }
+
+    // #1878: the thread read decodes, and no thread is null rather than an error.
+    @Test fun `the latest thread message decodes`() {
+        assertEquals(
+            LatestThreadMessage("See you Sunday", 1_793_000_000_000),
+            decodeLatestThreadMessage("""{"ok":true,"message":{"preview":"See you Sunday","createdAtMs":1793000000000}}"""),
+        )
+        assertEquals(null, decodeLatestThreadMessage("""{"ok":true,"message":null}"""))
+    }
+
     @Test fun `a generated Subject line leaves the body`() {
         assertEquals(SubjectSplit("Big day", "Hi Dana"), splitSubjectLine("Subject: Big day\n\nHi Dana"))
         assertEquals(SubjectSplit("Big day", "Hi"), splitSubjectLine("**Subject:** Big day\nHi"))

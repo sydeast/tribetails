@@ -4062,6 +4062,25 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("recentCommsForKinfolk failed for $kinfolkId", it) }
 
     /**
+     * #1878: the newest message of the household's thread with the office, or null
+     * when there is no thread. Read-only: `getConversationThread` would mark the
+     * thread read, and choosing a recipient is not opening it.
+     */
+    suspend fun latestThreadMessage(kinfolkId: String): Result<com.tribetails.auntieos.ui.communicate.LatestThreadMessage?> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        val raw = functions.getHttpsCallable("getLatestConversationMessage")
+            .call(mapOf("kinfolkId" to kinfolkId))
+            .awaitCallable().data as? Map<*, *>
+        val message = raw?.get("message") as? Map<*, *>
+        val at = (message?.get("createdAtMs") as? Number)?.toLong() ?: 0L
+        if (message == null || at <= 0L) {
+            null
+        } else {
+            com.tribetails.auntieos.ui.communicate.LatestThreadMessage(message["preview"] as? String ?: "", at)
+        }
+    }.onFailure { AuntieLog.e("latestThreadMessage failed for $kinfolkId", it) }
+
+    /**
      * AI-generated recap of the most recent communications for a kinfolk, via the
      * admin-gated `recap_recent_comms` callable. Returns a [CommsRecap] with a short
      * prose summary, the ISO-8601 timestamp of the most recent source, and the number
