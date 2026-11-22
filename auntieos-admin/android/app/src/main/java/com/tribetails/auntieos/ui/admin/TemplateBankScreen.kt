@@ -90,6 +90,15 @@ import com.tribetails.auntieos.ui.components.railKicker
 
 
 /**
+ * #1889: a title that is really a key ("security.failedLogin.attempts.operator")
+ * broke mid-word. A zero-width space after each separator lets it wrap between
+ * its parts. Display only; a title with spaces already wraps at them. Pure.
+ */
+internal fun titleWithBreaks(title: String): String =
+    if (title.trim().any { it.isWhitespace() }) title
+    else title.replace(Regex("([._-])(?=.)"), "$1\u200B")
+
+/**
  * Pure client-side Template Bank search: narrows the already-loaded templates by a
  * case-insensitive substring match on title or templateId. A blank query returns
  * the list unchanged. No server search exists; this only filters what is loaded.
@@ -779,7 +788,7 @@ private fun TemplateCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = bankCardTitle(tpl.title, tpl.templateId),
+                text = titleWithBreaks(bankCardTitle(tpl.title, tpl.templateId)),
                 style = AuntieTheme.typography.headlineSmall,
                 color = c.textPrimary,
             )
