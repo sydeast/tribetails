@@ -85,6 +85,8 @@ import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.AuntieSearchField
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 
 /**
@@ -486,7 +488,7 @@ fun TemplateBankBody(
     ) {
         item {
             DenScreenHeading(
-                kicker = "The Den · Admin",
+                kicker = railKicker(RailScreen.TEMPLATES),
                 title = "Template",
                 accentTail = "Bank.",
                 // The mock's own sentence, then the one gesture this console
@@ -1164,7 +1166,7 @@ private fun TemplateEditorScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         DenScreenHeading(
-            kicker = "The Den · Template bank",
+            kicker = railKicker(RailScreen.TEMPLATES),
             crumbs = listOf(
                 DenCrumb("Template bank", leave),
                 // #953 review fix: dead since 7a removed the only caller that

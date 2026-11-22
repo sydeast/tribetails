@@ -126,6 +126,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import kotlin.math.floor
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Android parity with the web Coverage Package Builder (full PackageBuilder_7
@@ -346,7 +348,7 @@ fun CoveragePackageScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             DenScreenHeading(
-                kicker = "Care Ops · Pricing",
+                kicker = railKicker(RailScreen.PACKAGES),
                 title = "Coverage",
                 accentTail = "packages.",
                 subtitle = "Set this household's rules, then build packages: mix any visit lengths, pick which nights get an overnight. Lengths and prices come from your KinCare types in Settings.",

@@ -17,6 +17,7 @@ import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKi
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './TemplateImport.css';
+import { navKicker } from '../lib/nav';
 
 interface TemplateImportProps {
   /** Returns to the Template Bank list. A sibling view, not a route. */
@@ -116,7 +117,7 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Admin"
+        kicker={navKicker('templates')}
         title="Import"
         accentTail="templates."
         subtitle="Load the notification templates committed to the repo into Firestore."

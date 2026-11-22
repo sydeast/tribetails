@@ -96,6 +96,8 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.plus
 import kotlinx.datetime.isoDayNumber
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 private enum class ScheduleView(val label: String) {
     Day("Day"),
@@ -236,7 +238,7 @@ fun ScheduleScreen() {
         // which owns that day-of content. TODO(auntie copy): any final descriptive
         // subtitle wording is author-owned; the range below is data-derived only.
         DenScreenHeading(
-            kicker = "Care Ops · Schedule",
+            kicker = navKicker(Destination.Schedule),
             title = "Schedule",
             accentTail = "${viewMode.label.lowercase()}.",
             subtitle = selected?.let { rangeLabelFor(it, viewMode) },

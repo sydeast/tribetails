@@ -23,6 +23,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './TemplateAssignments.css';
+import { navKicker } from '../lib/nav';
 
 interface TemplateAssignmentsProps {
   /** Returns to the Template Bank list (this is a sibling view of Templates, not a route). */
@@ -354,7 +355,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Admin"
+        kicker={navKicker('templates')}
         title="Template"
         accentTail="Routing"
         subtitle="Every catalog key already sends a template. A binding is an override on top of that."

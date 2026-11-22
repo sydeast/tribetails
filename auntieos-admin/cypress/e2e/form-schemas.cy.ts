@@ -108,7 +108,7 @@ describe('form schemas', () => {
     openFormSchemas();
 
     cy.get('.den-heading .den-heading-leading .icon-tile-gradient').should('exist');
-    cy.get('.den-heading-kicker').should('have.text', 'The Den · Admin');
+    cy.get('.den-heading-kicker').should('have.text', 'More · Form Schemas');
     cy.get('.schemas__controls .schemas__search input').should('exist');
     cy.get('.schemas__count').should('have.text', '3 schemas');
     // Scoped to the screen: the shell around it may draw panels of its own.

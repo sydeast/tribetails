@@ -61,6 +61,8 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Den-redesign Form Schemas list ("The Den · Admin").
@@ -214,7 +216,7 @@ fun FormSchemaListScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Admin",
+            kicker     = navKicker(Destination.FormSchemas),
             title      = "Form",
             accentTail = "Schemas",
             subtitle   = "Author the dynamic forms kinfolk fill out.",

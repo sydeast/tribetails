@@ -62,6 +62,8 @@ import com.tribetails.auntieos.ui.components.SegmentedPicker
 import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Den-redesign Form Schema editor (admin), matched to
@@ -168,7 +170,7 @@ fun FormSchemaEditorScreen(
                 ) {
                     item {
                         DenScreenHeading(
-                            kicker = "The Den · Form Schemas",
+                            kicker = railKicker(RailScreen.FORM_SCHEMAS),
                             title = title,
                             accentTail = "form schema",
                             detail = detail,

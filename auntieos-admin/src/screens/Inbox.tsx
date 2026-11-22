@@ -57,6 +57,7 @@ import {
 import { ThreadActionsCard } from '../components/ThreadActionsCard';
 import { IconTile, type IconTileTone } from '../components/IconTile';
 import './Inbox.css';
+import { navKicker } from '../lib/nav';
 
 // ── glyphs ──────────────────────────────────────────────────────────────────
 //
@@ -359,7 +360,7 @@ export function Inbox({ onSelectThread, isAuntie = false }: InboxProps) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Inbox"
+        kicker={navKicker('inbox')}
         title="Inbox"
         subtitle="Voicemails, calls, SMS and emails, everywhere kinfolk reach out."
         trailing={

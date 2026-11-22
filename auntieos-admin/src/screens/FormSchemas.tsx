@@ -17,6 +17,7 @@ import { IconTile } from '../components/IconTile';
 import { BRAND_GRADIENTS } from '../components/Avatar';
 import { useToast } from '../components/Toast';
 import './FormSchemas.css';
+import { navKicker } from '../lib/nav';
 
 export type SortColumn = 'name' | 'version' | 'updatedAt' | 'updatedBy';
 export type SortDirection = 'asc' | 'desc';
@@ -392,7 +393,7 @@ export function FormSchemas({ onSelect, onNew, reloadKey = 0 }: FormSchemasProps
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Admin"
+        kicker={navKicker('formSchemas')}
         title="Form"
         accentTail="Schemas"
         subtitle="Author the dynamic forms kinfolk fill out."

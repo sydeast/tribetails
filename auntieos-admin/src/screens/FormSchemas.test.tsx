@@ -387,7 +387,7 @@ describe('FormSchemas screen', () => {
     await screen.findByText('Tribe Profile');
     const heading = container.querySelector('.den-heading');
     expect(heading).not.toBeNull();
-    expect(heading!.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Admin');
+    expect(heading!.querySelector('.den-heading-kicker')).toHaveTextContent('More · Form Schemas');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Form Schemas');
     const tile = heading!.querySelector('.den-heading-leading .icon-tile');
     expect(tile).not.toBeNull();

@@ -114,6 +114,8 @@ import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.components.color
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import java.time.LocalDate
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 // Stage 2 tail: header Receipt / Send-reminder actions and draft Review-and-send are
 // wired to real callables (generateReceipt / sendInvoiceReminder / postInvoiceEvent).
@@ -250,7 +252,7 @@ fun InvoiceDetailScreen(
         ) {
             item {
                 DenScreenHeading(
-                    kicker     = "Care Ops · Invoices",
+                    kicker     = railKicker(RailScreen.INVOICES),
                     title      = "Invoice",
                     accentTail = "Detail.",
                     subtitle   = "Full billing record.",

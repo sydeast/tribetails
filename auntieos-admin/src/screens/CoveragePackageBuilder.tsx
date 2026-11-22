@@ -50,6 +50,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import './CoveragePackageBuilder.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Coverage Package Builder (full port of the canonical PackageBuilder_7 sketch).
@@ -100,7 +101,7 @@ export function CoveragePackageBuilder() {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="Care Ops · Pricing"
+        kicker={navKicker('coveragePackages')}
         title="Coverage"
         accentTail="package builder."
         subtitle={`Name the Kinfolk and the dates, set their rules, then build packages: mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day. ${

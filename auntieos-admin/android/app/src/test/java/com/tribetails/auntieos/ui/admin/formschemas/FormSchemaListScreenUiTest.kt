@@ -76,7 +76,7 @@ class FormSchemaListScreenUiTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("THE DEN · ADMIN").assertIsDisplayed()
+        composeRule.onNodeWithText("MORE · FORM SCHEMAS").assertIsDisplayed()
         composeRule.onNodeWithText("New schema").assertIsDisplayed()
         composeRule.onNodeWithText("2 schemas").assertIsDisplayed()
         composeRule.onNodeWithText("Tribe Profile").assertIsDisplayed()

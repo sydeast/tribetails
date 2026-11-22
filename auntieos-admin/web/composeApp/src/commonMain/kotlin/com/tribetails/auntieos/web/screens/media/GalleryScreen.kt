@@ -64,6 +64,8 @@ import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.ui.components.rememberLiveRead
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * #13 global Gallery: every piece of business media across all KinTales/entities in
@@ -136,7 +138,7 @@ fun GalleryScreen() {
     Box(modifier = Modifier.fillMaxSize()) {
         ScreenScaffold {
             DenScreenHeading(
-                kicker = "The Den · Gallery",
+                kicker = navKicker(Destination.Gallery),
                 title = "Every",
                 accentTail = "moment.",
                 subtitle = "All media from every KinTale, tagged to its household. Tap a photo to tag the kin in it.",

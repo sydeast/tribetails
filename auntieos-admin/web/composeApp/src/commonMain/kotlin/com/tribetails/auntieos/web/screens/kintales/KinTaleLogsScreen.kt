@@ -94,6 +94,8 @@ import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 private enum class Bucket(val label: String) {
     Drafts ("Drafts"),
@@ -175,7 +177,7 @@ fun KinTaleLogsScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · KinTales",
+            kicker     = navKicker(Destination.KinTales),
             title      = "KinTales",
             subtitle   = "Every recap that goes home to a Kinfolk after care",
             trailing   = {

@@ -31,6 +31,8 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Bringing the repo's notification templates into Firestore, from the phone.
@@ -225,7 +227,7 @@ fun TemplateImportBody(
     ) {
         item {
             DenScreenHeading(
-                kicker = "The Den · Admin",
+                kicker = railKicker(RailScreen.TEMPLATES),
                 title = "Import",
                 accentTail = "templates.",
                 subtitle = "Load the notification templates committed to the repo into Firestore. " +
