@@ -36,6 +36,7 @@ import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
@@ -781,6 +782,12 @@ private fun WeekCalendar(
                         // Event blocks (only in-window sessions are positioned here).
                         // Each is vertically draggable to a new time slot; the drop maps
                         // to rescheduleBooking via rescheduleArgsForDrop.
+                        // #1861: visits whose blocks overlap are drawn side by side.
+                        val dayLanes = weekGridLanes(
+                            daySessions.mapNotNull { s ->
+                                eventSpan(s, localZone, gridWindow)?.let { s._id to it }
+                            },
+                        )
                         daySessions.forEach { session ->
                             EventBlock(
                                 snapMinutes = snapMinutes,
@@ -790,6 +797,7 @@ private fun WeekCalendar(
                                 localZone = localZone,
                                 onClick = { onSessionClick(session) },
                                 onReschedule = onReschedule,
+                                lane = dayLanes[session._id] ?: GridLane(0, 1),
                             )
                         }
                     }
@@ -867,6 +875,8 @@ private fun EventBlock(
     onReschedule: (RescheduleArgs) -> Unit,
     snapMinutes: Int,
     window: WeekGridWindow = WeekGridWindow.DEFAULT,
+    /** #1861: this block's lane among the visits it overlaps. */
+    lane: GridLane = GridLane(0, 1),
 ) {
     val c = AuntieTheme.colors
     val accent = serviceTint(session.serviceType, session.status)
@@ -877,21 +887,13 @@ private fun EventBlock(
     val windowStart = window.startHour * 60
     val windowEnd = window.endHour * 60
     // Off-window: do NOT clamp onto the grid edge (that mispositions the block).
-    // Drop it from the grid; the day agenda still lists it.
-    if (startMin < windowStart || startMin >= windowEnd) return
+    // Drop it from the grid; the day agenda still lists it. #1861: a visit too
+    // near the bottom edge for the legible minimum is lifted to fit
+    // (visitBlockSpan); the drag below still starts from its own start.
+    val span = eventSpan(session, localZone, window) ?: return
+    val durationMin = span.heightMinutes
 
-    // Room remaining to the bottom edge (1..600). A visit starting in the last few
-    // minutes of the window has under 20 min of room, so the visible minimum is
-    // capped by that room: coerceIn(min, max) with min > max would throw.
-    val roomToBottom = windowEnd - startMin
-    val minVisible = minOf(20, roomToBottom)
-    val rawDuration = when {
-        session.serviceDurationMinutes > 0 -> session.serviceDurationMinutes
-        else -> localMinutesOfDay(session.endTime, localZone)?.let { it - startMin } ?: 30
-    }
-    val durationMin = rawDuration.coerceIn(minVisible, roomToBottom)
-
-    val top = HOUR_HEIGHT * ((startMin - windowStart) / 60f)
+    val top = HOUR_HEIGHT * (span.topMinute / 60f)
     val blockHeight = HOUR_HEIGHT * (durationMin / 60f)
 
     // Live vertical drag offset (px). On drop, convert px -> minutes via the
@@ -902,6 +904,7 @@ private fun EventBlock(
 
     Column(
         modifier = Modifier
+            .laneSlot(lane)
             .padding(top = top, start = 5.dp, end = 5.dp)
             .offset { IntOffset(0, dragOffsetPx.toInt()) }
             .fillMaxWidth()
@@ -981,6 +984,36 @@ private fun EventBlock(
         }
     }
 }
+
+/**
+ * #1861: a visit's drawn extent on the week grid, or null when its start does
+ * not parse or falls outside [window]. The length is the stored one, else the
+ * window to its end, else 30 minutes, as the block has always read it.
+ */
+private fun eventSpan(session: KinCareSession, localZone: TimeZone, window: WeekGridWindow): BlockSpan? {
+    val startMin = localMinutesOfDay(session.startTime, localZone) ?: return null
+    val rawDuration = when {
+        session.serviceDurationMinutes > 0 -> session.serviceDurationMinutes
+        else -> localMinutesOfDay(session.endTime, localZone)?.let { it - startMin } ?: 30
+    }
+    return visitBlockSpan(startMin, rawDuration, window)
+}
+
+/**
+ * #1861: draws the block in its lane, one [GridLane.lanes]th of the column. A
+ * lone block keeps the whole width.
+ */
+internal fun Modifier.laneSlot(lane: GridLane): Modifier =
+    if (lane.lanes <= 1) {
+        this
+    } else {
+        layout { measurable, constraints ->
+            val full = constraints.maxWidth
+            val width = full / lane.lanes
+            val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+            layout(full, placeable.height) { placeable.place(full * lane.lane / lane.lanes, 0) }
+        }
+    }
 
 /**
  * Read-only "Busy" overlay for a BLOCKED [BookingTimeSlot] (Google Calendar busy
