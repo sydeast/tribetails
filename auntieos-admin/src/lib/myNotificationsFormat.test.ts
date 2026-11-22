@@ -74,7 +74,7 @@ describe('myNotificationsFormat', () => {
     });
     it('reads the key as words when both label and description are blank (#1592)', () => {
       expect(displayTitle(entry({ label: '', description: '', key: 'kincare.booking.confirm' }))).toBe(
-        'Kincare booking confirm',
+        'KinCare booking confirm',
       );
     });
   });

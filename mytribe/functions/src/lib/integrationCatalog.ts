@@ -102,7 +102,7 @@ export const INTEGRATION_CATALOG: readonly CatalogEntry[] = [
     // than half-built behind a button that cannot work.
     externalStep:
       'Stripe Connect onboarding is not built here. It needs a Connect client ID and secret from ' +
-      'dashboard.stripe.com/settings/connect, which no code in this repo holds. Card payments on ' +
+      'dashboard.stripe.com/settings/connect. Card payments on ' +
       'invoices work without it; payouts to a connected account do not.',
     ownedBySection: '',
   },

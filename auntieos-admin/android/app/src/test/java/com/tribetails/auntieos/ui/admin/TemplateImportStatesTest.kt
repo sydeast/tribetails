@@ -94,7 +94,7 @@ class TemplateImportStatesTest {
             mapOf("unchanged" to 3),
         )
         assertEquals(
-            "Every template on file already matches the repo. There is nothing to import.",
+            "Every template on file already matches the built-in copy. There is nothing to import.",
             importPlanHeadline(r),
         )
     }
@@ -133,7 +133,7 @@ class TemplateImportStatesTest {
     fun `summary names each state in the operator's words`() {
         assertEquals("New", importRowSummary(row()))
         assertEquals(
-            "Already matches the repo",
+            "Already matches the built-in copy",
             importRowSummary(row(outcomes = listOf("unchanged", "unchanged", "unchanged"))),
         )
         assertEquals(
@@ -173,12 +173,12 @@ class TemplateImportStatesTest {
     }
     @Test
     fun `a ticked skipped row says importing replaces it, an unticked one keeps the server line`() {
-        val server = "The stored email copy differs from the repo copy. Your stored copy stays as it is. " +
-            "Tick this template to replace it with the repo wording."
+        val server = "The stored email copy differs from the built-in copy. Your stored copy stays as it is. " +
+            "Tick this template to replace it with the built-in wording."
         val c = channel("email", "skipped", listOf(server))
         assertEquals(server, importChannelNote(c, ticked = false))
         assertEquals(
-            "The stored email copy differs from the repo copy. Importing replaces your stored copy with the repo wording.",
+            "The stored email copy differs from the built-in copy. Importing replaces your stored copy with the built-in wording.",
             importChannelNote(c, ticked = true),
         )
         // Only a skipped line changes. A created channel keeps what the server said.

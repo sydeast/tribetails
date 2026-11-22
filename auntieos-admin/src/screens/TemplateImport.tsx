@@ -14,6 +14,7 @@ import {
   type TemplateImportRow,
 } from '../api/templateImport';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { humanizeKey } from '../lib/notificationsFeed';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './TemplateImport.css';
@@ -98,7 +99,7 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
       setOverwrite(new Set());
       if (written.written > 0) {
         onImported(
-          `Imported ${written.written} template document${written.written === 1 ? '' : 's'} from the repo.`,
+          `Imported ${written.written} template document${written.written === 1 ? '' : 's'} from the built-in set.`,
         );
       }
     } catch (err) {
@@ -120,7 +121,7 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
         kicker={navKicker('templates')}
         title="Import"
         accentTail="templates."
-        subtitle="Load the notification templates committed to the repo into Firestore."
+        subtitle="Load the built-in notification templates into your Template Bank."
         trailing={<GhostButton label="Back to Template Bank" onClick={onClose} />}
       />
 
@@ -133,7 +134,7 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
       {result && (
         <Banner tone="success" title="Import finished" onDismiss={() => setResult(null)}>
           {result.written === 0
-            ? 'Nothing needed writing. Every template selected already matched the repo.'
+            ? 'Nothing needed writing. Every template selected already matched the built-in copy.'
             : `Wrote ${result.written} document${result.written === 1 ? '' : 's'}.`}
         </Banner>
       )}
@@ -153,10 +154,10 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
             </p>
 
             {report.needsOverwriteChoice.length > 0 && (
-              <Banner tone="warning" title="Some stored templates differ from the repo">
+              <Banner tone="warning" title="Some stored templates differ from the built-in copies">
                 {report.needsOverwriteChoice.length} template
                 {report.needsOverwriteChoice.length === 1 ? ' has' : 's have'} been edited since they
-                were last imported, or were never imported from this corpus. They are left alone
+                were last imported, or were never imported from the built-in set. They are left alone
                 unless you tick them below.
               </Banner>
             )}
@@ -166,7 +167,7 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
                 <ul className="template-import__refusals">
                   {report.refused.map((r) => (
                     <li key={r.templateId}>
-                      <code>{r.templateId}</code>: {r.reason}
+                      {humanizeKey(r.templateId)}: {r.reason}
                     </li>
                   ))}
                 </ul>
@@ -260,7 +261,8 @@ function ImportRow({
   return (
     <li className="template-import__row" data-blocked={row.blocked ? 'true' : 'false'}>
       <div className="template-import__row-head">
-        <code className="template-import__key">{row.templateId}</code>
+        {/* #1887: the template in words, not its stored key. */}
+        <span className="template-import__key">{humanizeKey(row.templateId)}</span>
         <span className="template-import__summary" data-testid={`summary-${row.templateId}`}>
           {importRowSummary(row, checked)}
         </span>
@@ -301,9 +303,9 @@ function ImportRow({
             type="checkbox"
             checked={checked}
             onChange={onToggle}
-            aria-label={`Replace the stored copy of ${row.templateId}`}
+            aria-label={`Replace the stored copy of ${humanizeKey(row.templateId)}`}
           />
-          Replace the stored copy with the repo wording
+          Replace the stored copy with the built-in wording
         </label>
       )}
     </li>

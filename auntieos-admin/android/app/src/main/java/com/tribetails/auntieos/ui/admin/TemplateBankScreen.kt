@@ -779,7 +779,7 @@ private fun TemplateCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = tpl.title.ifBlank { tpl.templateId.ifBlank { "Untitled template" } },
+                text = bankCardTitle(tpl.title, tpl.templateId),
                 style = AuntieTheme.typography.headlineSmall,
                 color = c.textPrimary,
             )
@@ -1506,3 +1506,13 @@ private fun TemplateEditorScreen(
  */
 internal fun templateSavedNotice(title: String): String =
     title.trim().let { if (it.isEmpty()) "Saved the untitled template." else "Saved $it." }
+
+/**
+ * #1887: a Template Bank card's title. A doc with no title comes back titled
+ * with its stored key ("account.welcome.kinfolk"), which reads as words here.
+ */
+internal fun bankCardTitle(title: String, templateId: String): String {
+    val t = title.trim()
+    if (t.isNotEmpty() && t != templateId.trim()) return title
+    return com.tribetails.auntieos.ui.admin.humanizeKey(templateId).ifBlank { "Untitled template" }
+}

@@ -519,19 +519,16 @@ private fun TemplateCard(
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(tpl.title, style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+        Text(bankCardTitle(tpl.title, tpl.templateId), style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
 
-        // Category pill + templateId key (the model carries both).
-        if (!tpl.category.isNullOrBlank() || tpl.templateId.isNotBlank()) {
+        // Category pill. #1887: the stored templateId key is not shown.
+        if (!tpl.category.isNullOrBlank()) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 tpl.category?.takeIf { it.isNotBlank() }?.let { cat ->
                     AuntieChip(label = cat, tone = AuntieChipTone.Purple, mono = true)
-                }
-                tpl.templateId.takeIf { it.isNotBlank() }?.let { key ->
-                    Text(key, style = AuntieTheme.typography.mono, color = c.textDim)
                 }
             }
         }
@@ -1011,3 +1008,13 @@ internal fun requiredFieldHint(label: String, value: String, touched: Boolean): 
  */
 internal fun templateSavedNotice(title: String): String =
     title.trim().let { if (it.isEmpty()) "Saved the untitled template." else "Saved $it." }
+
+/**
+ * #1887: a Template Bank card's title. A doc with no title comes back titled
+ * with its stored key ("account.welcome.kinfolk"), which reads as words here.
+ */
+internal fun bankCardTitle(title: String, templateId: String): String {
+    val t = title.trim()
+    if (t.isNotEmpty() && t != templateId.trim()) return title
+    return com.tribetails.auntieos.web.screens.humanizeKey(templateId).ifBlank { "Untitled template" }
+}
