@@ -2,7 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore, Transaction } from 'firebase-admin/firestore';
 import { createHash } from 'crypto';
 import { db } from './firestoreAdmin';
-import type { AuditEvent } from './auditEvents';
+import { auditEventWords, type AuditEvent } from './auditEvents';
 import type { ActorRole, Severity } from './schema';
 
 /**
@@ -267,8 +267,12 @@ export interface ChainHeadDoc {
   lastEntryId?: string;
 }
 
+/**
+ * #1818: words, never the key and ids. It was "CREATE_KINCARE_SESSION
+ * uid=<id>", which the Activity Log printed as written. The actor and the
+ * target stay on the entry's own fields, which is where the evidence log keeps
+ * them.
+ */
 function buildDefaultDescription(args: WriteAuditArgs): string {
-  const who = args.actorUid ? ` uid=${args.actorUid}` : '';
-  const target = args.targetUid ? ` target=${args.targetUid}` : '';
-  return `${args.event}${who}${target}`.trim();
+  return auditEventWords(args.event);
 }

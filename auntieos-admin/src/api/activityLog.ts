@@ -1,5 +1,8 @@
+import { collection, getDocs, limit, orderBy, query, where } from 'firebase/firestore';
 import { call } from '../lib/fns';
+import { db } from '../lib/firebase';
 import { type CollectionSpec } from '../lib/firestore';
+import { isSuppressedInTestMode } from '../lib/testScope';
 
 /**
  * One `activity_log` row (mirrors the wasm ActivityLogEntry).
@@ -66,6 +69,35 @@ export const ACTIVITY_LOG_QUERY: CollectionSpec = {
   order: ['seq', 'desc'],
   max: 200,
 };
+
+/** #1880: how many older entries each "Load older entries" press reads. */
+export const ACTIVITY_OLDER_PAGE = 200;
+
+/**
+ * #1880: the entries older than `beforeSeq`, newest first, one page at a time.
+ *
+ * The live listener holds the newest 200 and nothing could reach the rest, so
+ * 859 of 1,059 entries could not be opened. Each press reads the next page
+ * below the oldest one on screen. A one-shot read, not a second listener: older
+ * entries are sealed and never change. The range and the order are on the same
+ * field, so no composite index is needed. A sandbox account never reads this
+ * collection (`lib/testScope.ts`), so it gets an honest empty page.
+ */
+export async function fetchOlderActivity(
+  beforeSeq: number,
+  pageSize: number = ACTIVITY_OLDER_PAGE,
+): Promise<ActivityLogEntry[]> {
+  if (isSuppressedInTestMode(ACTIVITY_LOG_QUERY.path)) return [];
+  const snap = await getDocs(
+    query(
+      collection(db, ACTIVITY_LOG_QUERY.path),
+      where('seq', '<', beforeSeq),
+      orderBy('seq', 'desc'),
+      limit(pageSize),
+    ),
+  );
+  return snap.docs.map((d) => ({ ...d.data(), _id: d.id }) as ActivityLogEntry);
+}
 
 /**
  * The first offending entry when the chain fails verification. Mirrors the

@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens.activity
 
 import com.tribetails.auntieos.web.data.ActivityLogEntry
 import com.tribetails.auntieos.web.data.activityDescriptionWords
+import com.tribetails.auntieos.web.data.brandWords
 import com.tribetails.auntieos.web.data.noticeNotSentWords
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -45,10 +46,6 @@ internal fun isNoticeNotSent(entry: ActivityLogEntry): Boolean =
 internal fun activityEntryTitle(entry: ActivityLogEntry): String =
     if (isLegacyHeldNotice(entry)) NOTICE_NOT_SENT_TITLE else activityTitle(entry.actionType)
 
-/** Whether the row prints the stored key beside the title. Never beside a title that contradicts it. */
-internal fun activityEntryShowsCode(entry: ActivityLogEntry): Boolean =
-    !isLegacyHeldNotice(entry) && activityShowsCode(entry.actionType)
-
 /** The row's sentence: the stored description in words, or the held notice's reason in words. */
 internal fun activityEntryDescription(entry: ActivityLogEntry): String =
     if (isLegacyHeldNotice(entry)) noticeNotSentWords(payloadText(entry, "key"), payloadText(entry, "reason"))
@@ -62,16 +59,12 @@ internal fun activityEffectiveStatus(entry: ActivityLogEntry): String =
     if (isLegacyHeldNotice(entry) && entry.status.trim().equals("SUCCESS", ignoreCase = true)) NOT_SENT_STATUS
     else entry.status
 
-/** The status on the row's pill and in the opened entry. "Not sent" in words; every other status as stored. */
+/** The status on the row's pill and in the opened entry, in words (#1818): "Done", "Failed", "Pending", "Not sent". */
 internal fun activityStatusWords(entry: ActivityLogEntry): String {
     val status = activityEffectiveStatus(entry)
-    return if (status.trim().equals(NOT_SENT_STATUS, ignoreCase = true)) NOT_SENT_STATUS_WORDS else status
+    val key = status.trim().uppercase()
+    if (key == NOT_SENT_STATUS) return NOT_SENT_STATUS_WORDS
+    return STATUS_WORDS[key] ?: brandWords(status)
 }
 
-/**
- * Whether the row may end with the entry's target path. Not on a notification
- * row (#1905): the walk read "notifications/<id>" at the end of each one, and
- * the opened entry already carries the target.
- */
-internal fun activityRowShowsTarget(entry: ActivityLogEntry): Boolean =
-    activityCategoryOf(entry.actionType) != ActivityCategory.Notifications
+private val STATUS_WORDS = mapOf("SUCCESS" to "Done", "FAILURE" to "Failed", "ERROR" to "Failed", "PENDING" to "Pending")

@@ -125,7 +125,8 @@ class ActivityChainRenderTest {
         // opened record, and the coral warning tile marks the failure.
         composeRule.onAllNodesWithText("FAILURE").assertCountEquals(0)
         composeRule.onNodeWithText("Login").assertIsDisplayed()
-        composeRule.onNodeWithText("LOGIN").assertIsDisplayed()
+        // #1818: no stored key under the title.
+        composeRule.onAllNodesWithText("LOGIN").assertCountEquals(0)
     }
 
     @Test

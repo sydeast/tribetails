@@ -12,13 +12,13 @@ import kotlin.test.assertEquals
  */
 class ActivityIdWordsTest {
     private val storedIdShapes = listOf(
-        "Notification kincare.booking.confirm delivered via email" to "Delivered \"Kincare booking confirm\" by email",
+        "Notification kincare.booking.confirm delivered via email" to "Delivered \"KinCare booking confirm\" by email",
         "Notification invoice.new dispatched to email, push" to "Sent \"Invoice new\" by email and push notification",
         "Notification (unknown key) dispatched to sms" to "Sent a notification by text message",
-        "Notification kincare.changed archived" to "Archived \"Kincare changed\"",
+        "Notification kincare.changed archived" to "Archived \"KinCare changed\"",
         "Notification n8Xq2LmP0aZ restored to the active inbox" to "Restored a notification to the notifications list",
-        "Notification kincare.changed viewed" to "Viewed \"Kincare changed\"",
-        "Notification kincare.changed marked unread" to "Marked \"Kincare changed\" unread",
+        "Notification kincare.changed viewed" to "Viewed \"KinCare changed\"",
+        "Notification kincare.changed marked unread" to "Marked \"KinCare changed\" unread",
         "COMPLETE on session s_9fK2: SCHEDULED -> COMPLETED" to "Completed the visit: scheduled to completed",
         "APPROVE on session s_9fK2: PENDING -> SCHEDULED" to "Approved the visit: requested to scheduled",
         "ARRIVED on session s_9fK2: ON_MY_WAY -> ARRIVED" to "Marked the arrival: on the way to arrived",
