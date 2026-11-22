@@ -510,6 +510,7 @@ fun AppNavHost(
                             portalApi = portalApi,
                             onBack = { navController.popBackStack() },
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
+                            onOpenTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) },
                         )
                     }
                 }
