@@ -417,7 +417,7 @@ class LocationTrackingService : Service() {
             _currentRoute.value = updatedRoute
 
             serviceScope.launch {
-                saveCheckpoint(currentLocation, CheckpointType.ARRIVAL, "Arrived at client's home")
+                saveCheckpoint(currentLocation, CheckpointType.ARRIVAL, "Arrived at the household's home")
             }
         }
 
@@ -432,7 +432,7 @@ class LocationTrackingService : Service() {
             _currentRoute.value = updatedRoute
 
             serviceScope.launch {
-                saveCheckpoint(currentLocation, CheckpointType.DEPARTURE, "Left client's home")
+                saveCheckpoint(currentLocation, CheckpointType.DEPARTURE, "Left the household's home")
             }
         }
     }
@@ -548,7 +548,7 @@ class LocationTrackingService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Tracking KinCare Visit")
-            .setContentText("Recording route for client transparency")
+            .setContentText("Recording the route for the household")
             .setSmallIcon(R.drawable.ic_location_on)
             .setOngoing(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)

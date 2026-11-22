@@ -87,7 +87,9 @@ class MembersRepositoryTest {
         assertEquals("fam1", payload.captured["kinfolkId"])
         val member = result.getOrThrow().single()
         assertEquals("u1", member.uid)
-        assertEquals("marcus@example.com", member.label)
+        // #1853: an email is not a name.
+        assertEquals("Spouse", member.label)
+        assertEquals("marcus@example.com", member.invitedEmail)
         assertEquals(MembersRepository.MemberRole.SECONDARY, member.role)
         assertEquals(MembersRepository.MemberStatus.ACTIVE, member.status)
         assertTrue(member.permissions.billingFull)
@@ -422,16 +424,23 @@ class MembersRepositoryTest {
     }
 
     @Test
-    fun `a member label falls back name then email then label then a plain word, never the uid`() {
+    fun `a member label falls back name then label then the role in words, never an email or the uid`() {
         val base = MembersRepository.Member(
             uid = "u1", secondaryLabel = null, role = MembersRepository.MemberRole.SECONDARY,
             status = MembersRepository.MemberStatus.ACTIVE,
             permissions = MembersRepository.MemberPermissions(), invitedEmail = null,
         )
-        assertEquals("Unnamed member", base.label)
+        assertEquals("Secondary kinfolk", base.label)
         assertEquals("Spouse", base.copy(secondaryLabel = "Spouse").label)
         assertEquals("Dre East", base.copy(displayName = "Dre East", invitedEmail = "a@b.com").label)
-        assertEquals("a@b.com", base.copy(secondaryLabel = "Spouse", invitedEmail = "a@b.com").label)
+        // #1853: never the email in place of a name.
+        assertEquals("Spouse", base.copy(secondaryLabel = "Spouse", invitedEmail = "a@b.com").label)
+        assertEquals("Secondary kinfolk", base.copy(invitedEmail = "a@b.com").label)
+        val primary = base.copy(role = MembersRepository.MemberRole.PRIMARY, invitedEmail = "lost@example.com")
+        assertEquals("Primary contact", primary.label)
+        assertEquals("The primary contact", primary.subject)
+        assertEquals("Dre East", primary.copy(displayName = "Dre East").subject)
+        assertEquals("Secondary kinfolk", base.copy(displayName = "   ").label)
     }
 
     @Test

@@ -341,7 +341,7 @@ class HouseholdMembersViewModel(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(
                         savingPermission = null,
-                        toast = "${if (next) "Granted" else "Revoked"} ${key.wireName} for ${member.label}.",
+                        toast = "${if (next) "Granted" else "Revoked"} ${permissionWords(key)} for ${member.label}.",
                     )
                 },
                 onFailure = { err ->
@@ -389,7 +389,7 @@ class HouseholdMembersViewModel(
                         removingUid = null,
                         // "Suspended", not "removed": the server keeps the doc
                         // and the row stays in this list.
-                        toast = "${member.label} is suspended on $householdName and signed out.",
+                        toast = "${member.subject} is suspended on $householdName and signed out.",
                     )
                     onRemoved()
                     loadMembers()
