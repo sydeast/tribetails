@@ -16,7 +16,12 @@ import {
   bulkUnarchiveNotifications,
 } from '../api/notificationsWrite';
 import { type BatchBookingAction } from '../api/bookingsWrite';
-import { usePendingBookingRequests } from '../lib/pendingBookingRequests';
+import {
+  NO_ANSWERED_REQUESTS,
+  pendingLessAnswered,
+  usePendingBookingRequests,
+  withAnsweredRequest,
+} from '../lib/pendingBookingRequests';
 import { DecisionDialog, type VisitRequest } from '../components/VisitRequestsSection';
 import { kinfolkDisplayName } from '../api/directory';
 import { useCollection } from '../lib/firestore';
@@ -60,6 +65,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { navKicker } from '../lib/nav';
 import { reportError } from '../lib/sentry';
 
 /** A row with no write in flight gets this, rather than a fresh empty Set each render. */
@@ -178,7 +184,10 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
   // #2069: the booking requests still waiting, live (#1864). A request row
   // offers Approve and Deny only when this holds it.
   const pending = usePendingBookingRequests();
-  const pendingSet = pending.status === 'ready' ? pending.data : null;
+  // #1877: a request answered here leaves the count at once, not on the next read.
+  const [answered, setAnswered] = useState(NO_ANSWERED_REQUESTS);
+  const queueRead = pending.status === 'ready' ? pending.data : null;
+  const pendingSet = useMemo(() => pendingLessAnswered(queueRead, answered), [queueRead, answered]);
   /** #1875: the confirm step a request row's Approve or Deny opened. */
   const [decision, setDecision] = useState<{ row: VisitRequest; decision: 'accept' | 'decline' } | null>(null);
   /** #1875: what the answer did, kept on screen until dismissed. */
@@ -433,7 +442,7 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Notifications"
+        kicker={navKicker('notifications')}
         title="Notifications"
         subtitle="Events that need you, and the household each one is about. Activity Log keeps the audit trail."
         trailing={unreadCount > 0 ? <span className="notif-badge">{unreadCount} unread</span> : undefined}
@@ -466,8 +475,13 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
           row={decision.row}
           decision={decision.decision}
           onClose={() => setDecision(null)}
-          onResolved={(row, message) => {
+          onResolved={(row, message, stillWaiting) => {
             setDecision(null);
+            if (row.kind === 'newBooking' && stillWaiting !== true) {
+              setAnswered((prev) =>
+                withAnsweredRequest(prev, pendingRequestKey(row.request.kinfolkId, row.request.batchId)),
+              );
+            }
             const name = row.request.kinfolkName?.trim() ?? '';
             setDecisionOutcome(name === '' ? message : `${name}: ${message}`);
           }}

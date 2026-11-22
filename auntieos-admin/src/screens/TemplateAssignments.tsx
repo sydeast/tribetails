@@ -23,6 +23,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './TemplateAssignments.css';
+import { navKicker } from '../lib/nav';
 
 interface TemplateAssignmentsProps {
   /** Returns to the Template Bank list (this is a sibling view of Templates, not a route). */
@@ -73,10 +74,10 @@ export function missingTemplateNote(row: CatalogKeyRow, templateMissing: boolean
     return `Not in the bank yet, so this sends generic wording that cannot say what happened.${load}`;
   }
   if (row.whenTemplateMissing === 'repoCopy') {
-    return `Not in the bank yet, so this sends the repo copy.${load}`;
+    return `Not in the bank yet, so this sends the built-in copy.${load}`;
   }
   // A failing send gets the loud line; this only says where the fix is.
-  return row.inRepoCorpus ? 'The repo has a copy. Load it from Template Import.' : null;
+  return row.inRepoCorpus ? 'A built-in copy exists. Load it from Template Import.' : null;
 }
 
 /**
@@ -354,7 +355,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Admin"
+        kicker={navKicker('templates')}
         title="Template"
         accentTail="Routing"
         subtitle="Every catalog key already sends a template. A binding is an override on top of that."
@@ -446,7 +447,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           </label>
 
           <label className="tassign__field">
-            <span className="tassign__label">Audience (stored, unused)</span>
+            <span className="tassign__label">Audience (not used yet)</span>
             <select
               className="tassign__input"
               value={audience}

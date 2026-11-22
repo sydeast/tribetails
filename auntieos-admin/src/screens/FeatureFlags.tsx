@@ -11,6 +11,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Toggle } from '../components/Toggle';
 import { LoadingRow } from '../components/LoadingRow';
+import { navKicker } from '../lib/nav';
 
 /** One togglable flag: stable dotted key + operator label + what it gates. */
 export interface FlagMeta {
@@ -32,7 +33,7 @@ export const FLAGS: readonly FlagMeta[] = [
     key: KEY_COMMUNICATE_COMMS_RECAP,
     label: 'Communicate: comms recap',
     detail:
-      'AI-generated 1-2 sentence recap of recent communications in the recipient context panel (recap_recent_comms callable).',
+      'OFF (the default): no summary. ON: Communicate shows a one or two sentence AI summary of recent messages with the household you are writing to, in the panel beside them.',
   },
   {
     key: KEY_INBOX_WAITING_SECTIONS,
@@ -101,7 +102,7 @@ export function FeatureFlags() {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Admin"
+        kicker={navKicker('featureFlags')}
         title="Feature"
         accentTail="flags."
         subtitle="Turn a feature on or off. A change takes effect the next time the app loads."

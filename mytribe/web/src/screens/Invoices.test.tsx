@@ -532,3 +532,23 @@ describe('Invoices: a row prints the invoice number, never the stored id (#1848)
     noIdOnScreen();
   });
 });
+// #1859: a missing date reads in words, never as an em dash.
+describe('Invoices: a missing date is words, not an em dash (#1859)', () => {
+  it('says "No due date" on an open bill with none, and "Paid" on a paid one with no day', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({
+      open: [{ ...OPEN_INVOICE, id: 'inv-nodue', dueDate: null }],
+      paid: [{ ...OPEN_INVOICE, id: 'inv-noday', status: 'paid', isPaid: true, amountDue: 0, date: null }],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Invoices />
+      </QueryClientProvider>,
+    );
+    expect((await screen.findAllByText('No due date')).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain('\u2014');
+  });
+});

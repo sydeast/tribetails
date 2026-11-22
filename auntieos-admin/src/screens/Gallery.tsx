@@ -35,6 +35,7 @@ import { MediaUploadDialog, type KinfolkOption, type KinOption } from '../compon
 import { MediaViewerDialog } from '../components/MediaViewerDialog';
 import { TagKinDialog } from '../components/TagKinDialog';
 import './Gallery.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Admin Gallery ("The Den · Gallery"), ported from the wasm `GalleryScreen.kt` /
@@ -233,7 +234,7 @@ export function Gallery({ isAuntie = false }: { isAuntie?: boolean } = {}) {
           "<scope> Media" with the last word accented: this screen's scope is
           every household, so the scope word is "All". */}
       <DenScreenHeading
-        kicker="The Den · Gallery"
+        kicker={navKicker('gallery')}
         title="All"
         accentTail="media"
         subtitle="All media from every KinTale, tagged to its household."

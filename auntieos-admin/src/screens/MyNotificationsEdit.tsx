@@ -39,6 +39,7 @@ import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import './MyNotifications.css';
+import { navKicker } from '../lib/nav';
 
 interface MyNotificationsData {
   matrix: NotificationMatrix;
@@ -189,7 +190,7 @@ export function MyNotificationsEdit() {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Account"
+        kicker={navKicker('accountSettings')}
         title="What reaches"
         accentTail="you."
         subtitle={

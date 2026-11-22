@@ -11,7 +11,9 @@ import org.junit.Test
 class OperatorWordsTest {
 
     @Test fun `humanizeKey splits dots, underscores and dashes`() {
-        assertEquals("Account welcome kinfolk", humanizeKey("account.welcome.kinfolk"))
+        assertEquals("Account welcome Kinfolk", humanizeKey("account.welcome.kinfolk"))
+        assertEquals("Kin updated", humanizeKey("pets.updated"))
+        assertEquals("KinTale published", humanizeKey("kintale.published"))
         assertEquals("Visit 60", humanizeKey("visit_60"))
         assertEquals("", humanizeKey("  "))
     }

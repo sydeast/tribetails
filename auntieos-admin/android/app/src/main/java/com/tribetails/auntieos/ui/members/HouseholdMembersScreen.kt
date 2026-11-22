@@ -61,6 +61,8 @@ import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.color
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Household members and invites. (B1)
@@ -204,7 +206,7 @@ fun HouseholdMembersBody(
                 // DirectoryScreen two levels up says, so it could not tell an
                 // operator which of the two they had open. The trail takes its
                 // place, per `ui-ideas/auntieos-members-2026-05-27.html`.
-                kicker = "The Den · Directory",
+                kicker = railKicker(RailScreen.DIRECTORY),
                 crumbs = listOf(
                     DenCrumb("Directory", onDirectory),
                     DenCrumb(kinfolkName, onBack),

@@ -368,7 +368,7 @@ function OpenRow(props: {
     // keeps `quote` status instead of becoming `cancelled`.
     : inv.status === 'quote' ? (inv.quoteDecision === 'denied' ? declinedRowLabel(inv, viewerUid) : 'Needs your answer')
     : inv.status === 'zero' ? 'No charge'
-    : `Due ${shortDateLabel(inv.dueDate) ?? '—'}`;
+    : (shortDateLabel(inv.dueDate) === null ? 'No due date' : `Due ${shortDateLabel(inv.dueDate)}`);
   // One rule with the detail screen, and never on a paid invoice (docket Q5).
   // #2437: and not while a payment on this bill is still being recorded.
   const payable = offersPayment(inv) && !props.recording;
@@ -441,7 +441,7 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
       ? 'No charge'
       : inv.status === 'written_off'
         ? WRITTEN_OFF_ROW_LABEL
-        : `Paid ${longDateLabel(inv.date) ?? '—'}`;
+        : (longDateLabel(inv.date) === null ? 'Paid' : `Paid ${longDateLabel(inv.date)}`);
 
   return (
     <Link className={`inv ${status.invClass}`} to="/invoices/$invoiceId" params={{ invoiceId: inv.id }} style={props.divider ? undefined : { borderTop: 'none' }}>

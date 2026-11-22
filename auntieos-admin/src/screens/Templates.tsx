@@ -24,6 +24,7 @@ import { TemplateAssignments } from './TemplateAssignments';
 import { TemplateImport } from './TemplateImport';
 import { CategoryBindingDialog } from './CategoryBindingDialog';
 import './Templates.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * I8: the bank list loads a page at a time (server-side limit + doc-id cursor)
@@ -559,7 +560,7 @@ export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }:
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Admin"
+        kicker={navKicker('templates')}
         title="Template"
         accentTail="Bank."
         subtitle="Browse, preview, and edit email templates."
@@ -569,7 +570,7 @@ export function Templates({ onSelect, onNew, editorTemplateId, onEditorChange }:
             <HeaderOverflowMenu
               items={[
                 { label: 'Manage assignments', onSelect: () => setView('assignments') },
-                { label: 'Import from repo', onSelect: () => setView('import') },
+                { label: 'Template Import', onSelect: () => setView('import') },
                 { label: 'New binding', onSelect: () => setBindingOpen(true) },
               ]}
             />

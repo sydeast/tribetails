@@ -78,7 +78,7 @@ class InvoiceArchiveFacetTest {
     @org.junit.Test
     fun `the subtitle stays quiet when nothing is hidden`() {
         org.junit.Assert.assertEquals(
-            "2 of 3 shown. Tap a row to open the invoice.",
+            "2 of 3 shown",
             invoiceListSubtitle(visible = 2, inScope = 3, archivedHidden = 0),
         )
     }

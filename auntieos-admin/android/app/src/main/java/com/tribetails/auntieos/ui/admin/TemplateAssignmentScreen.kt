@@ -53,6 +53,8 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Template routing in the Den aesthetic, the Android twin of the web
@@ -193,7 +195,7 @@ fun TemplateAssignmentBody(
         ) {
             item {
                 DenScreenHeading(
-                    kicker = "The Den · Admin",
+                    kicker = railKicker(RailScreen.TEMPLATES),
                     title = "Template",
                     accentTail = "Routing.",
                     subtitle = "Every catalog key already sends a template. A binding is an override on top of that.",
@@ -593,7 +595,7 @@ private fun BindingEditorDialog(
 
         // Audience pills: single-select; clicking the selected one clears it (nullable).
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-            AuntieFieldLabel(text = "Audience (stored, unused)")
+            AuntieFieldLabel(text = "Audience (not used yet)")
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(dims.space2),

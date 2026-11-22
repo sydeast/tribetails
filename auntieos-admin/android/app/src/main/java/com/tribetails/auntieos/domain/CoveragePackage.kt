@@ -713,7 +713,7 @@ fun priceDay(visits: List<Visit>, durations: List<Duration>, coverage: Coverage)
     if (coverage.bonusFreeVisit) {
         val idx = items.indexOfFirst { !it.free }
         if (idx >= 0) {
-            items[idx] = items[idx].copy(price = 0.0, bonus = true, free = true, freeReason = "free visit — overnight bundle")
+            items[idx] = items[idx].copy(price = 0.0, bonus = true, free = true, freeReason = "free visit, overnight bundle")
         }
     }
 
@@ -805,7 +805,7 @@ fun quoteText(input: QuoteInput): String {
     fun money(n: Double): String = formatUsd(n)
     val pkg = input.pkg
     val days = input.days
-    val lines = mutableListOf("TribeTails — Coverage Package", "")
+    val lines = mutableListOf("TribeTails Coverage Package", "")
     if (input.clientName.trim().isNotEmpty()) lines.add("Prepared for: ${input.clientName.trim()}")
     lines.add("${pkg.name} · $days day${if (days != 1) "s" else ""}")
     if (input.startDate.isNotBlank()) lines.add("${dateLabel(input.startDate, 0)} – ${dateLabel(input.startDate, days - 1)}")
@@ -814,10 +814,10 @@ fun quoteText(input: QuoteInput): String {
     for (r in input.priced.rows) {
         val whenLabel = if (input.startDate.isNotBlank()) dateLabel(input.startDate, r.dayIndex) else "Day ${r.dayIndex + 1}"
         val on = if (r.isOvernight && r.overnightStartMin != null) "   (overnight from ${minutesToTime(r.overnightStartMin.toDouble())})" else ""
-        lines.add("Day ${r.dayIndex + 1} — $whenLabel$on   ${money(r.dayCost)}")
+        lines.add("Day ${r.dayIndex + 1}: $whenLabel$on   ${money(r.dayCost)}")
         for (it in r.items) {
             val price = if (it.free) "free" else money(it.price)
-            val reason = if (it.freeReason != null) " — ${it.freeReason}" else ""
+            val reason = if (it.freeReason != null) ", ${it.freeReason}" else ""
             lines.add("   ${minutesToTime(it.time.toDouble()).padEnd(9)} ${it.label} (${it.durationLabel})$reason   $price")
         }
         if (r.isOvernight && r.overnightStartMin != null) {

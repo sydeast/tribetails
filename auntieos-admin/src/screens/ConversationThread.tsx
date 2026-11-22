@@ -22,6 +22,7 @@ import { RichText } from '../components/RichText';
 import { plainTextToMessageBody } from '../lib/richText';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './ConversationThread.css';
+import { navKicker } from '../lib/nav';
 
 interface ConversationThreadProps {
   kinfolkId: string;
@@ -130,7 +131,7 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Inbox"
+        kicker={navKicker('inbox')}
         title={kinfolkName || kinfolkId}
         subtitle="Two-way message thread with this household."
         trailing={

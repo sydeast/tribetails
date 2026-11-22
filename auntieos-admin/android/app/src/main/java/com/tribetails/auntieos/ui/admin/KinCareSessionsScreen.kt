@@ -420,7 +420,7 @@ fun KinCareSessionsScreen(
                     // windows" framing (spec 13 item 1 / spec 14): the route map (§A.10)
                     // renders below on the in-flight card; the phases cover the rest.
                     DenScreenHeading(
-                        kicker = "Care Ops · Auntie Time",
+                        kicker = railKicker(RailScreen.AUNTIE_TIME),
                         title = "🐾 Auntie Time",
                         subtitle = if (archiveOpen) {
                             "Older history, by day. Pick a range; the year shows on any day outside this one."

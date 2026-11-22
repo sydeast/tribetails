@@ -57,4 +57,13 @@ describe('household-visible notification copy', () => {
       );
     });
   });
+
+  // #1886: the brand word is Kin. The admin matrix, Template Routing and the
+  // portal's notices all print these, and "Pets updated or added" was on all three.
+  it.each(Object.values(NOTIFICATION_CATALOG).map((d) => [d.key, d.label, d.description]))(
+    '%s says Kin, never pet',
+    (_key, label, description) => {
+      expect(`${label} ${description}`).not.toMatch(/\bpets?\b/i);
+    },
+  );
 });

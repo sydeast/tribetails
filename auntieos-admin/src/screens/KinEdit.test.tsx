@@ -582,3 +582,37 @@ describe('KinEdit: a refused save is said beside Save (#1851)', () => {
     expect(message.closest('.kedit__save-error')).not.toBeNull();
   });
 });
+
+describe('KinEdit: Gender (#1852)', () => {
+  it('is a "Gender" list holding the stored value, the same three Add kin offers', async () => {
+    getKin.mockResolvedValue(kin({ sex: 'Male' }));
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const select = (await screen.findByText('Gender')).parentElement!.querySelector('select')!;
+    expect(select).toHaveValue('Male');
+    const options = within(select).getAllByRole('option').map((o) => o.textContent);
+    expect(options).toEqual(['Not set', 'Male', 'Female', 'Unknown']);
+    expect(screen.queryByText('Sex')).toBeNull();
+  });
+  it('saves a new choice as the `sex` field', async () => {
+    getKin.mockResolvedValue(kin({ sex: 'Male' }));
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const select = (await screen.findByText('Gender')).parentElement!.querySelector('select')!;
+    await userEvent.selectOptions(select, 'Female');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    expect(updateKin.mock.calls[0]![1]).toEqual({ sex: 'Female' });
+  });
+  it('keeps a stored value outside the list as its own choice, and a save leaves it alone', async () => {
+    getKin.mockResolvedValue(kin({ sex: 'M' }));
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const select = (await screen.findByText('Gender')).parentElement!.querySelector('select')!;
+    expect(select).toHaveValue('M');
+    const nameInput = screen.getByText('Name').parentElement!.querySelector('input')!;
+    await userEvent.type(nameInput, ' B');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    expect(updateKin.mock.calls[0]![1]).toEqual({ name: 'Willow B' });
+  });
+});

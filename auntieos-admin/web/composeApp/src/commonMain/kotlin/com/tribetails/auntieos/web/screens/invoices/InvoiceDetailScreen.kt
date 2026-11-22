@@ -112,6 +112,8 @@ import kotlinx.coroutines.launch
 import com.tribetails.auntieos.web.util.businessTimeZone
 import com.tribetails.auntieos.web.screens.sessions.businessDayOf
 import com.tribetails.auntieos.web.util.businessTodayIso
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // The header Receipt / Send-reminder actions and the Payments panel's Record
 // payment (real generateReceipt / sendInvoiceReminder / recordPayment callables)
@@ -133,10 +135,12 @@ fun InvoiceDetailScreen(
     val streamState by remember { client.invoicesStream() }.collectAsState(initial = FirestoreResult.Loading)
 
     val state = invoiceDetailStateFor(invoiceId, streamState)
+    // #1871: the invoice as read back after a saved edit, until the stream moves on.
+    var savedEdit by remember(invoiceId) { mutableStateOf<SavedInvoiceEdit?>(null) }
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "Care Ops · Invoices",
+            kicker     = navKicker(Destination.Invoices),
             title      = "Invoice",
             accentTail = "Detail.",
             subtitle   = "Full billing record.",
@@ -186,9 +190,17 @@ fun InvoiceDetailScreen(
                 )
 
             is InvoiceDetailState.Loaded -> InvoiceDetailBody(
-                invoice     = state.invoice,
+                invoice     = invoiceShownAfterEdit(state.invoice, savedEdit),
                 client      = client,
                 onOpenVisit = onOpenVisit,
+                onEdited    = {
+                    // `before` is the STREAM's copy, so a second edit inside one
+                    // poll still compares against what the stream is holding.
+                    val before = state.invoice
+                    val after = client.invoiceFromServer(invoiceId)
+                    if (after != null) savedEdit = SavedInvoiceEdit(before, after)
+                    after != null
+                },
             )
         }
     }
@@ -199,6 +211,8 @@ private fun InvoiceDetailBody(
     invoice: Invoice,
     client: FirestoreClient,
     onOpenVisit: ((String) -> Unit)?,
+    /** #1871: re-reads the invoice after a saved edit, before the notice shows. False when it could not. */
+    onEdited: suspend () -> Boolean = { true },
 ) {
     val c = AuntieTheme.colors
     val todayKey = businessTodayIso()
@@ -433,9 +447,11 @@ private fun InvoiceDetailBody(
         scope.launch {
             when (val r = client.updateInvoice(invoice._id, patch)) {
                 is WriteResult.Ok -> {
+                    // #1871: the saved figures first, then the word that it is done.
+                    val figuresShown = onEdited()
                     savingInvoiceEdit = false
                     invoiceEdit = null
-                    showToast("Invoice updated.", false)
+                    showToast(invoiceEditedNotice(figuresShown), false)
                 }
                 is WriteResult.Err -> {
                     savingInvoiceEdit = false

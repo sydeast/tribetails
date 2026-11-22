@@ -64,6 +64,8 @@ import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * The operator's OWN notification receive-prefs (Android mirror of the web screen).
@@ -180,7 +182,7 @@ fun AdminNotificationPrefsScreen(onBack: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 16.dp),
         ) {
             DenScreenHeading(
-                kicker = "The Den · Account",
+                kicker = railKicker(RailScreen.ACCOUNT),
                 title = "What you",
                 accentTail = "receive.",
                 subtitle = "Two hats, two stacks: what reaches you as the owner and what reaches you " +

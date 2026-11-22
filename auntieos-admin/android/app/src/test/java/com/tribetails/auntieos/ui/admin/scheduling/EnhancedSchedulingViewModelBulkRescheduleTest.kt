@@ -146,7 +146,7 @@ class EnhancedSchedulingViewModelBulkRescheduleTest {
         // draft has no kin_care_sessions row, because approval is what creates one.
         assertEquals(1, state.bulkRescheduleSkipped.size)
         assertEquals("The Sparrows", state.bulkRescheduleSkipped[0].name)
-        assertTrue(state.bulkRescheduleSkipped[0].message.contains("awaiting a reply"))
+        assertTrue(state.bulkRescheduleSkipped[0].message.contains("not approved yet"))
     }
 
     @Test
@@ -366,7 +366,7 @@ class BulkRescheduleHelpersTest {
 
     @Test
     fun `every ineligible status gets its own sentence`() {
-        assertTrue(bulkRescheduleSkipReason(BookingStatus.DRAFT).contains("awaiting a reply"))
+        assertTrue(bulkRescheduleSkipReason(BookingStatus.DRAFT).contains("not approved yet"))
         assertTrue(bulkRescheduleSkipReason(BookingStatus.COMPLETED).contains("completed"))
         assertTrue(bulkRescheduleSkipReason(BookingStatus.REJECTED).contains("cancelled"))
     }

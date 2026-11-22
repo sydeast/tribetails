@@ -136,7 +136,7 @@ fun KinViewScreen(
                     DenPanel(title = "Basics") {
                         ViewRow("Species", kin.species)
                         ViewRow("Breed", kin.breed)
-                        ViewRow("Sex", kin.sex)
+                        ViewRow("Gender", kin.sex)
                         ViewRow("Age", kin.age)
                         ViewRow("Weight", kin.weight)
                         ViewRow("Color & markings", kin.colorMarkings)

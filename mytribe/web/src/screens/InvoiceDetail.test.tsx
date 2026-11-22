@@ -352,7 +352,7 @@ describe('InvoiceDetail line items', () => {
   it('names the household when the invoice carries no client', async () => {
     await renderWith({ ...ITEMIZED, client: null, kinfolkName: 'The Rivera Tribe' });
     expect((await screen.findAllByText('The Rivera Tribe')).length).toBeGreaterThan(0);
-    expect(screen.queryByText('Not set')).toBeNull();
+    expect(screen.queryAllByText('Not set').filter((el) => el.classList.contains('who'))).toHaveLength(0);
   });
   it('renders every stored line with a real amount, none of them blank', async () => {
     await renderWith(ITEMIZED);
@@ -413,7 +413,8 @@ describe('InvoiceDetail line items', () => {
     });
     await screen.findByText('Mileage');
     const cell = document.querySelector('table.items tbody tr td.date');
-    expect(cell?.textContent).toBe('—');
+    // #1859: blank, as the Android portal leaves it, and never an em dash.
+    expect(cell?.textContent).toBe('');
   });
   it('still renders a legacy session-derived line, dates and all', async () => {
     await renderWith({

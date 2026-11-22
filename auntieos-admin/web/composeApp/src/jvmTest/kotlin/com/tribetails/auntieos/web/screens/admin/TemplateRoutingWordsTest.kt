@@ -68,7 +68,7 @@ class TemplateRoutingWordsTest {
     fun aKeyTheRowsDoNotHoldReadsAsWords() {
         val rows = listOf(row("invoice.new", "New invoice"))
         assertEquals("New invoice", catalogKeyNameFor("invoice.new", rows))
-        assertEquals("Account welcome kinfolk", catalogKeyNameFor("account.welcome.kinfolk", rows))
+        assertEquals("Account welcome Kinfolk", catalogKeyNameFor("account.welcome.kinfolk", rows))
         assertEquals("Notification", catalogKeyNameFor("", rows))
     }
 
@@ -112,7 +112,7 @@ class TemplateRoutingWordsTest {
     fun theBannersNameTheNotifications() {
         val rows = listOf(row("invite.verify-email"), row("invoice.paid", "Invoice paid"))
         assertEquals(
-            "The template does not exist: Invite verify email, Invoice paid. The repo has a copy of Invoice paid. " +
+            "The template does not exist: Invite verify email, Invoice paid. A built-in copy of Invoice paid exists. " +
                 "Load it from Template Import.",
             failingKeysLine(listOf("invite.verify-email", "invoice.paid"), listOf("invoice.paid"), rows),
         )

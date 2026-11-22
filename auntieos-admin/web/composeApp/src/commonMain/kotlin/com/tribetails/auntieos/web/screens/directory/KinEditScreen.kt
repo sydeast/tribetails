@@ -74,6 +74,8 @@ import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.screens.communicate.SYNTHESIZE_SUCCESS
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // item 1/3: controlled vocabularies for the Kin identity dropdowns. "Other" keeps
 // rare species enterable without corrupting the set. Run-4 #6: breed is now a
@@ -329,7 +331,7 @@ fun KinEditScreen(
     ScreenScaffold {
         // Den kicker: mono, tracked, uppercase eyebrow above the page title.
         Text(
-            text = "THE DEN · KIN PROFILE",
+            text = navKicker(Destination.Directory).uppercase(),
             style = AuntieTheme.typography.mono.copy(letterSpacing = 1.6.sp),
             color = c.primary,
         )

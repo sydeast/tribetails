@@ -76,7 +76,7 @@ class FormSchemaListScreenUiTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("THE DEN · ADMIN").assertIsDisplayed()
+        composeRule.onNodeWithText("MORE · FORM SCHEMAS").assertIsDisplayed()
         composeRule.onNodeWithText("New schema").assertIsDisplayed()
         composeRule.onNodeWithText("2 schemas").assertIsDisplayed()
         composeRule.onNodeWithText("Tribe Profile").assertIsDisplayed()
@@ -84,10 +84,15 @@ class FormSchemaListScreenUiTest {
         // The mock's `.ver`: plain mono text per row.
         composeRule.onNodeWithText("v3").assertIsDisplayed()
         composeRule.onNodeWithText("v1").assertIsDisplayed()
-        // The roster resolves the uid to the admin's address on the updated line,
-        // once per row: both rows were saved by admin1.
+        // #1890: the roster knows admin1 only by address, so the updated line
+        // reads "Office" on both rows, and never the address.
         assertEquals(
             2,
+            composeRule.onAllNodesWithText("Office", substring = true)
+                .fetchSemanticsNodes().size,
+        )
+        assertEquals(
+            0,
             composeRule.onAllNodesWithText("auntie@tribetails.example", substring = true)
                 .fetchSemanticsNodes().size,
         )

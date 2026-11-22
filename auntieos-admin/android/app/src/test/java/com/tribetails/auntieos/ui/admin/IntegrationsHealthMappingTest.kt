@@ -14,7 +14,7 @@ import org.junit.Test
  *  - an unrecognised status decodes to UNKNOWN, so an older APK meeting a newer
  *    server says "we cannot tell" on one row instead of inventing a verdict for
  *    it or losing the other six;
- *  - the "no deployed function declares this" warning is withheld when the
+ *  - the "nothing uses this yet" warning is withheld when the
  *    server could not read the declared set, because a false `declared` there is
  *    an artefact of the failed read and printing it would send the operator to
  *    edit a function that was already correct.
@@ -76,7 +76,7 @@ class IntegrationsHealthMappingTest {
     @Test
     fun `a set secret reports its length and never its value`() {
         val line = integrationSecretLine(secret(), declaredKnown = true)
-        assertEquals("STRIPE_SECRET_KEY · set, 41 characters", line)
+        assertEquals("Stripe secret key · saved", line)
     }
 
     @Test
@@ -88,13 +88,13 @@ class IntegrationsHealthMappingTest {
     @Test
     fun `an undeclared secret is flagged when the server did look`() {
         val line = integrationSecretLine(secret(declared = false), declaredKnown = true)
-        assertTrue(line.contains("no deployed function declares this"))
+        assertTrue(line.contains("nothing uses this yet"))
     }
 
     @Test
     fun `the undeclared flag is withheld when the server could not look`() {
         val line = integrationSecretLine(secret(declared = false), declaredKnown = false)
-        assertFalse(line.contains("no deployed function declares this"))
+        assertFalse(line.contains("nothing uses this yet"))
     }
 
     @Test
