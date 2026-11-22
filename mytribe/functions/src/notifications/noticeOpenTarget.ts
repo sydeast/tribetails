@@ -96,10 +96,18 @@ function part(id: string): string {
  * the portal's `notificationTarget` (web/src/lib/notificationsList.ts) and the
  * routes it navigates to (web/src/screens/NotificationsList.tsx).
  */
-export function householdRouteFor(targetType: string, targetId: string, visitId: string): string | undefined {
+export function householdRouteFor(
+  targetType: string,
+  targetId: string,
+  visitId: string,
+  batchId = '',
+): string | undefined {
   switch (targetType) {
     case 'booking':
-      return visitId ? `/schedule/${part(visitId)}` : '/schedule';
+      // #1865: a notice about a whole request (its approval, a decline) opens
+      // that request, which goes on to its KinCare when it holds one.
+      if (visitId) return `/schedule/${part(visitId)}`;
+      return batchId ? `/schedule/booking/${part(batchId)}` : '/schedule';
     case 'invoice':
       return targetId ? `/invoices/${part(targetId)}` : undefined;
     case 'kintale':
@@ -145,7 +153,7 @@ export function noticeOpenTarget(input: NoticeOpenInput): NoticeOpenTarget {
   }
 
   if (!household) return { data };
-  const route = householdRouteFor(target.targetType, target.targetId, visitId);
+  const route = householdRouteFor(target.targetType, target.targetId, visitId, batchId);
   const entryId = text(input.notificationId);
   return {
     ...(route ? { route } : {}),
