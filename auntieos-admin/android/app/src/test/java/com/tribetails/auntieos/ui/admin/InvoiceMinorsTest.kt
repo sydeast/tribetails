@@ -29,11 +29,11 @@ class InvoiceMinorsTest {
     @Test
     fun `under Only archived the hidden rows are called not archived`() {
         assertEquals(
-            "2 of 2 shown · 18 invoices not archived hidden",
+            "2 of 2 shown · 18 invoices not archived hidden from those loaded here",
             invoiceListSubtitle(2, 2, 18, ArchivedMode.Only),
         )
         assertEquals(
-            "2 of 2 shown · 1 archived invoice hidden",
+            "2 of 2 shown · 1 archived invoice hidden from those loaded here",
             invoiceListSubtitle(2, 2, 1, ArchivedMode.Hide),
         )
     }

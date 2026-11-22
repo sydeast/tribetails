@@ -135,7 +135,7 @@ internal fun invoiceListSubtitle(
     val plural = if (archivedHidden == 1) "" else "s"
     // #1609: under Only archived the hidden rows are the ones NOT archived.
     val what = if (mode == ArchivedMode.Only) "invoice$plural not archived" else "archived invoice$plural"
-    return "$base · $archivedHidden $what hidden"
+    return "$base · $archivedHidden $what hidden from those loaded here"
 }
 /**
  * #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
