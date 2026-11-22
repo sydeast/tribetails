@@ -166,7 +166,11 @@ async function recipientNames(uids: readonly string[]): Promise<Map<string, stri
     else staffUids.push(uid);
   });
   for (const who of await resolveStaffIdentities(staffUids, 'listNotificationDeliveries')) {
+    // #1882: the resolver no longer stands an email in for a name, and an
+    // installed Android build prints the uid for a null, so a staff member with
+    // no name reads as staff.
     if (who.displayName) out.set(who.uid, who.displayName);
+    else if (who.hasStaffRecord) out.set(who.uid, 'Staff');
   }
   return out;
 }

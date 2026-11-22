@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   NAV,
@@ -305,5 +306,26 @@ describe('navKicker (#1598)', () => {
     expect(navKicker('invoices')).toBe('Care Ops · Invoices');
     expect(navKicker('marketingBlasts')).toBe('Care Ops · Marketing blasts');
     expect(navKicker('directory')).toBe('The Den · Directory');
+  });
+
+  // #1894: the screens the rail files under More, and Packages by its rail name.
+  it('names the More screens and Packages the way the sidebar does', () => {
+    expect(navKicker('coveragePackages')).toBe('Care Ops · Packages');
+    expect(navKicker('settings')).toBe('More · Settings');
+    expect(navKicker('trainingDocs')).toBe('More · Tribal Intel');
+    expect(navKicker('notifications')).toBe('More · Notifications');
+    expect(navKicker('templates')).toBe('More · Templates');
+  });
+
+  // #1894: #1598 fixed the four screens it named and left a literal kicker on
+  // every other screen to drift from the rail. No screen spells its own.
+  it('is the only source of a screen heading kicker', () => {
+    const dir = new URL('../screens/', import.meta.url);
+    const strays = readdirSync(dir)
+      .filter((name) => name.endsWith('.tsx') && !name.includes('.test.'))
+      .flatMap((name) =>
+        /kicker(=|: )["'](The Den|Care Ops|More) ·/.test(readFileSync(new URL(name, dir), 'utf8')) ? [name] : [],
+      );
+    expect(strays).toEqual([]);
   });
 });

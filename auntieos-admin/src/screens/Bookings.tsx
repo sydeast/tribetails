@@ -126,9 +126,14 @@ interface SectionDef {
 const SECTIONS: readonly SectionDef[] = [
   {
     key: 'pending',
-    label: 'Visit requests',
+    // #1826: "Drafts", not "Visit requests". Households' requests are the
+    // Visit requests queue above this list (operator ruling #1598 names that
+    // queue); these rows are bookings the office saved as drafts (Save draft
+    // on New booking), plus any older one still pending. Two blocks titled
+    // "Visit requests" showed "5 waiting" over "0".
+    label: 'Drafts',
     test: (s) => s === 'draft' || s === 'pending',
-    emptyHint: 'Nothing is waiting on a reply.',
+    emptyHint: 'No drafts.',
     // Matches the Android counterpart (`groupBookingsByStatus` in
     // ScheduleViewScreen.kt): "Pending keeps the order the stream delivered."
     // These are requests waiting on a HUMAN, not a schedule, so the read that
@@ -825,7 +830,7 @@ export function Bookings({
           announce a section that is the whole page. */}
       <div className="bookings__toolbar" role="group" aria-label="Bookings list">
         <span className="bookings__toolbar-note">
-          Order <InfoTip text="Visit requests: newest request first. Scheduled: soonest visit first. History: most recent first. Up to 200 bookings." />
+          Order <InfoTip text="Drafts: newest first. Scheduled: soonest visit first. History: most recent first. Up to 200 bookings." />
         </span>
         {selectToggle}
       </div>

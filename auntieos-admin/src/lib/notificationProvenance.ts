@@ -210,9 +210,12 @@ export function reachesBusinessAdmins(entry: NotificationCatalogEntry): boolean 
  */
 export function businessAdminLines(roster: BusinessAdminRoster): string[] {
   return roster.members.map((member) => {
-    const name = member.displayName ?? member.uid;
+    // #1882: a name, never the sign-in email the server used to stand in for
+    // one, and never a uid. A business admin with no name is the office.
+    const stored = (member.displayName ?? '').trim();
+    const name = stored !== '' && !stored.includes('@') ? stored : 'Office';
     const parts: string[] = [];
-    if (!member.hasStaffRecord) parts.push(`no staff record for ${member.uid}`);
+    if (!member.hasStaffRecord) parts.push('no staff record yet');
     if (member.defaultAssignee) parts.push('unassigned visits default to them');
     return parts.length > 0 ? `${name} (${parts.join('; ')})` : name;
   });
@@ -370,11 +373,13 @@ export function skipReasonWords(code: string): string {
 }
 /**
  * Who a delivery went to, as the log names them (#1592: it printed the uid).
- * The server's name, else the uid as it is: a recipient nobody answers to is
- * itself what the operator needs to see, and is never shown blank.
+ * The server's name, else plain words (#1882): never a uid or an email, and
+ * never blank.
  */
 export function deliveryRecipient(row: { recipientName: string | null; recipientUid: string }): string {
-  return row.recipientName ?? (row.recipientUid || 'an unknown recipient');
+  const name = (row.recipientName ?? '').trim();
+  if (name !== '' && !name.includes('@')) return name;
+  return row.recipientUid.trim() !== '' ? 'someone with no name on file' : 'an unknown recipient';
 }
 /** The email channel's skip reason when `businessEmail` is blank (#1564). */
 export const BUSINESS_EMAIL_UNSET = 'business_email_unset';

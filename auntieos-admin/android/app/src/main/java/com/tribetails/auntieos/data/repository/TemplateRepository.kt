@@ -614,9 +614,9 @@ internal fun missingTemplateNote(row: TemplateRepository.CatalogKey, templateMis
     val load = if (row.inRepoCorpus) " Load it from Template Import." else ""
     return when (row.whenTemplateMissing) {
         "generic" -> "Not in the bank yet, so this sends generic wording that cannot say what happened.$load"
-        "repoCopy" -> "Not in the bank yet, so this sends the repo copy.$load"
+        "repoCopy" -> "Not in the bank yet, so this sends the built-in copy.$load"
         // A failing send gets the loud line; this only says where the fix is.
-        else -> if (row.inRepoCorpus) "The repo has a copy. Load it from Template Import." else null
+        else -> if (row.inRepoCorpus) "A built-in copy exists. Load it from Template Import." else null
     }
 }
 /**

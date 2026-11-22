@@ -80,7 +80,7 @@ fun KinTaleTemplateEditorScreen(
                     // with the name as the accent, and the autosave state as the
                     // detail line (the mock's "unsaved changes" sub line).
                     DenScreenHeading(
-                        kicker = "The Den · KinTale templates",
+                        kicker = railKicker(RailScreen.KINTALE_TEMPLATES),
                         crumbs = listOf(
                             DenCrumb("KinTales"),
                             DenCrumb("Templates") {

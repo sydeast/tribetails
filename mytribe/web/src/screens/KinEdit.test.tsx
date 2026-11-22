@@ -214,7 +214,7 @@ describe('KinEdit', () => {
     });
     const user = userEvent.setup();
     renderScreen();
-    expect(((await screen.findByLabelText('Sex')) as HTMLSelectElement).value).toBe('Female');
+    expect(((await screen.findByLabelText('Gender')) as HTMLSelectElement).value).toBe('Female');
     expect((screen.getByLabelText('Weight') as HTMLInputElement).value).toBe('52 lbs');
     expect((screen.getByLabelText('Color / markings') as HTMLInputElement).value).toBe('Black');
     expect((screen.getByLabelText(/Spayed \/ neutered/) as HTMLInputElement).checked).toBe(true);
@@ -231,7 +231,7 @@ describe('KinEdit', () => {
     mocks.getMyKin.mockResolvedValue({ kin: [kin({ weight: '52 lbs' })] });
     const user = userEvent.setup();
     renderScreen();
-    await user.selectOptions(await screen.findByLabelText('Sex'), 'Male');
+    await user.selectOptions(await screen.findByLabelText('Gender'), 'Male');
     await user.click(screen.getByLabelText(/Spayed \/ neutered/));
     await user.clear(screen.getByLabelText('Weight'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
@@ -322,7 +322,7 @@ describe('KinEdit', () => {
   it('keeps a legacy sex value the admin wrote (F) selectable instead of rewriting it (#1310)', async () => {
     mocks.getMyKin.mockResolvedValue({ kin: [kin({ sex: 'F' })] });
     renderScreen();
-    expect(((await screen.findByLabelText('Sex')) as HTMLSelectElement).value).toBe('F');
+    expect(((await screen.findByLabelText('Gender')) as HTMLSelectElement).value).toBe('F');
     expect(screen.getByRole('button', { name: /Save/i })).toBeDisabled();
   });
 

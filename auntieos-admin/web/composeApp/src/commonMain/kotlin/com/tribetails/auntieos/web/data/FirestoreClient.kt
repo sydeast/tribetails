@@ -1902,6 +1902,14 @@ class FirestoreClient {
      */
     suspend fun invoiceSendMarks(invoiceId: String): SendMarks? =
         runCatchingCancellable { platformInvoiceDocPlain(invoiceId)?.let { sendMarksOf(it) } }.getOrNull()
+    /**
+     * #1871: one invoice read from the server right after an edit, so the sheet
+     * holds the saved figures before it says "Invoice updated.". The invoices
+     * stream polls, so without this the old quantity and total stayed up for up
+     * to a poll. Null when the read fails or the invoice is gone.
+     */
+    suspend fun invoiceFromServer(invoiceId: String): Invoice? =
+        runCatchingCancellable { platformInvoiceDoc(invoiceId) }.getOrNull()
     suspend fun reviewAndSendDraftInvoice(invoiceId: String, familyId: String): WriteResult<SendAck> {
         val scopedFamilyId = enforceWriteKinfolkId(testMode, familyId)
         val payload = buildJsonObject {
@@ -3229,6 +3237,8 @@ internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailM
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
 /** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
 internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
+/** #1871: one invoice document from the server, decoded, or null when it does not exist. */
+internal expect suspend fun platformInvoiceDoc(invoiceId: String): Invoice?
 /**
  * #2037: how long the console waits for the server's record of a clock step
  * before it says it is still checking. Web waits the same (`VISIT_NOTICE_WAIT_MS`).
@@ -4376,7 +4386,8 @@ data class GeneratedDraft(
  * Drafts bucket. Pure; tested.
  */
 fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
-    drafts.filter { it.isUnsent }.sortedByDescending { it.created() }
+    // #1850: with copy to review, the rule web and Android count by.
+    drafts.filter { it.isUnsent && it.body().isNotBlank() }.sortedByDescending { it.created() }
 
 /**
  * #2293: the drafts KinTales files under Drafts: every one awaiting review, plus

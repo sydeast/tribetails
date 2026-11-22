@@ -462,3 +462,41 @@ describe('ScheduleWeekGrid with moving switched off (an Auntie)', () => {
     expect(onDrop).toHaveBeenCalledTimes(1);
   });
 });
+
+// #1861: the walk's TUE 10 column, four visits from 23:05 to 23:46 drawn on top
+// of one another, the last cut off at the bottom edge.
+describe('ScheduleWeekGrid: visits that start minutes apart (#1861)', () => {
+  const late = [
+    session({ _id: 's1', kinfolkName: 'Household One', startTime: bizIso(23, 5), endTime: bizIso(23, 20) }),
+    session({ _id: 's2', kinfolkName: 'Household Two', startTime: bizIso(23, 15), endTime: bizIso(23, 30) }),
+    session({ _id: 's3', kinfolkName: 'Household Three', startTime: bizIso(23, 30), endTime: bizIso(23, 45) }),
+    session({ _id: 's4', kinfolkName: 'Household Four', startTime: bizIso(23, 46), endTime: '' }),
+    session({ _id: 's0', kinfolkName: 'Household Early', startTime: bizIso(22, 32), endTime: bizIso(22, 50) }),
+  ];
+  const blockOf = (name: string) => screen.getByRole('button', { name: new RegExp(name) });
+  it('draws overlapping blocks side by side and leaves a lone block the full width', () => {
+    renderGrid(late);
+    expect(blockOf('Household Early').dataset.lane).toBeUndefined();
+    expect(blockOf('Household Early').style.width).toBe('');
+    const lanes = ['One', 'Two', 'Three', 'Four'].map((n) => blockOf(`Household ${n}`).dataset.lane);
+    expect(lanes).toEqual(['1/2', '2/2', '1/2', '2/2']);
+    // The second lane starts half way across the column (jsdom normalises the calc).
+    expect(blockOf('Household Two').style.left).toContain('0.5');
+    expect(blockOf('Household One').style.width).not.toBe('');
+    // A narrow lane cuts the name, so hovering reads all of it. A full-width block needs no tip.
+    expect(blockOf('Household Three').title).toBe('23:30 Household Three');
+    expect(blockOf('Household Early').title).toBe('');
+  });
+
+  it('draws the last block of the day tall enough to read, ending on the bottom edge', () => {
+    const { container } = renderGrid(late);
+    const column = container.querySelector('.schedule-grid__day[data-day="2026-07-16"]') as HTMLElement;
+    const four = blockOf('Household Four');
+    const top = parseFloat(four.style.top);
+    const height = parseFloat(four.style.height);
+    expect(height).toBeCloseTo((HOUR_HEIGHT_PX * 20) / 60);
+    expect(top + height).toBeCloseTo(parseFloat(column.style.height));
+    // The label still says when the visit starts.
+    expect(four).toHaveTextContent('23:46');
+  });
+});

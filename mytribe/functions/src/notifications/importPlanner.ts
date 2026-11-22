@@ -309,7 +309,7 @@ export function planImport(input: PlanInput): ImportPlan {
       }
 
       differsFromRepo = true;
-      const differs = `The stored ${channel} copy differs from the repo copy.`;
+      const differs = `The stored ${channel} copy differs from the built-in copy.`;
       const differences = channelDifferences(channel, content, stored);
       if (overwrite.has(entry.key)) {
         channels.push({
@@ -317,7 +317,7 @@ export function planImport(input: PlanInput): ImportPlan {
           collection,
           outcome: 'overwrite',
           content,
-          notes: [`${differs} Importing replaces your stored copy with the repo wording.`],
+          notes: [`${differs} Importing replaces your stored copy with the built-in wording.`],
           differences,
         });
       } else {
@@ -327,7 +327,7 @@ export function planImport(input: PlanInput): ImportPlan {
           outcome: 'skipped',
           notes: [
             `${differs} Your stored copy stays as it is. ` +
-              `Tick this template to replace it with the repo wording.`,
+              `Tick this template to replace it with the built-in wording.`,
           ],
           differences,
         });

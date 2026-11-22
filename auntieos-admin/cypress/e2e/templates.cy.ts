@@ -96,7 +96,7 @@ describe('templates', () => {
     cy.get('.den-heading-trailing').within(() => {
       cy.contains('button', 'New template').should('exist');
       cy.contains('button', 'Manage assignments').should('not.exist');
-      cy.contains('button', 'Import from repo').should('not.exist');
+      cy.contains('button', 'Template Import').should('not.exist');
       cy.contains('button', 'New binding').should('not.exist');
       cy.get('.templates__overflow-trigger')
         .should('have.attr', 'aria-haspopup', 'menu')
@@ -107,7 +107,7 @@ describe('templates', () => {
     cy.get('.templates__overflow-trigger').should('have.attr', 'aria-expanded', 'true');
     cy.get('[role="menu"]').within(() => {
       cy.contains('[role="menuitem"]', 'Manage assignments').should('exist');
-      cy.contains('[role="menuitem"]', 'Import from repo').should('exist');
+      cy.contains('[role="menuitem"]', 'Template Import').should('exist');
       cy.contains('[role="menuitem"]', 'New binding').should('exist');
     });
 

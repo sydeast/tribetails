@@ -72,6 +72,8 @@ import com.tribetails.auntieos.web.ui.components.StatCard
 import com.tribetails.auntieos.web.ui.components.color
 import kotlinx.coroutines.launch
 import com.tribetails.auntieos.web.util.businessTodayIso
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Den invoices view ("The Den · Invoices"). Editorial heading, a three-card stat
@@ -305,7 +307,7 @@ fun InvoicesScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "Care Ops · Invoices",
+            kicker     = navKicker(Destination.Invoices),
             title      = "Getting",
             accentTail = "paid.",
             trailing   = {

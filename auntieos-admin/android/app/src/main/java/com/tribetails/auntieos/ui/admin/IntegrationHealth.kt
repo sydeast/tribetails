@@ -146,11 +146,12 @@ data class IntegrationsHealth(
  * correct.
  */
 fun integrationSecretLine(secret: IntegrationSecretState, declaredKnown: Boolean): String {
-    val set = if (secret.resolves) "set, ${secret.length} characters" else "not set"
+    // #1887: the credential in words, and whether it is saved; no stored names.
+    val set = if (secret.resolves) "saved" else "not set"
     val undeclared =
-        if (declaredKnown && !secret.declared) " · no deployed function declares this" else ""
+        if (declaredKnown && !secret.declared) " · nothing uses this yet" else ""
     val optional = if (secret.required) "" else " · optional"
-    return "${secret.name} · $set$undeclared$optional"
+    return "${humanizeKey(secret.name)} · $set$undeclared$optional"
 }
 
 /**

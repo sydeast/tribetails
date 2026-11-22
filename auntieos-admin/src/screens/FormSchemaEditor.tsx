@@ -194,11 +194,11 @@ export function schemaMetaErrors(input: { id: string; name: string; description?
   const errors: string[] = [];
   const trimmedId = input.id.trim();
   if (!trimmedId) {
-    errors.push('Schema id is required.');
+    errors.push('Short name is required.');
   } else if (trimmedId.length > L.id) {
-    errors.push(`Schema id is ${trimmedId.length} characters long. The limit is ${L.id}.`);
+    errors.push(`Short name is ${trimmedId.length} characters long. The limit is ${L.id}.`);
   } else if (!ID_RE.test(trimmedId)) {
-    errors.push('Schema id must start with a letter and contain only letters, numbers, underscore, period, or hyphen.');
+    errors.push('Short name must start with a letter and contain only letters, numbers, underscore, period, or hyphen.');
   }
   if (!input.name.trim()) {
     errors.push('Schema name is required.');
@@ -611,11 +611,12 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
                 inside the label on purpose, so the control's accessible name
                 says the id is locked, the same thing `disabled` says. */}
             <span className="fse__label fse__label--required">
-              Schema id
+              {/* #1890: the owner's words for the key a new schema is saved under. */}
+              Short name
               {!creating && (
                 <>
                   {' '}
-                  <span className="fse__note">(immutable once persisted)</span>
+                  <span className="fse__note">(fixed once saved)</span>
                 </>
               )}
             </span>
@@ -748,7 +749,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
                 that for a value nobody has filled in, and a dash reads as a
                 value on a summary whose whole job is to be read quickly. */}
             <div>
-              <dt>Schema id</dt>
+              <dt>Short name</dt>
               <dd>{id.trim() || 'Not set'}</dd>
             </div>
             <div>

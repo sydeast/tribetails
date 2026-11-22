@@ -65,9 +65,9 @@ function failure(err: unknown): string {
  * cannot be assigned", and the archive (and android) both left them guessing.
  */
 const NO_ENVELOPE_ASSIGN =
-  'This visit is not part of a booking request, so there is no visit record to assign against. Assignment lives on the request, and only visits approved from one carry it.';
+  'Only a visit that came from a booking request can have an Auntie assigned here. This visit was added to the calendar directly.';
 const NO_ENVELOPE_NOTES =
-  'This visit is not part of a booking request, so there is no visit record to attach notes to. Notes live on the request, and only visits approved from one carry it.';
+  'Only a visit that came from a booking request can carry notes here. This visit was added to the calendar directly.';
 
 export interface BookingDetailModalProps {
   /**

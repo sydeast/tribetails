@@ -156,7 +156,7 @@ fun KinTaleTemplatesScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             DenScreenHeading(
-                kicker = "The Den · KinTale templates",
+                kicker = railKicker(RailScreen.KINTALE_TEMPLATES),
                 title = "KinTale templates",
                 subtitle = "Shape the recap that goes home: which sections show, and the checklist Auntie fills out each visit.",
                 trailing = {

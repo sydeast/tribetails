@@ -66,7 +66,7 @@ describe('NotificationsDigest', () => {
     // undefined), which is what exactOptionalPropertyTypes models here.
     const { title: _absent, ...untitled } = entry({});
     render(<NotificationsDigest state={ready([untitled])} />);
-    expect(screen.getByText('Kincare booking confirm')).toBeInTheDocument();
+    expect(screen.getByText('KinCare booking confirm')).toBeInTheDocument();
     expect(screen.queryByText('kincare.booking.confirm')).toBeNull();
   });
 

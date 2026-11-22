@@ -44,12 +44,12 @@ describe('import planner, what each differing row says will happen (#1060)', () 
     planImport({ corpus: [entry], existing, overwriteIds }).templates[0]!.channels.find((c) => c.channel === 'email')!.notes.join(' ');
   it('an unticked row says the stored copy stays and how to replace it', () => {
     expect(emailNotes()).toBe(
-      'The stored email copy differs from the repo copy. Your stored copy stays as it is. Tick this template to replace it with the repo wording.',
+      'The stored email copy differs from the built-in copy. Your stored copy stays as it is. Tick this template to replace it with the built-in wording.',
     );
   });
   it('a ticked row says importing replaces the stored copy', () => {
     expect(emailNotes(['k'])).toBe(
-      'The stored email copy differs from the repo copy. Importing replaces your stored copy with the repo wording.',
+      'The stored email copy differs from the built-in copy. Importing replaces your stored copy with the built-in wording.',
     );
   });
 });

@@ -57,6 +57,8 @@ import { Dialog } from '../components/Dialog';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { VisitRouteIndicator } from '../components/VisitTrackingIndicator';
 import { navKicker } from '../lib/nav';
+import { useToast } from '../components/Toast';
+import { useVisitClockAnnouncements } from '../lib/visitClockOutcome';
 import './Sessions.css';
 
 /** Which body of data the screen is showing: the day-of board, or older history. */
@@ -174,6 +176,12 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale, isAuntie =
   // for a caller that passes nothing.
   const auntieRead = useIsAuntie();
   const auntie = isAuntie || auntieRead;
+
+  // #1815: a tap on an Upcoming card moves the card to Active, often far above
+  // the operator's place on the board, so what the household was told is said
+  // again in a toast.
+  const { showToast } = useToast();
+  useVisitClockAnnouncements((_sessionId, message) => showToast(message, { tone: 'info', durationMs: 8000 }));
 
   // #2036: the Archive's FROM and TO are days on the BUSINESS's calendar. It
   // opens on the 30 days that end where Recent stops, so no wrapped visit sits

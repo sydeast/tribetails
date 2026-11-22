@@ -81,7 +81,7 @@ export function looksLikeEmail(value: string): boolean {
  * The word a byline uses for a staff member with no name on file (#1882): the
  * same words the visit notes already sign with. Never an email, never a uid.
  */
-export function staffRoleWord(role: StaffRole | null | undefined): string {
+export function staffBylineWord(role: StaffRole | null | undefined): string {
   if (role === 'owner') return 'Office';
   if (role === 'auntie') return 'Auntie';
   return 'Staff';
@@ -94,7 +94,7 @@ export function staffRoleWord(role: StaffRole | null | undefined): string {
  */
 export function staffByline(member: StaffMember): string {
   const name = (member.displayName ?? '').trim();
-  return name !== '' && !looksLikeEmail(name) ? name : staffRoleWord(member.role);
+  return name !== '' && !looksLikeEmail(name) ? name : staffBylineWord(member.role);
 }
 
 /**
@@ -165,7 +165,7 @@ export function staffName(member: StaffMember): string | null {
  * uid. Never blank, so a picker button always has a name.
  */
 export function staffPersonLabel(member: StaffMember): string {
-  return staffName(member) ?? staffRoleWord(member.role);
+  return staffName(member) ?? staffBylineWord(member.role);
 }
 
 /**
@@ -184,7 +184,7 @@ export function assignedAuntieLabel(
   const member = roster?.find((m) => m.uid === assignedUid);
   if (member !== undefined) return staffPersonLabel(member);
   // An empty roster is a read that failed (`loadStaffRoster` resolves [] then), not proof of who it is.
-  return roster === null || roster.length === 0 ? 'Assigned' : staffRoleWord(null);
+  return roster === null || roster.length === 0 ? 'Assigned' : staffBylineWord(null);
 }
 
 /** The picker label: display name, then email, then the uid. Never blank, so

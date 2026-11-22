@@ -305,7 +305,7 @@ describe('TagsEditor inside Settings', () => {
     render(<TagsEditor />);
     await householdPanel();
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
-    expect(screen.queryByText('The Den · Admin')).not.toBeInTheDocument();
+    expect(screen.queryByText('More · Settings')).not.toBeInTheDocument();
   });
 
   it('keeps the heading and the way back when opened on its own', async () => {

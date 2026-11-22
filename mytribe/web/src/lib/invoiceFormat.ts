@@ -111,10 +111,10 @@ export function longDateLabelFromMs(ms: number | null): string | null {
   if (ms === null || !Number.isFinite(ms)) return null;
   return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
 }
-/** The `.cal` tile (month + zero-padded day). Falls back to an em-dash tile when unparseable. */
+/** The `.cal` tile (month + zero-padded day). Falls back to a `--` tile when unparseable (#1859: no em dash). */
 export function calTileFor(raw: string | null): { month: string; day: string } {
   const ms = parseDateMs(raw);
-  if (ms === null) return { month: '—', day: '--' };
+  if (ms === null) return { month: '--', day: '--' };
   return calTile(ms);
 }
 

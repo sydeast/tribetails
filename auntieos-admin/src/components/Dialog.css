@@ -136,6 +136,12 @@
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--color-border-soft);
 }
+.dialog__titlerow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
 .dialog__title {
   margin: 0;
   font-family: var(--font-fraunces);

@@ -38,12 +38,12 @@ class MediaCellRenderTest {
                     _id = "m1",
                     isProfilePhoto = true,
                     uploadedAt = "2026-05-27T09:41:00Z",
-                    uploadedBy = "jo@tribetails.com",
+                    uploadedBy = "Jo",
                 ),
             )()
         }
         onNodeWithText("Profile").assertIsDisplayed()
-        onNodeWithText("2026-05-27 · jo@tribetails.com").assertIsDisplayed()
+        onNodeWithText("2026-05-27 · Jo").assertIsDisplayed()
     }
 
     @Test
@@ -69,12 +69,12 @@ class MediaCellRenderTest {
                     _id = "m3",
                     isProfilePhoto = false,
                     uploadedAt = "2026-05-27",
-                    uploadedBy = "jo@tribetails.com",
+                    uploadedBy = "Jo",
                 ),
             )()
         }
         // Negative: the "Profile" badge must be ABSENT on a non-profile cell.
         onAllNodesWithText("Profile").assertCountEquals(0)
-        onNodeWithText("2026-05-27 · jo@tribetails.com").assertIsDisplayed()
+        onNodeWithText("2026-05-27 · Jo").assertIsDisplayed()
     }
 }

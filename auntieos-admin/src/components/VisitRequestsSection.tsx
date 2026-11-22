@@ -691,7 +691,12 @@ interface DecisionDialogProps {
   row: VisitRequest;
   decision: 'accept' | 'decline';
   onClose: () => void;
-  onResolved: (row: VisitRequest, message: string) => void;
+  /**
+   * [stillWaiting] (#1877): true when the server answered but part of the
+   * request is still waiting (an approval where some visits did not go
+   * through), so a caller keeps counting it.
+   */
+  onResolved: (row: VisitRequest, message: string, stillWaiting?: boolean) => void;
 }
 
 /**
@@ -753,13 +758,16 @@ export function DecisionDialog({ row, decision, onClose, onResolved }: DecisionD
       options = { startTimes, ...overrides };
     }
     try {
-      const message = isNewRequest
+      const answer = isNewRequest
         ? await submitNewRequest(kinfolkId, batchId, decision, note, options)
-        : cancelling
-          ? await submitCancel(kinfolkId, batchId, row.request.visitId, decision, note)
-          : await submitReschedule(kinfolkId, batchId, row.request.visitId, decision, note, overrides);
+        : {
+            message: cancelling
+              ? await submitCancel(kinfolkId, batchId, row.request.visitId, decision, note)
+              : await submitReschedule(kinfolkId, batchId, row.request.visitId, decision, note, overrides),
+            stillWaiting: false,
+          };
       setBusy(false);
-      onResolved(row, message);
+      onResolved(row, answer.message, answer.stillWaiting);
     } catch (err) {
       setBusy(false);
       setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
@@ -933,7 +941,7 @@ async function submitNewRequest(
   decision: 'accept' | 'decline',
   note: string,
   options?: ApproveOptions,
-): Promise<string> {
+): Promise<{ message: string; stillWaiting: boolean }> {
   if (decision === 'decline') {
     // READ what the server did rather than asserting it, the way the approve
     // branch below already does. `manageBookingSeries` has returned
@@ -944,9 +952,20 @@ async function submitNewRequest(
     // request turned down in silence is what #533 exists to end, and an operator
     // who is not told about the silence cannot phone them instead.
     const declined = await declineBookingRequest(kinfolkId, batchId, note);
-    return declined.householdNotified
-      ? 'Declined. Nothing was booked and the household has your answer.'
-      : 'Declined. Nothing was booked, but the message to the household did not go out, so tell them another way.';
+    // #1877: a decline can stop partway. The server keeps that request waiting
+    // and sends the household nothing, so it stays counted and the line says so.
+    if (declined.failedVisits > 0) {
+      return {
+        message: `Declined ${String(declined.affectedVisits)} of ${String(declined.affectedVisits + declined.failedVisits)} visits. The rest did not go through and the household has not been told, so try again.`,
+        stillWaiting: true,
+      };
+    }
+    return {
+      message: declined.householdNotified
+        ? 'Declined. Nothing was booked and the household has your answer.'
+        : 'Declined. Nothing was booked, but the message to the household did not go out, so tell them another way.',
+      stillWaiting: false,
+    };
   }
   // `options` only when a night needed its start time (#1098) or the operator
   // wrote the household a note (#2030), so every other request is approved
@@ -958,16 +977,22 @@ async function submitNewRequest(
       ? await approveBookingRequest(kinfolkId, batchId)
       : await approveBookingRequest(kinfolkId, batchId, withNote);
   if (res.failedVisits > 0) {
-    return `Approved ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through and the household has not been told, so try again.`;
+    return {
+      message: `Approved ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through and the household has not been told, so try again.`,
+      stillWaiting: true,
+    };
   }
   if (res.newlyConfirmed === 0) {
-    return 'This was already booked. Nothing changed and the household was not told again.';
+    return { message: 'This was already booked. Nothing changed and the household was not told again.', stillWaiting: false };
   }
   const visits =
     res.affectedVisits === 1 ? 'The visit is' : `All ${String(res.affectedVisits)} visits are`;
-  return res.householdNotified
-    ? `Approved. ${visits} on the schedule and the household has been told once, with every date.`
-    : `Approved. ${visits} on the schedule, but the message to the household did not go out, so tell them another way.`;
+  return {
+    message: res.householdNotified
+      ? `Approved. ${visits} on the schedule and the household has been told once, with every date.`
+      : `Approved. ${visits} on the schedule, but the message to the household did not go out, so tell them another way.`,
+    stillWaiting: false,
+  };
 }
 
 async function submitReschedule(

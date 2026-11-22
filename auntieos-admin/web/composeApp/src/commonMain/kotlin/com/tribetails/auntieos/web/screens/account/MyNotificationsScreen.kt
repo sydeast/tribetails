@@ -48,6 +48,8 @@ import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.DenScreenHeading
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * The operator's OWN notification settings: what reaches THEM, and how.
@@ -116,7 +118,7 @@ fun MyNotificationsScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker = "The Den · Account",
+            kicker = navKicker(Destination.AccountSettings),
             title = "What reaches",
             accentTail = "you.",
             subtitle = "Your business decides which channels each notification can use. Here you pick, " +

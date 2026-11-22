@@ -12,7 +12,14 @@ class MediaMetaLineTest {
 
     @Test
     fun joinsDateAndAuthor() {
-        assertEquals("2026-05-27 · jo@tribetails.com", mediaMetaLine("2026-05-27T09:41:00Z", "jo@tribetails.com"))
+        assertEquals("2026-05-27 · Jo", mediaMetaLine("2026-05-27T09:41:00Z", "Jo"))
+    }
+
+    /** #1882: the walk read "2026-07-20 · [email]" under a picture. */
+    @Test
+    fun leavesOffAnEmailOrAnUnknownUid() {
+        assertEquals("2026-05-27", mediaMetaLine("2026-05-27T09:41:00Z", "e2e-admin@tribetails.com"))
+        assertEquals("2026-05-27", mediaMetaLine("2026-05-27T09:41:00Z", "nppJNdMNYJfUigibGKUQj3n4obt2"))
     }
 
     @Test
