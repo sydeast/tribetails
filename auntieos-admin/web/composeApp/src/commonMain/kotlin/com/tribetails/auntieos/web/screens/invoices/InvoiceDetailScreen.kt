@@ -860,7 +860,7 @@ private fun InvoiceDetailBody(
         // ── Billing panel ────────────────────────────────────────────────────
         DenPanel(title = "Billing") {
             Column {
-                DetailRow("Client",   invoice.client.ifBlank { "-" })
+                DetailRow("Kinfolk",  invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
                 // #1570: a stored due date that names no day is never counted
                 // overdue, so the row says so beside it.
@@ -910,7 +910,10 @@ private fun InvoiceDetailBody(
                 title = INVOICE_TOTAL_DISAGREEMENT_TITLE,
                 body  = {
                     Text(
-                        invoiceTotalDisagreementText(drift),
+                        invoiceTotalDisagreementText(
+                            drift,
+                            linesEditable = canEditInvoice && invoiceEditScopeOf(invoice) == InvoiceEditScope.ALL,
+                        ),
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )
@@ -1070,7 +1073,7 @@ internal fun InvoicePaymentsPanel(
                         pillLabel = "NOT INVOICE-LINKED",
                         body      = {
                             Text(
-                                "No payment is linked to this invoice yet. The rows below are matched by client only.",
+                                "No payment is linked to this invoice yet. The rows below are matched by Kinfolk only.",
                                 style = AuntieTheme.typography.bodySmall,
                                 color = c.textDim,
                             )
@@ -1591,7 +1594,7 @@ private fun LinkedSessionsSection(
                 icon      = Lucide.CircleAlert,
                 body      = {
                     Text(
-                        "This invoice has no client (kinfolk) on record, so its sessions cannot be matched. Set a client to link visits.",
+                        "This invoice has no Kinfolk on record, so its visits cannot be matched. Set the Kinfolk to link visits.",
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )

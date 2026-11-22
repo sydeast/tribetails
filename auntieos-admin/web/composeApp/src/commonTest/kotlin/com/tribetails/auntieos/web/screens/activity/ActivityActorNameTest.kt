@@ -24,8 +24,13 @@ class ActivityActorNameTest {
     }
 
     @Test
-    fun aUidNobodyAnswersToIsShownAsItIs() {
-        assertEquals("signed in · gone-uid", rowContext(entry("gone-uid"), names))
+    fun aUidNobodyAnswersToIsNeverShown() {
+        // #1818: no uid or sign-in email stands in for a name.
+        assertEquals("signed in", rowContext(entry("gone-uid"), names))
+        assertEquals("signed in", rowContext(entry("u1")))
+        assertEquals("signed in", rowContext(entry("u2"), mapOf("u2" to "e2e-admin@tribetails.com")))
+        assertFalse(activityDetailRows(entry("gone-uid"), names = names).any { it.first == "Actor" || it.first == "Actor id" })
+        assertTrue(activityDetailRows(entry("u1"), names = names).contains("Actor" to "Syd East"))
     }
 
     @Test

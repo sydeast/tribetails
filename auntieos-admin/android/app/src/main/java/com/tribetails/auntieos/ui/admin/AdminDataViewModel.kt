@@ -38,6 +38,16 @@ sealed interface ChainVerifyUiState {
 }
 
 /**
+ * #1880: the read of the Activity Log entries below the newest page. [exhausted]
+ * once a page came back short, so there is nothing older to read.
+ */
+data class OlderActivityState(
+    val loading: Boolean = false,
+    val error: String? = null,
+    val exhausted: Boolean = false,
+)
+
+/**
  * ONE PAGE of the root `payments` collection, with everything a screen needs in
  * order to be honest about it.
  *
@@ -334,6 +344,13 @@ class AdminDataViewModel(
     // Activity log (audit trail) Management
     private val _activityLog = MutableStateFlow<List<com.tribetails.auntieos.data.admin.ActivityLogEntry>>(emptyList())
     val activityLog: StateFlow<List<com.tribetails.auntieos.data.admin.ActivityLogEntry>> = _activityLog.asStateFlow()
+
+    /**
+     * #1880: the read of the entries below the newest page. The log used to stop
+     * at the newest 100 with no way to the rest of the chain.
+     */
+    private val _olderActivity = MutableStateFlow(OlderActivityState())
+    val olderActivity: StateFlow<OlderActivityState> = _olderActivity.asStateFlow()
 
     // Hash-chain integrity verdict (calls the deployed verifyActivityLogChain
     // admin callable). Parity with the web Activity Log chain-verify panel.
@@ -698,6 +715,8 @@ class AdminDataViewModel(
 
             repository.getActivityLog().onSuccess { entries ->
                 _activityLog.value = entries.sortedByDescending { it.timestamp }
+                // #1880: a fresh read starts the older pages again from its own oldest entry.
+                _olderActivity.value = OlderActivityState(exhausted = entries.size < com.tribetails.auntieos.data.repository.ACTIVITY_LOG_PAGE)
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to load activity log"
             }
@@ -706,6 +725,39 @@ class AdminDataViewModel(
         }
     }
 
+    /**
+     * #1880: reads the page just below the oldest entry on screen and appends
+     * it. One read at a time; a failure keeps the rows already shown and says
+     * why, and the next press tries again.
+     */
+    fun loadOlderActivityLog() {
+        if (_olderActivity.value.loading || _olderActivity.value.exhausted) return
+        val oldest = _activityLog.value.mapNotNull { it.seq }.minOrNull() ?: return
+        _olderActivity.value = _olderActivity.value.copy(loading = true, error = null)
+        viewModelScope.launch {
+            val result = repository.getOlderActivityLog(oldest)
+            // A refresh that landed while this page was read replaced the list with
+            // a newer first page. This page sits below the old one, so adding it
+            // would leave a hole above it that no later press fills: drop it.
+            if (_activityLog.value.mapNotNull { it.seq }.minOrNull() != oldest) {
+                _olderActivity.value = _olderActivity.value.copy(loading = false)
+                return@launch
+            }
+            result.onSuccess { page ->
+                val seen = _activityLog.value.map { it.id }.toSet()
+                _activityLog.value = (_activityLog.value + page.filter { it.id !in seen })
+                    .sortedByDescending { it.timestamp }
+                _olderActivity.value = OlderActivityState(
+                    exhausted = page.size < com.tribetails.auntieos.data.repository.ACTIVITY_LOG_PAGE,
+                )
+            }.onFailure { t ->
+                _olderActivity.value = _olderActivity.value.copy(
+                    loading = false,
+                    error = t.message?.takeIf { it.isNotBlank() } ?: "The older entries could not be read.",
+                )
+            }
+        }
+    }
     /**
      * Patches a Kin Care session and refreshes the local list so the row UI
      * reflects the new state immediately. Used by Auntie Time row buttons.
@@ -1170,7 +1222,7 @@ class AdminDataViewModel(
     fun reviewAndSendDraftInvoice(invoice: Invoice) {
         if (invoice.id.isBlank()) return
         if (invoice.kinfolkId.isBlank()) {
-            _error.value = "This invoice has no client (kinfolk) on record, so it cannot be sent."
+            _error.value = "This invoice has no Kinfolk on record, so it cannot be sent."
             return
         }
         val quote = com.tribetails.auntieos.domain.isQuoteDraft(invoice)

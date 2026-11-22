@@ -128,20 +128,35 @@ export function kinTaleHeadline(title: string, body: string): string {
 // ── send-channel label ───────────────────────────────────────────────────
 
 /**
- * Friendly send-channel label. Ported verbatim from
- * `KinTaleLogsScreen.kt#prettySentVia`: internal backfill provenance markers
- * ("legacy_visit_logs", "legacy_orphan") are migration bookkeeping, not real
- * delivery channels, so they collapse to "imported" instead of leaking the
- * raw collection name into the operator UI. Real channels (email/sms) pass
- * through lower-cased.
+ * The send-channel label, in words, or `null` when the stored value is not
+ * something the operator should read. Ported from
+ * `KinTaleLogsScreen.kt#prettySentVia`.
+ *
+ * - The backfill provenance markers ("legacy_visit_logs", "legacy_orphan")
+ *   and a blank value are migration bookkeeping: "imported".
+ * - #1817: "pending" and "catalog" are the send path's own markers for who
+ *   tells the household (`mytribe/functions/src/admin/kinTaleDrafts.ts`), not
+ *   channels. Either way the tale went to the household's MyTribe, so both
+ *   read "MyTribe". Neither says whether a notice reached them.
+ * - A real channel reads as a word ("email", "text", "push").
+ * - Anything else is a stored value this screen does not know: `null`, so no
+ *   raw key ever lands on screen.
+ *
+ * Same words as the desktop console and Android (`SentViaWords.kt`).
  */
-export function sentViaLabel(sentVia: string): string {
-  const trimmed = str(sentVia).trim();
-  if (trimmed === '') return 'imported';
-  if (trimmed.startsWith('legacy_')) return 'imported';
-  return trimmed.toLowerCase();
+export function sentViaLabel(sentVia: string): string | null {
+  const trimmed = str(sentVia).trim().toLowerCase();
+  if (trimmed === '' || trimmed.startsWith('legacy_')) return 'imported';
+  return SENT_VIA_WORDS[trimmed] ?? null;
 }
 
+const SENT_VIA_WORDS: Readonly<Record<string, string>> = {
+  pending: 'MyTribe',
+  catalog: 'MyTribe',
+  email: 'email',
+  sms: 'text',
+  push: 'push',
+};
 // ── status classification (positive enumeration, no negation) ──────────────
 
 /**

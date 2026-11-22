@@ -25,18 +25,20 @@ class ActivityActorNameTest {
     }
 
     @Test
-    fun aUidNobodyAnswersToIsShownAsItIs() {
-        assertEquals("signed in · gone-uid", rowContext(entry("gone-uid"), names))
+    fun aUidNobodyAnswersToIsNeverShown() {
+        // #1818: no uid stands in for a name, before the roster answers or after.
+        assertEquals("signed in", rowContext(entry("gone-uid"), names))
+        assertEquals("signed in", rowContext(entry("u1")))
+        assertEquals("signed in", rowContext(entry("u2"), mapOf("u2" to "e2e-admin@tribetails.com")))
     }
 
     @Test
-    fun theOpenedRecordNamesTheActorAndKeepsTheUid() {
+    fun theOpenedRecordNamesTheActorWithNoUid() {
         val rows = activityDetailRows(entry("u1"), names = names)
         assertTrue(rows.contains("Actor" to "Syd East"))
-        assertTrue(rows.contains("Actor id" to "u1"))
+        assertFalse(rows.any { it.first == "Actor id" || it.second == "u1" })
         val unknown = activityDetailRows(entry("u9"), names = names)
-        assertTrue(unknown.contains("Actor" to "u9"))
-        assertFalse(unknown.any { it.first == "Actor id" })
+        assertFalse(unknown.any { it.first == "Actor" || it.first == "Actor id" })
     }
 
     @Test

@@ -97,14 +97,21 @@ class MembersRepository(
         /** The person's name as the server resolved it (#1589). Null when nothing names them. */
         val displayName: String? = null,
     ) {
-        /** Never blank and never a database id: name, then email, then the label, then [UNNAMED_MEMBER]. */
+        private val name: String?
+            get() = displayName?.trim()?.ifBlank { null } ?: secondaryLabel?.trim()?.ifBlank { null }
+        /**
+         * Never blank, never a database id (#1589) and never an email in place
+         * of a name (#1853): the name, then the label, then the role in words.
+         * The email still shows, as the email, on the line under the name.
+         */
         val label: String
-            get() = displayName?.ifBlank { null }
-                ?: invitedEmail?.ifBlank { null }
-                ?: secondaryLabel?.ifBlank { null }
-                ?: UNNAMED_MEMBER
+            get() = name ?: if (role == MemberRole.PRIMARY) UNNAMED_PRIMARY else UNNAMED_SECONDARY
+        /** The same, to open a sentence: "The primary contact is suspended". */
+        val subject: String
+            get() = name ?: if (role == MemberRole.PRIMARY) "The primary contact" else "This secondary kinfolk"
         companion object {
-            const val UNNAMED_MEMBER = "Unnamed member"
+            const val UNNAMED_PRIMARY = "Primary contact"
+            const val UNNAMED_SECONDARY = "Secondary kinfolk"
         }
     }
 

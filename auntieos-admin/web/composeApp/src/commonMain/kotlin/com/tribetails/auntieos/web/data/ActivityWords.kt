@@ -42,12 +42,84 @@ private val DRAFT_PATH = Regex("""(?:generated_drafts|kin_care_reports)/[\w-]+""
 // notification row names the notification by its key in words, because the
 // catalog label lives on the server. Same table as the web `lib/activityWords.ts`.
 
-/** `kincare.booking.confirm` as "Kincare booking confirm". */
-private fun keyWords(raw: String): String {
-    val words = raw.trim().split(Regex("[._\\-\\s]+")).filter { it.isNotEmpty() }.joinToString(" ").lowercase()
-    return words.replaceFirstChar { it.uppercaseChar() }
+/**
+ * #1818, #1881: a stored key as words, brand words in their casing:
+ * `CREATE_KINCARE_SESSION` reads "Create KinCare session", never "Create
+ * kincare session". Same table as the server's `brandWords`
+ * (`mytribe/functions/src/lib/auditEvents.ts`) and the other two admin clients.
+ */
+private val BRAND_WORDS = mapOf(
+    "kin" to "Kin",
+    "kinfolk" to "Kinfolk",
+    "kintale" to "KinTale",
+    "kintales" to "KinTales",
+    "kincare" to "KinCare",
+    "auntie" to "Auntie",
+    "tribe" to "Tribe",
+    "ai" to "AI",
+    "gps" to "GPS",
+    "pdf" to "PDF",
+    "sms" to "SMS",
+)
+
+private fun keyParts(raw: String): List<String> =
+    raw.trim().split(Regex("[._\\-\\s]+")).filter { it.isNotEmpty() }
+
+/** `kincare.booking.confirm` as "KinCare booking confirm". */
+fun brandWords(raw: String): String {
+    val words = keyParts(raw).map { BRAND_WORDS[it.lowercase()] ?: it.lowercase() }
+    if (words.isEmpty()) return ""
+    return words.joinToString(" ").replaceFirstChar { it.uppercaseChar() }
 }
-private fun lowerKeyWords(raw: String): String = keyWords(raw).lowercase()
+private fun keyWords(raw: String): String = brandWords(raw)
+private fun lowerKeyWords(raw: String): String = keyParts(raw).joinToString(" ").lowercase()
+
+/**
+ * #1818: the plain title of a line, for the kinds that have one. The same words
+ * as the server's `AUDIT_EVENT_TITLES` (`mytribe/functions/src/lib/auditEvents.ts`)
+ * and the other two admin clients. A kind not listed reads as its key through
+ * [brandWords]; the key itself is never on screen.
+ */
+val ACTIVITY_TITLES: Map<String, String> = mapOf(
+    "OPERATOR_CROSSTENANT_ACCESS" to "Household opened",
+    "NOTIFICATION_MARKED_UNREAD" to "Notification marked unread",
+    "BILLING_PAYMENT_PARTIAL" to "Part payment recorded",
+    "NOTIFICATION_NOT_SENT" to "Notification not sent",
+    "UPDATE_KINFOLK" to "Kinfolk updated",
+    "UPDATE_KINFOLK_TAGS" to "Kinfolk tags changed",
+    "ARCHIVE_KINFOLK" to "Kinfolk archived",
+    "RESTORE_KINFOLK" to "Kinfolk restored",
+    "CREATE_KIN" to "Kin added",
+    "UPDATE_KIN" to "Kin updated",
+    "UPDATE_KIN_TAGS" to "Kin tags changed",
+    "SECONDARY_KINFOLK_SAVED" to "Secondary Kinfolk saved",
+    "SECONDARY_KINFOLK_REMOVED" to "Secondary Kinfolk removed",
+    "HOUSEHOLD_DATA_SAVED" to "Household details saved",
+    "CONTENT_KINTALE_SENT" to "KinTale sent",
+    "KINTALE_TEMPLATE_CREATED" to "KinTale template created",
+    "KINTALE_TEMPLATE_SAVED" to "KinTale template saved",
+    "KINTALE_TEMPLATE_ARCHIVED" to "KinTale template archived",
+    "KINTALE_TEMPLATE_RESTORED" to "KinTale template restored",
+    "KINTALE_TEMPLATE_DELETED" to "KinTale template deleted",
+    "TEMPLATE_CREATED" to "Template created",
+    "TEMPLATE_SAVED" to "Template saved",
+    "TEMPLATE_DELETED" to "Template deleted",
+    "TEMPLATE_ASSIGNED" to "Template assigned",
+    "TEMPLATE_UNASSIGNED" to "Template unassigned",
+    "TEMPLATE_CONVERTED" to "Template converted to visual",
+    "VISIT_ON_MY_WAY" to "Visit: on my way",
+    "VISIT_ARRIVED" to "Visit: arrived",
+    "VISIT_DEPARTED" to "Visit: departed",
+    "VISIT_UNDO_ARRIVAL" to "Visit: arrival undone",
+    "VISIT_UNDO_DEPARTED" to "Visit: departure undone",
+)
+
+/** A line's title: its plain title, or its key in words. Never the key itself. */
+fun activityTitleWords(actionType: String): String {
+    val key = actionType.trim().uppercase()
+    if (key.isEmpty()) return "Event"
+    return ACTIVITY_TITLES[key] ?: brandWords(key)
+}
 
 private val CHANNEL_WORDS = mapOf("email" to "email", "sms" to "text message", "push" to "push notification")
 private fun channelWords(c: String): String = CHANNEL_WORDS[c.trim().lowercase()] ?: lowerKeyWords(c)
@@ -171,6 +243,16 @@ private val ID_SHAPES: List<Pair<Regex, (List<String>) -> String>> = listOf(
     // #1839: a look at a household stored as its bare key and ids. Same words as
     // the web and Android.
     Regex("""^OPERATOR_CROSSTENANT_ACCESS(?: uid=\S+)?(?: target=\S+)?$""") to { _ -> ActivityWords.HOUSEHOLD_OPENED },
+    // #1818: a visit request, stored with the pattern as its key.
+    Regex("""^Kinfolk submitted (\d+) visit\(s\) \(([^)]*)\)$""") to { g ->
+        val n = g[1].toInt()
+        val p = PATTERN_WORDS[g[2].trim()] ?: lowerKeyWords(g[2])
+        "Kinfolk asked for $n ${if (n == 1) "visit" else "visits"}${if (p.isEmpty()) "" else " ($p)"}"
+    },
+    // #1818: a line whose writer gave no sentence, stored as its key and the
+    // actor's uid ("CREATE_KINCARE_SESSION uid=<id>", "<KEY> (client-actor=<id>)").
+    // The title already says it, so the line adds nothing.
+    Regex("""^[A-Z][A-Z0-9_]*(?: uid=\S*)?(?: target=\S*)?(?: \(client-actor=[^)]*\))?$""") to { _ -> "" },
 )
 
 /**

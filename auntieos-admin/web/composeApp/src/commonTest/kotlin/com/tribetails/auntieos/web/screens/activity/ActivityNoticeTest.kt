@@ -65,7 +65,7 @@ class ActivityNoticeTest {
         assertTrue(isNoticeNotSent(heldAsStored))
         assertEquals("Notification not sent", activityEntryTitle(heldAsStored))
         assertEquals(
-            "Held back \"Kincare auntie on my way\": notices to households are turned off",
+            "Held back \"KinCare Auntie on my way\": notices to households are turned off",
             activityEntryDescription(heldAsStored),
         )
         // The row's pill and the opened entry: "Not sent", never SUCCESS.
@@ -75,7 +75,6 @@ class ActivityNoticeTest {
 
     @Test
     fun `it prints no stored key beside a title that contradicts it, and no id in the sentence`() {
-        assertFalse(activityEntryShowsCode(heldAsStored))
         val sentence = activityEntryDescription(heldAsStored)
         assertFalse(sentence.contains("uid="))
         assertFalse(sentence.contains("AbCdEf"))
@@ -85,7 +84,7 @@ class ActivityNoticeTest {
     @Test
     fun `the row carries the words and is found by them`() {
         assertEquals(
-            "Held back \"Kincare auntie on my way\": notices to households are turned off",
+            "Held back \"KinCare Auntie on my way\": notices to households are turned off",
             rowContext(heldAsStored),
         )
         assertTrue(matchesQuery(heldAsStored, "not sent"))
@@ -96,18 +95,18 @@ class ActivityNoticeTest {
     @Test
     fun `each stored reason has its words, and an unknown one is not printed as a key`() {
         assertEquals(
-            "Did not send \"Kincare auntie arrived\": this notification is turned off in Settings",
+            "Did not send \"KinCare Auntie arrived\": this notification is turned off in Settings",
             noticeNotSentWords("kincare.auntie.arrived", "household_prefs_suppressed"),
         )
         assertEquals(
-            "Did not send \"Kincare auntie arrived\": nobody in the household has a MyTribe sign-in",
+            "Did not send \"KinCare Auntie arrived\": nobody in the household has a MyTribe sign-in",
             noticeNotSentWords("kincare.auntie.arrived", "household_has_no_portal_account"),
         )
         assertEquals(
-            "Did not send \"Kincare auntie arrived\": there was nobody to send it to",
+            "Did not send \"KinCare Auntie arrived\": there was nobody to send it to",
             noticeNotSentWords("kincare.auntie.arrived", "no_recipient"),
         )
-        assertEquals("Did not send \"Kincare auntie arrived\"", noticeNotSentWords("kincare.auntie.arrived", "some_new_reason"))
+        assertEquals("Did not send \"KinCare Auntie arrived\"", noticeNotSentWords("kincare.auntie.arrived", "some_new_reason"))
         assertEquals(
             "Held back a notification: notices to households are turned off",
             noticeNotSentWords("", "household_notices_off"),
@@ -159,7 +158,7 @@ class ActivityNoticeTest {
             status = "FAILURE",
             description = "Could not send \"Invoice sent\" to Dre East by email: the send failed",
         )
-        assertEquals("FAILURE", activityStatusWords(failed))
+        assertEquals("Failed", activityStatusWords(failed))
         assertEquals(rowTone("LOGIN", "FAILURE"), rowTone(failed.actionType, activityEffectiveStatus(failed)))
     }
 
@@ -167,9 +166,8 @@ class ActivityNoticeTest {
     fun `a notice that did go out is untouched`() {
         assertFalse(isNoticeNotSent(sent))
         assertEquals("Notification dispatched", activityEntryTitle(sent))
-        assertTrue(activityEntryShowsCode(sent))
         assertEquals("Sending \"Your Auntie is on the way\" to Dre East by email", activityEntryDescription(sent))
-        assertEquals("SUCCESS", activityStatusWords(sent))
+        assertEquals("Done", activityStatusWords(sent))
     }
 
     @Test
@@ -190,14 +188,11 @@ class ActivityNoticeTest {
     }
 
     @Test
-    fun `a notification row does not end in a database path, and other rows keep their target`() {
-        // #1905: the walk read "notifications/<id>" at the end of each row.
+    fun `no row ends in a database path, and neither does the opened entry`() {
+        // #1905, #1818: the walk read "notifications/<id>" and "kin_care_sessions/<id>".
         assertEquals("Sending \"Your Auntie is on the way\" to Dre East by email", rowContext(sent))
-        for (kind in listOf("NOTIFICATION_DISPATCHED", "NOTIFICATION_RECEIVED", "NOTIFICATION_NOT_SENT", "NOTIFICATION_VIEWED")) {
-            assertFalse(activityRowShowsTarget(ActivityLogEntry(actionType = kind)))
-        }
         val visit = ActivityLogEntry(actionType = "VISIT_ARRIVED", targetId = "s1", targetCollection = "kin_care_sessions")
-        assertTrue(activityRowShowsTarget(visit))
-        assertEquals("kin_care_sessions/s1", rowContext(visit))
+        assertEquals("", rowContext(visit))
+        assertFalse(activityDetailRows(sent).any { it.first == "Target" || it.first == "Action" })
     }
 }
