@@ -64,7 +64,7 @@ class ActivityPlainWordsTest {
             households = mapOf("fam1" to "The Whitfields"),
             names = mapOf("u1" to "Syd East"),
         )
-        assertEquals("When" to "Nov 11, 2026, 11:33", rows.first())
+        assertEquals("When" to "Nov 11, 2026 11:33", rows.first())
         assertTrue(rows.contains("Status" to "Done"))
         assertTrue(rows.contains("Household" to "The Whitfields"))
         assertTrue(rows.contains("Actor" to "Syd East"))
