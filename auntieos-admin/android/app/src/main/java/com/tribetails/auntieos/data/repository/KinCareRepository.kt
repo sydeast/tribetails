@@ -1206,8 +1206,31 @@ data class StaffMember(
      */
     val role: String? = null,
 ) {
-    /** What the picker shows: display name, else email, else the raw uid. */
-    val label: String get() = displayName?.ifBlank { null } ?: email?.ifBlank { null } ?: uid
+    /**
+     * #1857: the person's name, and nothing else. `listStaff` fills a nameless
+     * record with the sign-in email, which is not a name; neither is the uid.
+     */
+    val name: String? get() = displayName?.trim()?.takeIf { it.isNotEmpty() && '@' !in it && it != uid }
+    /**
+     * What the Assigned Auntie picker and row call this person: the name, else
+     * the word for their role ("Office", "Auntie"). Never a sign-in email or a
+     * uid (#1857), and never blank.
+     */
+    val label: String get() = name ?: staffByline(copy(displayName = null))
+}
+
+/**
+ * #1857: the Assigned Auntie row. The name stored with the assignment when it
+ * is one, else the roster's label for that uid, else "Assigned" only while the
+ * roster has not answered. Pure; the web twin is `assignedAuntieLabel`.
+ */
+fun assignedAuntieLabel(assignedUid: String?, storedName: String?, roster: List<StaffMember>?): String {
+    if (assignedUid == null) return "Unassigned"
+    val stored = storedName?.trim().orEmpty()
+    if (stored.isNotEmpty() && '@' !in stored) return stored
+    val member = roster?.firstOrNull { it.uid == assignedUid }
+    if (member != null) return member.label
+    return if (roster == null) "Assigned" else staffByline(StaffMember(assignedUid, null, null))
 }
 
 /**

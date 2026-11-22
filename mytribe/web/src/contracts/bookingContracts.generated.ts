@@ -306,6 +306,7 @@ export interface GetMyBookingsResultLiveVisit {
   auntieDisplayName: string | null;
   auntieAvatarUrl: string | null;
   notes: string | null;
+  auntieAssigned?: boolean;
   requestedByUid: string | null;
   createdAtMs: number | null;
   updatedAtMs: number | null;
@@ -639,6 +640,8 @@ export interface ListPendingBookingRequestsResultRequest {
   startTimeMsList: number[];
   visits: ListPendingBookingRequestsResultRequestVisit[];
   requestedAtMs: number | null;
+  assignedAuntieUid: string | null;
+  auntieDisplayName: string | null;
 }
 
 /**

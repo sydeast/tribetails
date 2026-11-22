@@ -61,6 +61,7 @@ vi.mock('../lib/visitRequestSignal', () => ({
 
 import {
   VisitRequestsSection,
+  acceptAssigneeLine,
   mergeQueues,
   requestKey,
   requestVisitLines,
@@ -141,6 +142,8 @@ function newBooking(
     startTimeMsList: [CURRENT_MS, CURRENT_MS + 24 * 60 * 60 * 1000],
     visits: [],
     requestedAtMs: CURRENT_MS - 5000,
+    assignedAuntieUid: null,
+    auntieDisplayName: null,
     ...overrides,
   };
 }
@@ -591,6 +594,27 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     expect(screen.queryByText(/1 visits/)).toBeNull();
   });
 
+  // #1870: Accept assigned the visits to the owner without saying so.
+  it('the Accept step says who the visits are assigned to', async () => {
+    listPendingBookingRequests.mockResolvedValue({
+      requests: [newBooking({ assignedAuntieUid: 'u1', auntieDisplayName: 'Auntie Ruth' })],
+    });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    expect(await screen.findByText('Assigned to Auntie Ruth.')).toBeInTheDocument();
+  });
+
+  it('the Accept step says when nobody is assigned yet, and Decline says nothing about it', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    expect(await screen.findByText(/No Auntie is assigned yet/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+    expect(screen.queryByText(/No Auntie is assigned yet/)).toBeNull();
+  });
   it('approving books the whole envelope through one call, and says the household heard once', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     approveBookingRequest.mockResolvedValue({
@@ -1461,5 +1485,30 @@ describe('VisitRequestsSection for an Auntie (#2313)', () => {
     expect(screen.getByRole('button', { name: 'Decline' })).toBeInTheDocument();
     expect(listRescheduleRequests).toHaveBeenCalled();
     expect(listCancelRequests).toHaveBeenCalled();
+  });
+});
+
+describe('acceptAssigneeLine (#1870)', () => {
+  const owner = { uid: 'u1', displayName: 'e2e-admin@tribetails.com', email: 'e2e-admin@tribetails.com', role: 'owner' as const };
+  it('uses the stored name', () => {
+    expect(acceptAssigneeLine({ assignedAuntieUid: 'u1', auntieDisplayName: 'Auntie Ruth' }, null)).toBe('Assigned to Auntie Ruth.');
+  });
+
+  it('waits on the roster for a nameless assignee, then never shows an email', () => {
+    expect(acceptAssigneeLine({ assignedAuntieUid: 'u1', auntieDisplayName: null }, null)).toBeNull();
+    expect(acceptAssigneeLine({ assignedAuntieUid: 'u1', auntieDisplayName: null }, [owner])).toBe('Assigned to the Office.');
+    expect(acceptAssigneeLine({ assignedAuntieUid: 'u1', auntieDisplayName: 'e2e-admin@tribetails.com' }, [owner])).toBe(
+      'Assigned to the Office.',
+    );
+    expect(acceptAssigneeLine({ assignedAuntieUid: 'gone', auntieDisplayName: null }, [owner])).toBe('Assigned to a staff member.');
+
+  });
+
+  it('says nothing when the server sends no assignee at all (a deploy from before #1870)', () => {
+    expect(acceptAssigneeLine({ auntieDisplayName: null } as never, null)).toBeNull();
+  });
+
+  it('says when nobody is assigned', () => {
+    expect(acceptAssigneeLine({ assignedAuntieUid: null, auntieDisplayName: null }, null)).toMatch(/No Auntie is assigned yet/);
   });
 });

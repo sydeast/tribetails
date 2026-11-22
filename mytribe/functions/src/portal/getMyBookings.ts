@@ -11,6 +11,7 @@ import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { matchServiceKey, serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
 import { hasBillingAccess } from '../lib/memberGate';
+import { assigneeNamesFor, hasAssignee, needsAssigneeName, withAssigneeName } from '../lib/assigneeName';
 import { loadVisitExtras, NO_EXTRAS, type VisitExtras } from '../lib/portalVisitLinks';
 import {
   BookingDtoSchema,
@@ -132,6 +133,13 @@ export async function getMyBookingsHandler(
   } catch {
     extras = NO_EXTRAS;
   }
+
+  // #1870: a visit assigned before #1857 may carry the uid and no name, and
+  // the household then read "Not yet assigned" for a booking that had one.
+  const assigneeNames = await assigneeNamesFor(
+    visitRows.map(({ data }) => needsAssigneeName(data) ?? ''),
+    'getMyBookings',
+  );
   // #1863: the same settings read decides what time each visit is shown at.
   const time = settingsSnap ? householdTimeContextFrom(settingsSnap.data() ?? {}) : CLOCK_ONLY_TIME_CONTEXT;
   const nowMs = Date.now();
@@ -143,7 +151,7 @@ export async function getMyBookingsHandler(
   // unjoined copy there would put CONFIRMED back on a visit that is under way.
   const all: BookingDto[] = visitRows.map(({ doc: d, data }) => {
     const batchId = resolveBatchId(d, data);
-    const dto = kinCareToDto(d.id, data, batchId, kinfolkId, extras, time, serviceCatalog);
+    const dto = kinCareToDto(d.id, withAssigneeName(data, assigneeNames), batchId, kinfolkId, extras, time, serviceCatalog);
     if (batchId) {
       const bucket = byBatch.get(batchId) ?? [];
       bucket.push(dto);
@@ -233,6 +241,8 @@ export async function getMyBookingsHandler(
       // household must not read it. A visit with no booking request has no
       // household-written note to show here, so there is nothing to project.
       notes: null,
+      // #1870: the flag only, never the uid on the session.
+      auntieAssigned: hasAssignee(s['assignedAuntieUid']),
       requestedByUid: stringOrNull(s['createdBy']),
       createdAtMs: isoMillis(s['createdAt']),
       updatedAtMs: isoMillis(s['updatedAt']),

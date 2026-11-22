@@ -92,8 +92,17 @@ class KinCareRepositoryTest {
 
     @Test fun `label prefers displayName then email then uid`() {
         assertEquals("Auntie Dee", StaffMember("u1", "Auntie Dee", "d@x.com").label)
-        assertEquals("d@x.com", StaffMember("u1", "", "d@x.com").label)
-        assertEquals("u1", StaffMember("u1", null, "").label)
+        // #1857: never the sign-in email, never the uid: the role word instead.
+        assertEquals("Staff", StaffMember("u1", "", "d@x.com").label)
+        assertEquals("Staff", StaffMember("u1", null, "").label)
+        assertEquals("Office", StaffMember("u1", "d@x.com", "d@x.com", role = "owner").label)
+        assertEquals("Auntie", StaffMember("u1", null, null, role = "auntie").label)
+        // The Assigned Auntie row (#1857): stored name, else the roster, else "Assigned" until it answers.
+        val owner = StaffMember("u1", "e2e-admin@tribetails.com", "e2e-admin@tribetails.com", role = "owner")
+        assertEquals("Unassigned", assignedAuntieLabel(null, null, null))
+        assertEquals("Assigned", assignedAuntieLabel("u1", null, null))
+        assertEquals("Office", assignedAuntieLabel("u1", "e2e-admin@tribetails.com", listOf(owner)))
+        assertEquals("Auntie Ruth", assignedAuntieLabel("u1", "Auntie Ruth", listOf(owner)))
     }
 
     // ── construction ─────────────────────────────────────────────────────────

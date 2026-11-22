@@ -522,3 +522,80 @@ describe('getMyBookingsHandler: what time each visit is shown at (#1301, #1863, 
   });
 });
 
+// #1870: a visit assigned before #1857 stored the uid and no name, so MyTribe
+// read "Not yet assigned" for a booking the office had assigned.
+describe('getMyBookingsHandler: the Auntie on a visit stored without a name (#1870)', () => {
+  function withVisit(data: Record<string, unknown>, staff: Record<string, unknown> = {}) {
+    return buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3/bookings/env-a': { envelopeStatus: 'confirmed', pattern: 'individual', serviceName: 'Walk' },
+        ...staff,
+      },
+      collectionGroupDocs: {
+        kinCares: [visit('env-a', 'b-up', { status: 'confirmed', startTime: Timestamp.fromMillis(Date.now() + 86400_000), ...data })],
+      },
+    });
+  }
+
+  it('names the assignee from the staff record', async () => {
+    mocks.dbFn.mockReturnValue(withVisit({ assignedAuntieUid: 'owner1', auntieDisplayName: null }, { 'staff/owner1': { displayName: 'Auntie Dee' } }).db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming.find((b) => b.id === 'b-up')?.auntieDisplayName).toBe('Auntie Dee');
+  });
+
+  it('keeps a name the visit already stores', async () => {
+    mocks.dbFn.mockReturnValue(withVisit({ assignedAuntieUid: 'owner1', auntieDisplayName: 'Auntie Bea' }, { 'staff/owner1': { displayName: 'Auntie Dee' } }).db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming.find((b) => b.id === 'b-up')?.auntieDisplayName).toBe('Auntie Bea');
+  });
+
+  it('never hands the household a staff email in the name\'s place', async () => {
+    mocks.dbFn.mockReturnValue(withVisit({ assignedAuntieUid: 'owner1' }, { 'staff/owner1': { email: 'e2e-admin@tribetails.com' } }).db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming.find((b) => b.id === 'b-up')?.auntieDisplayName).toBeNull();
+  });
+
+  it('replaces an email stored as the name, with the name or with nothing', async () => {
+    mocks.dbFn.mockReturnValue(
+      withVisit({ assignedAuntieUid: 'owner1', auntieDisplayName: 'e2e-admin@tribetails.com' }, { 'staff/owner1': {} }).db,
+    );
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming.find((b) => b.id === 'b-up')?.auntieDisplayName).toBeNull();
+  });
+
+  it('drops an email stored as the name on a visit with no assignee', async () => {
+    mocks.dbFn.mockReturnValue(withVisit({ auntieDisplayName: 'e2e-admin@tribetails.com' }).db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const dto = res.upcoming.find((b) => b.id === 'b-up');
+    expect(dto?.auntieDisplayName).toBeNull();
+    expect(dto?.auntieAssigned).toBe(false);
+    expect(JSON.stringify(res)).not.toContain('e2e-admin@tribetails.com');
+  });
+
+  it('flags a visit whose assignee has no name, and sends neither the uid nor an email', async () => {
+    mocks.dbFn.mockReturnValue(
+      withVisit({ assignedAuntieUid: 'owner-uid-private' }, { 'staff/owner-uid-private': { email: 'e2e-admin@tribetails.com' } }).db,
+    );
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const dto = res.upcoming.find((b) => b.id === 'b-up');
+    expect(dto?.auntieDisplayName).toBeNull();
+    expect(dto?.auntieAssigned).toBe(true);
+    const wire = JSON.stringify(res);
+    expect(wire).not.toContain('owner-uid-private');
+    expect(wire).not.toContain('e2e-admin@tribetails.com');
+  });
+
+  it('does not flag a visit nobody is assigned to', async () => {
+    mocks.dbFn.mockReturnValue(withVisit({ assignedAuntieUid: null, auntieDisplayName: null }).db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming.find((b) => b.id === 'b-up')?.auntieAssigned).toBe(false);
+  });
+});

@@ -49,10 +49,11 @@ vi.mock('../api/bookingsWrite', async (orig) => ({
   getVisitAssignment,
 }));
 
-const { listStaff } = vi.hoisted(() => ({ listStaff: vi.fn() }));
+const { listStaff, loadStaffRoster } = vi.hoisted(() => ({ listStaff: vi.fn(), loadStaffRoster: vi.fn() }));
 vi.mock('../api/staff', async (orig) => ({
   ...(await orig<typeof import('../api/staff')>()),
   listStaff,
+  loadStaffRoster,
 }));
 // #1607: the notes name their staff writer through the shared roster read.
 const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() } }));
@@ -142,6 +143,8 @@ beforeEach(() => {
   getVisitAssignment.mockReset();
   getVisitAssignment.mockResolvedValue({ assignedAuntieUid: null, auntieDisplayName: null });
   listStaff.mockReset();
+  loadStaffRoster.mockReset();
+  loadStaffRoster.mockResolvedValue([]);
   getKinfolkProfile.mockReset();
   getKinfolkProfile.mockResolvedValue({ _id: 'kf1', serviceAddress: '412 Mockingbird Ln' });
 });
@@ -544,6 +547,48 @@ describe('BookingDetailModal assigned Auntie', () => {
     expect(factValue('Assigned Auntie')).toHaveTextContent('Auntie Prior');
   });
 
+  // #1857: the walk's picker offered the owner as her sign-in email, and the
+  // row read "Assigned" on every reopen because no name was stored.
+  it('names the Auntie from the roster when the visit stored only her uid', async () => {
+    getVisitAssignment.mockResolvedValue({ assignedAuntieUid: 'u1', auntieDisplayName: null });
+    loadStaffRoster.mockResolvedValue([{ uid: 'u1', displayName: 'Auntie Ruth', email: 'catch@hanasamku.com', role: 'auntie' }]);
+    open();
+    await waitFor(() => expect(factValue('Assigned Auntie')).toHaveTextContent('Auntie Ruth'));
+    expect(factValue('Assigned Auntie')).not.toHaveTextContent('Assigned');
+  });
+
+  it('calls a nameless owner "Office", never her sign-in email, on the row and in the picker', async () => {
+    const owner = { uid: 'u1', displayName: 'e2e-admin@tribetails.com', email: 'e2e-admin@tribetails.com', role: 'owner' as const };
+    getVisitAssignment.mockResolvedValue({ assignedAuntieUid: 'u1', auntieDisplayName: null });
+    loadStaffRoster.mockResolvedValue([owner]);
+    listStaff.mockResolvedValue([owner]);
+    open();
+    await waitFor(() => expect(factValue('Assigned Auntie')).toHaveTextContent('Office'));
+    await user.click(screen.getByRole('button', { name: 'Choose an Auntie' }));
+    expect(await screen.findByRole('button', { name: 'Office' })).toBeInTheDocument();
+    expect(screen.queryByText(/e2e-admin@tribetails\.com/)).toBeNull();
+  });
+
+  it('reads the roster when the visit stored an email in the name\'s place', async () => {
+    getVisitAssignment.mockResolvedValue({ assignedAuntieUid: 'u1', auntieDisplayName: 'catch@hanasamku.com' });
+    loadStaffRoster.mockResolvedValue([{ uid: 'u1', displayName: 'Auntie Ruth', email: 'catch@hanasamku.com', role: 'auntie' }]);
+    open();
+    await waitFor(() => expect(factValue('Assigned Auntie')).toHaveTextContent('Auntie Ruth'));
+  });
+
+  it('keeps "Assigned" only while the roster has not answered', async () => {
+    getVisitAssignment.mockResolvedValue({ assignedAuntieUid: 'u1', auntieDisplayName: null });
+    loadStaffRoster.mockReturnValue(new Promise(() => {}));
+    open();
+    await waitFor(() => expect(factValue('Assigned Auntie')).toHaveTextContent('Assigned'));
+  });
+
+  it('does not read the roster when the visit stored a name', async () => {
+    getVisitAssignment.mockResolvedValue({ assignedAuntieUid: 'u1', auntieDisplayName: 'Auntie Ruth' });
+    open();
+    await waitFor(() => expect(factValue('Assigned Auntie')).toHaveTextContent('Auntie Ruth'));
+    expect(loadStaffRoster).not.toHaveBeenCalled();
+  });
   it('surfaces a roster load failure with a retry rather than an empty picker', async () => {
     listStaff.mockRejectedValue(new Error('permission-denied'));
     open();

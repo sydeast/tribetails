@@ -47,6 +47,7 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.staffByline
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.StaffMember
+import com.tribetails.auntieos.web.data.assignedAuntieLabel
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -314,7 +315,8 @@ fun BookingDetailModal(
                             if (assignLoadError != null) {
                                 FactRow("Assigned Auntie", "Couldn't check")
                             } else {
-                                FactRow("Assigned Auntie", assignedName ?: if (assignedUid != null) "Assigned" else "Unassigned")
+                                // #1857: a name, or the roster's word for that person; "Assigned" only while the roster is unread.
+                                FactRow("Assigned Auntie", assignedAuntieLabel(assignedUid, assignedName, staff ?: noteStaff))
                             }
                             assignLoadError?.let { err ->
                                 AuntieBanner(

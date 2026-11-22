@@ -576,6 +576,15 @@ private fun AssignedAuntieSection(
         }
     }
 
+    // #1857: a visit assigned before the server stored a name holds only the
+    // uid, and the row read "Assigned". The roster names that person; a failed
+    // read leaves the row as it was.
+    val needsRosterName = assignedUid != null &&
+        com.tribetails.auntieos.data.repository.assignedAuntieLabel(assignedUid, assignedName, null) == "Assigned"
+    LaunchedEffect(needsRosterName) {
+        if (needsRosterName && roster == null) loadRoster()
+    }
+
     fun change(uid: String?, optimisticName: String?) {
         if (saving) return
         val prevUid = assignedUid
@@ -605,7 +614,7 @@ private fun AssignedAuntieSection(
         FactRow(
             Lucide.UserCheck,
             "Auntie",
-            assignedName ?: if (assignedUid != null) "Assigned" else "Unassigned",
+            com.tribetails.auntieos.data.repository.assignedAuntieLabel(assignedUid, assignedName, roster),
         )
         Row(
             modifier = Modifier.fillMaxWidth(),

@@ -617,6 +617,8 @@ data class GetMyBookingsResultLiveVisit(
     val auntieDisplayName: String?,
     val auntieAvatarUrl: String?,
     val notes: String?,
+    /** Null when the payload omits the key. */
+    val auntieAssigned: Boolean? = null,
     val requestedByUid: String?,
     val createdAtMs: Long?,
     val updatedAtMs: Long?,
@@ -671,6 +673,7 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         auntieDisplayName = raw?.get("auntieDisplayName") as? String,
         auntieAvatarUrl = raw?.get("auntieAvatarUrl") as? String,
         notes = raw?.get("notes") as? String,
+        auntieAssigned = raw?.get("auntieAssigned") as? Boolean,
         requestedByUid = raw?.get("requestedByUid") as? String,
         createdAtMs = (raw?.get("createdAtMs") as? Number)?.toLong(),
         updatedAtMs = (raw?.get("updatedAtMs") as? Number)?.toLong(),
@@ -1322,6 +1325,8 @@ data class ListPendingBookingRequestsResultRequest(
     val startTimeMsList: List<Long>,
     val visits: List<ListPendingBookingRequestsResultRequestVisit>,
     val requestedAtMs: Long?,
+    val assignedAuntieUid: String?,
+    val auntieDisplayName: String?,
 )
 
 /**
@@ -1343,6 +1348,8 @@ internal fun decodeListPendingBookingRequestsResultRequest(raw: Map<String, Any?
         startTimeMsList = (raw?.get("startTimeMsList") as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toLong() },
         visits = (raw?.get("visits") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListPendingBookingRequestsResultRequestVisit(nested) } },
         requestedAtMs = (raw?.get("requestedAtMs") as? Number)?.toLong(),
+        assignedAuntieUid = raw?.get("assignedAuntieUid") as? String,
+        auntieDisplayName = raw?.get("auntieDisplayName") as? String,
     )
 
 /** Response from the `listPendingBookingRequests` callable. */

@@ -357,8 +357,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * Its rules, `lib/kinTaleTemplateAudit.ts`, load with `await import()` inside
  * the handler, so the entry is the only module it adds. The KinTale send line
  * (#1821) adds none: `lib/auditActor.ts` was already here.
+ *
+ * 471 since #1857: `lib/assigneeName.ts`, the one staff name rule the visit
+ * assign, booking approval and portal booking reads share. Every module it
+ * imports was already here, so it is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 470;
+const MAX_OWN_EAGER_MODULES = 471;
 
 interface Edge {
   spec: string;

@@ -108,3 +108,38 @@ class IncomingSeriesTest {
         )
     }
 }
+
+/** #1870: Book it says who the request's visits are assigned to, never by email. */
+class IncomingSeriesAssigneeTest {
+    private fun series(vararg visits: KinCareVisit) = BookingSeries(
+        batchId = "b1", kinfolkId = "kf1", kinfolkName = "The Wrens", serviceType = "Walk", visits = visits.toList(),
+    )
+
+    private val owner = com.tribetails.auntieos.web.data.StaffMember("u1", "e2e-admin@tribetails.com", "e2e-admin@tribetails.com", role = "owner")
+    @Test
+    fun namesTheStoredAssignee() {
+        val s = series(KinCareVisit(_id = "v1", assignedAuntieUid = "u1", auntieDisplayName = "Auntie Ruth"))
+        assertEquals("Assigned to Auntie Ruth.", s.acceptAssigneeLine(null))
+    }
+
+    @Test
+    fun waitsOnTheRosterThenNeverShowsAnEmail() {
+        val s = series(KinCareVisit(_id = "v1", assignedAuntieUid = "u1", auntieDisplayName = null))
+        assertEquals(null, s.acceptAssigneeLine(null))
+        assertEquals("Assigned to the Office.", s.acceptAssigneeLine(listOf(owner)))
+        assertEquals("Assigned to a staff member.", s.acceptAssigneeLine(emptyList()))
+    }
+
+    @Test
+    fun saysWhenNobodyIsAssigned() {
+        assertTrue(series(KinCareVisit(_id = "v1")).acceptAssigneeLine(null)!!.startsWith("No Auntie is assigned yet"))
+    }
+
+    @Test
+    fun assignedRowNeverShowsAnEmail() {
+        assertEquals("Unassigned", com.tribetails.auntieos.web.data.assignedAuntieLabel(null, null, null))
+        assertEquals("Assigned", com.tribetails.auntieos.web.data.assignedAuntieLabel("u1", null, null))
+        assertEquals("Office", com.tribetails.auntieos.web.data.assignedAuntieLabel("u1", "e2e-admin@tribetails.com", listOf(owner)))
+        assertEquals("Auntie Ruth", com.tribetails.auntieos.web.data.assignedAuntieLabel("u1", "Auntie Ruth", listOf(owner)))
+    }
+}

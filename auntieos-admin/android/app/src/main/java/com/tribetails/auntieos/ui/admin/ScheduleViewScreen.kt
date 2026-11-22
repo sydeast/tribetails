@@ -3471,10 +3471,25 @@ internal fun SeriesDecisionDialog(
     onConfirm: () -> Unit,
     catalog: ServiceCatalog = ServiceCatalog(),
     notReadyAction: (@Composable () -> Unit)? = null,
+    /**
+     * #1870: the staff roster, read only when the request's assignee has no
+     * stored name. A failed read is an empty list.
+     */
+    loadStaff: suspend () -> List<com.tribetails.auntieos.data.repository.StaffMember> = {
+        runCatching { com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository.listStaff() }
+            .getOrNull()?.getOrNull().orEmpty()
+    },
 ) {
     val c = AuntieTheme.colors
     val zone = LocalBusinessZone.current
     val blocked = !decline && !readyToBook
+    var assigneeRoster by remember(series.batchId) { mutableStateOf<List<com.tribetails.auntieos.data.repository.StaffMember>?>(null) }
+    val assigneeLine = if (decline) null else series.acceptAssigneeLine(assigneeRoster)
+    LaunchedEffect(visible, series.batchId, decline) {
+        if (visible && !decline && assigneeRoster == null && series.acceptAssigneeLine(null) == null) {
+            assigneeRoster = loadStaff()
+        }
+    }
     AuntieDialog(
         visible = visible,
         title = if (decline) series.declineConfirmTitle() else series.approveConfirmTitle(),
@@ -3511,6 +3526,9 @@ internal fun SeriesDecisionDialog(
             style = AuntieTheme.typography.bodyMedium,
             color = c.textPrimary,
         )
+        if (!blocked && assigneeLine != null) {
+            Text(text = assigneeLine, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        }
         if (!blocked) {
             // #2030: the same two labels as the web's dialog.
             AuntieField(

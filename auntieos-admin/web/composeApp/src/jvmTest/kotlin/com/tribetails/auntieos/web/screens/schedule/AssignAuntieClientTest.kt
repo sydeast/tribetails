@@ -102,7 +102,8 @@ class AssignAuntieClientTest {
     @Test
     fun listStaffLenientDecodeDropsUidlessRowsAndFallsBackLabel() = runBlocking {
         // Row without a uid can't be assigned, so it is dropped; name/email may
-        // be null or absent; pickerLabel falls back name -> email -> uid.
+        // be null or absent; pickerLabel is the name, else a role word, never
+        // the sign-in email or the uid (#1857).
         JvmFirestoreFixtures.callableResponses = mapOf(
             "listStaff" to """{"staff":[
                 {"displayName":"Ghost Row"},
@@ -114,8 +115,8 @@ class AssignAuntieClientTest {
         assertTrue(r is WriteResult.Ok)
         val staff = (r as WriteResult.Ok).value
         assertEquals(listOf("u3", "u4"), staff.map { it.uid })
-        assertEquals("zed@tribetails.com", staff[0].pickerLabel)
-        assertEquals("u4", staff[1].pickerLabel)
+        assertEquals("Staff", staff[0].pickerLabel)
+        assertEquals("Staff", staff[1].pickerLabel)
     }
 
     @Test
