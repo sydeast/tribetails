@@ -351,7 +351,10 @@ describe('createMultiDateBookingRequest wizard fields (billing, communication)',
     expect(res.visitCount).toBe(1);
     const env = envelope(ctx);
     expect(env?.data.pattern).toBe('weekly');
-    expect(env?.data.notes).toBe('Gate code 1234');
+    // #2595: the note from this build is kept as a staff note.
+    expect(env?.data.notes).toBeNull();
+    const staffNotes = ctx.writes.filter((w) => w.path.includes('/internalNotes/'));
+    expect(staffNotes.map((w) => w.data.body)).toEqual(['Gate code 1234']);
     // An installed Android build still sends the Kin its own picker chose. The
     // payload parses, and the booking covers the whole home (#1862).
     expect(env?.data.kinIds).toEqual(['k1', 'k2']);
@@ -484,17 +487,67 @@ describe('createMultiDateBookingRequest staffNotes (#1626)', () => {
     for (const v of visitDocWrites(ctx)) expect(JSON.stringify(v.data)).not.toContain('blue pot');
     expect(JSON.stringify(envelope(ctx)?.data)).not.toContain('blue pot');
   });
-  it('a household-facing `notes` still lands on the envelope, and writes no internal note', async () => {
+  const oneVisit = () => [{ startTimeMs: Date.now() + 3 * DAY, serviceName: 'Dog Walk', serviceId: 'svc_walk' }];
+
+  it('#2595: `notes` from the owner is kept as a staff note, and the envelope stays empty', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     await createMultiDateBookingRequestHandler(
-      req({
-        kinfolkId: 'kf1',
-        notes: 'Please text when you arrive',
-        visits: [{ startTimeMs: Date.now() + 3 * DAY, serviceName: 'Dog Walk', serviceId: 'svc_walk' }],
-      }),
+      req({ kinfolkId: 'kf1', notes: 'Please text when you arrive', visits: oneVisit() }),
     );
-    expect(envelope(ctx)?.data.notes).toBe('Please text when you arrive');
+    expect(envelope(ctx)?.data.notes).toBeNull();
+    expect(visitWrites(ctx).filter((w) => !w.path.includes('/internalNotes/')).every((w) => !w.data.notes)).toBe(true);
+    expect(internalNoteWrites(ctx)).toHaveLength(1);
+    expect(internalNoteWrites(ctx)[0]?.data).toMatchObject({
+      body: 'Please text when you arrive',
+      authorUid: 'admin1',
+      authorRole: 'admin',
+      source: 'bookingRequest',
+    });
+  });
+
+  it('#2595: `notes` from an Auntie is kept as her staff note', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const r = req({ kinfolkId: 'kf1', notes: 'Bring the long leash', visits: oneVisit() }, 'auntie1');
+    (r.auth as any).token = { staffRole: 'auntie' };
+    await createMultiDateBookingRequestHandler(r);
+    expect(envelope(ctx)?.data.notes).toBeNull();
+    expect(internalNoteWrites(ctx)[0]?.data).toMatchObject({
+      body: 'Bring the long leash',
+      authorUid: 'auntie1',
+      authorRole: 'auntie',
+    });
+  });
+
+  it('#2595: a request carrying both fields keeps both texts in one staff note', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({ kinfolkId: 'kf1', staffNotes: 'Key is under the blue pot', notes: 'Text on arrival', visits: oneVisit() }),
+    );
+    expect(envelope(ctx)?.data.notes).toBeNull();
+    expect(internalNoteWrites(ctx)).toHaveLength(1);
+    expect(internalNoteWrites(ctx)[0]?.data.body).toBe('Key is under the blue pot\n\nText on arrival');
+  });
+
+  it('#2595: the same text in both fields is kept once', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({ kinfolkId: 'kf1', staffNotes: 'Text on arrival', notes: ' Text on arrival ', visits: oneVisit() }),
+    );
+    expect(internalNoteWrites(ctx)).toHaveLength(1);
+    expect(internalNoteWrites(ctx)[0]?.data.body).toBe('Text on arrival');
+  });
+
+  it('#2595: a blank `notes` writes no staff note and leaves the envelope empty', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({ kinfolkId: 'kf1', notes: '   ', visits: oneVisit() }),
+    );
+    expect(envelope(ctx)?.data.notes).toBeNull();
     expect(internalNoteWrites(ctx)).toHaveLength(0);
   });
   it('a blank private note writes nothing', async () => {

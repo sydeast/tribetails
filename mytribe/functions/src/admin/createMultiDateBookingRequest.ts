@@ -81,6 +81,12 @@ const HandlerArgs = z.object({
    */
   idempotencyKey: IdempotencyKeyArg,
   kinIds: z.array(z.string()).optional(),
+  /**
+   * #2595: still accepted, because an installed admin build may send its note
+   * here. Every caller of this callable is staff (`wrapAdminCallable`), so the
+   * text is kept as a staff note. The envelope's `notes` holds only what a
+   * household wrote, through `requestBooking`.
+   */
   notes: z.string().max(1000).optional(),
   /**
    * #1579 / #1626: the office's private note on the request, the admin
@@ -176,6 +182,16 @@ function staffNoteOf(
   if (raw === undefined) return null;
   const body = sanitizeRichText(raw);
   return body.trim() === '' ? null : { body, authorUid, authorRole };
+}
+/**
+ * #2595: the one staff note a request carries, from either field a build of the
+ * admin app sends. A caller that sends both keeps both texts, and the same text
+ * in both fields is kept once.
+ */
+function staffNoteText(staffNotes: string | undefined, notes: string | undefined): string | undefined {
+  const texts = [staffNotes, notes].filter((t): t is string => t !== undefined && t.trim() !== '');
+  if (texts.length === 2 && texts[0]!.trim() === texts[1]!.trim()) return texts[0];
+  return texts.length === 0 ? undefined : texts.join('\n\n');
 }
 /** `business_settings`, or undefined when it cannot be read: a visit then keeps the end it was sent. */
 async function readBusinessSettings(): Promise<Record<string, unknown> | undefined> {
@@ -293,8 +309,12 @@ export async function createMultiDateBookingRequestHandler(
     pattern,
     weeklyDays: args.weeklyDays ?? null,
     kinIds: args.kinIds ?? [],
-    notes: args.notes ?? null,
-    staffNotes: staffNoteOf(args.staffNotes, uid, isAuntieClaim(req.auth?.token) ? 'auntie' : 'admin'),
+    notes: null,
+    staffNotes: staffNoteOf(
+      staffNoteText(args.staffNotes, args.notes),
+      uid,
+      isAuntieClaim(req.auth?.token) ? 'auntie' : 'admin',
+    ),
     visits: normalized,
     assignee: await resolveDefaultAssignee(),
     billing: args.billing ?? null,
