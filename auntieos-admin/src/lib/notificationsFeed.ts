@@ -204,7 +204,7 @@ export function notificationTitle(entry: Pick<NotificationEntry, 'title' | 'key'
  */
 const CATEGORY_LABELS: Record<string, string> = {
   account: 'Account',
-  home: 'Home and pets',
+  home: 'Home and Kin',
   invoice: 'Billing',
   kintale: 'KinTales',
   marketing: 'Newsletters',

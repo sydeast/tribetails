@@ -199,17 +199,17 @@ class NotificationAudienceTest {
     @Test
     fun sectionTaxonomyMatchesEachAudiencesWorkflow() {
         assertEquals(
-            listOf("Bookings and visits", "Messages", "Billing and payments", "Ratings and pets", "Account and security"),
+            listOf("Bookings and visits", "Messages", "Billing and payments", "Ratings and Kin", "Account and security"),
             notifSections(NotifAudience.Business).map { it.title },
         )
         assertEquals(
-            listOf("Assignments and schedule", "Visit workflow", "KinTales and comments", "Pets and profiles"),
+            listOf("Assignments and schedule", "Visit workflow", "KinTales and comments", "Kin and profiles"),
             notifSections(NotifAudience.Staff).map { it.title },
         )
         assertEquals(
             listOf(
                 "Visit updates", "Upcoming care", "KinTales", "Billing and payments",
-                "Home and pets", "Account and security", "Newsletters and community",
+                "Home and Kin", "Account and security", "Newsletters and community",
             ),
             notifSections(NotifAudience.Kinfolk).map { it.title },
         )

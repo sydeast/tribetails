@@ -39,7 +39,7 @@ private const val UNCATEGORIZED = "uncategorized"
 
 private val CATEGORY_LABELS = mapOf(
     "account" to "Account",
-    "home" to "Home and pets",
+    "home" to "Home and Kin",
     "invoice" to "Billing",
     "kintale" to "KinTales",
     "marketing" to "Newsletters",

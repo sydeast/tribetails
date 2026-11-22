@@ -7,6 +7,7 @@ import {
   adminVisibleNotifications,
   channelLabel,
   displayTitle,
+  notifSections,
   sectionedNotifications,
   userChannelChoice,
 } from './myNotificationsFormat';
@@ -511,5 +512,17 @@ describe('#2185 adminChannelReason under an Auntie sign-in', () => {
     expect(adminChannelReason(reasoned, entry({ required: {} }), STREAM_BUSINESS, 'sms', true)).toBe(
       'Kept on for every visit.',
     );
+  });
+});
+// #1886: the group headings on Notification gate said "RATINGS AND PETS" and
+// "HOME AND PETS". The brand word is Kin.
+describe('notifSections words', () => {
+  it.each([STREAM_BUSINESS, STREAM_STAFF, STREAM_KINFOLK] as const)('%s headings say Kin, never pet', (stream) => {
+    const titles = notifSections(stream).map((section) => section.title);
+    for (const title of titles) expect(title).not.toMatch(/\bpets?\b/i);
+  });
+  it('names the two groups the walk read', () => {
+    expect(notifSections(STREAM_BUSINESS).map((section) => section.title)).toContain('Ratings and Kin');
+    expect(notifSections(STREAM_KINFOLK).map((section) => section.title)).toContain('Home and Kin');
   });
 });

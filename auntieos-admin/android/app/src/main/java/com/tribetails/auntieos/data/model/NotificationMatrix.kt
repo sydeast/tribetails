@@ -296,7 +296,7 @@ private val BUSINESS_NOTIF_SECTIONS = listOf(
     NotifSection("Bookings and visits", listOf("visit")),
     NotifSection("Messages", listOf("messages")),
     NotifSection("Billing and payments", listOf("invoice")),
-    NotifSection("Ratings and pets", listOf("ratings")),
+    NotifSection("Ratings and Kin", listOf("ratings")),
     NotifSection("Account and security", listOf("account", "security")),
 )
 
@@ -304,7 +304,7 @@ private val STAFF_NOTIF_SECTIONS = listOf(
     NotifSection("Assignments and schedule", listOf("schedule")),
     NotifSection("Visit workflow", listOf("visit")),
     NotifSection("KinTales and comments", listOf("kintale")),
-    NotifSection("Pets and profiles", listOf("home")),
+    NotifSection("Kin and profiles", listOf("home")),
 )
 
 private val KINFOLK_NOTIF_SECTIONS = listOf(
@@ -316,7 +316,7 @@ private val KINFOLK_NOTIF_SECTIONS = listOf(
     // segment, which otherwise lands in the trailing "Other" catch-all.
     NotifSection("Messages", listOf("messages")),
     NotifSection("Billing and payments", listOf("invoice")),
-    NotifSection("Home and pets", listOf("home")),
+    NotifSection("Home and Kin", listOf("home")),
     NotifSection("Account and security", listOf("account", "security")),
     NotifSection("Newsletters and community", listOf("marketing")),
 )

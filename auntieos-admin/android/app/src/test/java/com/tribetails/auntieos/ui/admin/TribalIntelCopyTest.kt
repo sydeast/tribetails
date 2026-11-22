@@ -16,6 +16,8 @@ class TribalIntelCopyTest {
     @Test
     fun copyNamesWhatTheScreenHolds() {
         assertTrue(TRIBAL_INTEL_SUBTITLE.contains("household"))
-        assertTrue(TRIBAL_INTEL_EMPTY_MESSAGE.contains("pet"))
+        assertTrue(TRIBAL_INTEL_EMPTY_MESSAGE.contains("Kin"))
+        // #1886: the brand word is Kin.
+        assertFalse(Regex("\\bpets?\\b", RegexOption.IGNORE_CASE).containsMatchIn(TRIBAL_INTEL_SUBTITLE + " " + TRIBAL_INTEL_EMPTY_MESSAGE))
     }
 }
