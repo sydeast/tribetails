@@ -32,7 +32,7 @@ export const FLAGS: readonly FlagMeta[] = [
     key: KEY_COMMUNICATE_COMMS_RECAP,
     label: 'Communicate: comms recap',
     detail:
-      'AI-generated 1-2 sentence recap of recent communications in the recipient context panel (recap_recent_comms callable).',
+      'OFF (the default): no summary. ON: Communicate shows a one or two sentence AI summary of recent messages with the household you are writing to, in the panel beside them.',
   },
   {
     key: KEY_INBOX_WAITING_SECTIONS,

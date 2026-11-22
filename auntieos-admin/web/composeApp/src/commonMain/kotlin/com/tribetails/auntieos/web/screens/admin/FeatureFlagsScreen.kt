@@ -42,7 +42,7 @@ internal data class FlagMeta(val key: String, val label: String, val detail: Str
  *  are not experimental. FeatureFlagsScreenCoverageTest keeps this == KEYS - ALWAYS_ON,
  *  so a new gated flag can never be silently missing from the admin toggles. */
 internal val FLAGS: List<FlagMeta> = listOf(
-    FlagMeta(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP, "Communicate: comms recap", "AI-generated 1-2 sentence recap of recent communications in the recipient context panel (recap_recent_comms callable)."),
+    FlagMeta(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP, "Communicate: comms recap", "OFF (the default): no summary. ON: Communicate shows a one or two sentence AI summary of recent messages with the household you are writing to, in the panel beside them."),
     FlagMeta(FeatureFlags.KEY_VISITS_CHOOSE_KIN, "Visits: choose Kin", "OFF (the default): every visit covers every Kin in the home. ON: New booking, New visit and the booking request in MyTribe list the Kin with every one ticked, so a visit can be made for some of them. It applies the next time a booking form is opened. Visits already made keep their Kin."),
 )
 
