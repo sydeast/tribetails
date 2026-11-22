@@ -156,13 +156,25 @@ class BusinessAdminRosterTest {
     }
 
     @Test
-    fun aMemberWithNoStaffRecordIsShownByUidAndSaysWhy() {
+    fun aMemberWithNoStaffRecordIsTheOfficeNeverTheUid() {
+        // #1882: never a raw uid on screen.
         val line = businessAdminLines(
             BusinessAdminRoster(members = listOf(BusinessAdminMember(uid = "op8"))),
         ).single()
-        assertTrue(line.contains("op8"))
-        assertTrue(line.contains("no staff record"))
-        assertFalse(line.contains("no email on file"))
+        assertEquals("Office (no staff record yet)", line)
+        assertFalse(line.contains("op8"))
+    }
+    /** #1882: the walk read the sign-in email under "By name:". */
+    @Test
+    fun anEmailStandingInForANameReadsAsTheOffice() {
+        val line = businessAdminLines(
+            BusinessAdminRoster(
+                members = listOf(
+                    BusinessAdminMember(uid = "op1", displayName = "e2e-admin@tribetails.com", hasStaffRecord = true, defaultAssignee = true),
+                ),
+            ),
+        ).single()
+        assertEquals("Office (unassigned visits default to them)", line)
     }
 
     @Test

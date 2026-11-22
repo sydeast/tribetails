@@ -76,6 +76,8 @@ import com.tribetails.auntieos.web.util.SortOption
 import com.tribetails.auntieos.web.util.householdLabel
 import com.tribetails.auntieos.web.util.sortedByOption
 import com.tribetails.auntieos.web.util.businessTodayIso
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Sub-routes inside the Directory tab. The top-level [DirectoryScreen] keeps
@@ -297,7 +299,7 @@ private fun DirectoryListScreen(
     ScreenScaffold {
         // ── Editorial head: mono kicker + serif title + Add CTA ───────────────
         DenScreenHeading(
-            kicker     = "The Den · Directory",
+            kicker     = navKicker(Destination.Directory),
             title      = "Your",
             accentTail = "kinfolk",
             trailing = {

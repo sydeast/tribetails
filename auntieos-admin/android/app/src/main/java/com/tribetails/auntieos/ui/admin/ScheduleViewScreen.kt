@@ -143,7 +143,9 @@ data class BookingSection(
 internal fun groupBookingsByStatus(rows: List<EnhancedBooking>): List<BookingSection> = listOf(
     BookingSection(
         key = BookingSectionKey.PENDING,
-        label = "Visit requests",
+        // #1826: the office's saved drafts. "Visit requests" is the household
+        // request queue above (ruling #1598), and the two blocks read the same.
+        label = "Drafts",
         rows = rows.filter { it.status == BookingStatus.DRAFT },
     ),
     BookingSection(
@@ -353,7 +355,7 @@ private fun ScheduleViewScreenContent(
                 // navigator below (#755), the way the mock draws it, so it is not
                 // repeated on `detail`; the explanation is the info tooltip.
                 DenScreenHeading(
-                    kicker = "Care Ops · Schedule",
+                    kicker = railKicker(RailScreen.SCHEDULE),
                     title = "Schedule",
                     accentTail = "${state.viewMode.displayName.lowercase(Locale.US)}.",
                     subtitle = "Every KinCare visit on the books, with Google Calendar busy windows and your own blocked time laid over them.",
@@ -695,7 +697,7 @@ private fun ScheduleViewScreenContent(
                     StatCard(
                         label = pendingSection.label,
                         value = pendingSection.rows.size.toString(),
-                        trend = "awaiting a reply",
+                        trend = "not yet approved",
                         tone = AuntieStatusTone.Orange,
                         feature = true,
                         modifier = Modifier.weight(1f),
@@ -843,7 +845,7 @@ private fun ScheduleViewScreenContent(
                 )
             }
             if (pendingBookings.isEmpty()) {
-                item { EmptyHint("No requests waiting. New bookings land here for approval.") }
+                item { EmptyHint("No drafts.") }
             } else {
                 // Keyed by doc id when there is one, by position when there is
                 // not: a LazyColumn throws on two equal keys, and a booking built

@@ -32,6 +32,7 @@ import { Dialog } from '../components/Dialog';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { TribalIntelForm, messageOf } from '../components/TribalIntelForm';
 import './TribalIntel.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Admin Tribal Intel list ("The Den · Tribal Intel", nav slug `tribal-intel`,
@@ -119,7 +120,7 @@ export function TribalIntel() {
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Tribal Intel"
+        kicker={navKicker('trainingDocs')}
         title="Tribal"
         accentTail="Intel."
         subtitle={TRIBAL_INTEL_SUBTITLE}

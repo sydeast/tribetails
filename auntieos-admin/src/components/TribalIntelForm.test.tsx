@@ -54,7 +54,7 @@ describe('TribalIntelForm', () => {
   it('says, in the title tooltip, that saved intel folds in overnight, never instantly (#1595)', () => {
     renderForm();
     const tip = screen.getByRole('tooltip', { hidden: true });
-    expect(tip).toHaveTextContent(/folded into the household's dossier and the pet's 411 overnight/i);
+    expect(tip).toHaveTextContent(/folded into the household's dossier and the Kin's 411 overnight/i);
     expect(document.querySelector('.tribal-form__blurb')).toBeNull();
   });
 

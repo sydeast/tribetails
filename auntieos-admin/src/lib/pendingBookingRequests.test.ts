@@ -12,7 +12,13 @@ vi.mock('./visitRequestSignal', () => ({ useVisitRequestSignal: () => mocks.sign
 const scope = vi.hoisted(() => ({ current: null as string | null }));
 vi.mock('./testScope', () => ({ getTestScope: () => scope.current }));
 
-import { usePendingBookingRequests } from './pendingBookingRequests';
+import {
+  markQueueReadSent,
+  NO_ANSWERED_REQUESTS,
+  pendingLessAnswered,
+  usePendingBookingRequests,
+  withAnsweredRequest,
+} from './pendingBookingRequests';
 
 const request = (kinfolkId: string, batchId: string) => ({ kinfolkId, batchId, kinfolkName: 'The Wrens' });
 
@@ -56,5 +62,44 @@ describe('usePendingBookingRequests (#2069)', () => {
     const { result } = renderHook(() => usePendingBookingRequests());
     await waitFor(() => expect(result.current.status).toBe('ready'));
     expect(result.current.status === 'ready' && result.current.data.size).toBe(0);
+  });
+});
+
+describe('answered requests leave the queue at once (#1877)', () => {
+  const req = (kinfolkId: string, batchId: string) => ({ kinfolkId, batchId }) as never;
+  const queue = new Map([
+    ['kf1/b1', req('kf1', 'b1')],
+    ['kf2/b2', req('kf2', 'b2')],
+  ]);
+  const readSentAt = (sentAtMs: number) => markQueueReadSent(new Map(queue), sentAtMs);
+
+  it('drops a request answered after the queue in hand was read', () => {
+    const inHand = readSentAt(100);
+    const answered = withAnsweredRequest(NO_ANSWERED_REQUESTS, 'kf1/b1', 200);
+    expect([...(pendingLessAnswered(inHand, answered)?.keys() ?? [])]).toEqual(['kf2/b2']);
+  });
+
+  it('lets a read sent after the answer speak, so a request still waiting comes back', () => {
+    const answered = withAnsweredRequest(NO_ANSWERED_REQUESTS, 'kf1/b1', 200);
+    const reread = readSentAt(300);
+    expect(pendingLessAnswered(reread, answered)).toBe(reread);
+  });
+
+  it('does not let a read sent before the answer, landing after it, bring the request back', () => {
+    const answered = withAnsweredRequest(NO_ANSWERED_REQUESTS, 'kf1/b1', 200);
+    const lateOldRead = readSentAt(150);
+    expect([...(pendingLessAnswered(lateOldRead, answered)?.keys() ?? [])]).toEqual(['kf2/b2']);
+  });
+
+  it('keeps every answer, across reads older than each of them', () => {
+    const one = withAnsweredRequest(NO_ANSWERED_REQUESTS, 'kf1/b1', 200);
+    const two = withAnsweredRequest(one, 'kf2/b2', 250);
+    expect(pendingLessAnswered(readSentAt(100), two)?.size).toBe(0);
+    // Sent between the two answers: it speaks for the first and not the second.
+    expect([...(pendingLessAnswered(readSentAt(225), two)?.keys() ?? [])]).toEqual(['kf1/b1']);
+  });
+
+  it('answers null while the queue is unknown', () => {
+    expect(pendingLessAnswered(null, withAnsweredRequest(NO_ANSWERED_REQUESTS, 'kf1/b1'))).toBeNull();
   });
 });

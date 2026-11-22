@@ -206,9 +206,12 @@ fun businessAdminLines(roster: BusinessAdminRoster): List<String> = roster.membe
     // #1564: no per-person address. Every business email goes to the business
     // contact email (operator ruling, 2026-11-05 docket); [businessEmailLine]
     // says where.
-    val name = member.displayName ?: member.uid
+    // #1882: a name, never the sign-in email the server stood in for one, and
+    // never a uid. A business admin with no name is the office.
+    val stored = member.displayName?.trim().orEmpty()
+    val name = if (stored.isNotEmpty() && !stored.contains('@')) stored else "Office"
     val parts = buildList {
-        if (!member.hasStaffRecord) add("no staff record for ${member.uid}")
+        if (!member.hasStaffRecord) add("no staff record yet")
         if (member.defaultAssignee) add("unassigned visits default to them")
     }
     if (parts.isEmpty()) name else "$name (${parts.joinToString("; ")})"
@@ -344,11 +347,13 @@ fun notifSkipReasonWords(code: String): String =
     SKIP_REASON_WORDS[code] ?: notifFieldWords(code).lowercase()
 /**
  * Who a delivery went to (#1592: the log printed the uid). The server's name,
- * else the uid as it is: a recipient nobody answers to is what the operator
- * needs to see, and is never shown blank.
+ * else plain words (#1882): never a uid or an email, and never blank.
  */
-fun notifDeliveryRecipient(row: NotificationDeliveryRow): String =
-    row.recipientName ?: row.recipientUid.ifBlank { "an unknown recipient" }
+fun notifDeliveryRecipient(row: NotificationDeliveryRow): String {
+    val name = row.recipientName?.trim().orEmpty()
+    if (name.isNotEmpty() && !name.contains('@')) return name
+    return if (row.recipientUid.isNotBlank()) "someone with no name on file" else "an unknown recipient"
+}
 
 /** How a delivery attempt should read to a human. */
 enum class NotifDeliveryTone { Good, Warn, Bad, Neutral }

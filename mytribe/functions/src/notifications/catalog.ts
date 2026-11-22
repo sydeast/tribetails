@@ -871,7 +871,7 @@ const CATALOG_LIST: NotificationDef[] = [
   // ─────────────────────────────────────────────────────────
   {
     key: 'pets.updated',
-    label: 'Pets updated or added',
+    label: 'Kin updated or added',
     audience: 'both',
     audiences: { kinfolk: true, staff: true },
     category: 'home',
@@ -885,7 +885,7 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'businessAdmins',
     secondaryResolver: 'kinfolkAcct',
     templates: { email: 'pets.updated', push: 'pets.updated' },
-    description: 'Kinfolk/Auntie updated or added Pets (30-min inactive debounce).',
+    description: 'Kinfolk or an Auntie added a Kin or changed one.',
     householdTitle: 'Your Kin were updated',
     householdDescription: 'When a Kin in your household is added or changed.',
   },
@@ -1194,7 +1194,7 @@ const CATALOG_LIST: NotificationDef[] = [
   },
   {
     key: 'pet.marked.inactive',
-    label: 'Kinfolk marked a pet as inactive',
+    label: 'Kinfolk marked a Kin as inactive',
     audience: 'business',
     audiences: { business: true },
     category: 'ratings',
@@ -1205,7 +1205,7 @@ const CATALOG_LIST: NotificationDef[] = [
     deliveryMode: 'trigger',
     recipientResolver: 'businessAdmins',
     templates: { email: 'pet.marked.inactive', push: 'pet.marked.inactive' },
-    description: 'Kinfolk marked a pet as inactive.',
+    description: 'Kinfolk marked a Kin as inactive.',
   },
   {
     // #1408: a household asked the office to remove a Kin that has history

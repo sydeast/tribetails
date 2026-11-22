@@ -46,6 +46,8 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.GlassSurface
 import com.tribetails.auntieos.ui.components.color
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Invites, across every household. The Android half of
@@ -106,7 +108,7 @@ fun InvitesBody(
     ) {
         item {
             DenScreenHeading(
-                kicker = "The Den · Invites",
+                kicker = railKicker(RailScreen.INVITES),
                 title = "Invites",
                 subtitle = "Every invite across every household, and who never came in. " +
                     "Expired reads Expired the minute it lapses. Sending and revoking live " +

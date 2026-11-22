@@ -74,7 +74,7 @@ export function speciesChoice(species: string): string {
 /** The form fields backed by a text box (everything but the spayed / neutered checkbox). */
 export type KinTextKey = Exclude<keyof KinEditForm, 'spayedNeutered' | 'differentVet' | 'ownVetClinicId'>;
 
-/** Options for the Sex picker; same three the admin offers (KinEditScreen GENDER_OPTIONS). */
+/** Options for the Gender picker (stored as `sex`, #1852); same three the admin offers (KinEditScreen GENDER_OPTIONS). */
 export const KIN_SEX_OPTIONS = ['Male', 'Female', 'Unknown'] as const;
 
 /** Max lengths transcribed from the KinPayload zod schema. */
@@ -204,7 +204,7 @@ export function validateKinForm(form: KinEditForm, kin?: Pick<KinDto, 'weight'>)
     if (form[key].trim().length > max) errors[key] = `Keep this to ${max} characters or fewer.`;
   }
 
-  if (form.sex.trim().length > KIN_MAX.sex) errors.sex = `Sex must be ${KIN_MAX.sex} characters or fewer.`;
+  if (form.sex.trim().length > KIN_MAX.sex) errors.sex = `Gender must be ${KIN_MAX.sex} characters or fewer.`;
   if (form.weight.trim().length > KIN_MAX.weight) errors.weight = `Weight must be ${KIN_MAX.weight} characters or fewer.`;
   else {
     // #1583: weight is a number with an optional unit. A weight the pet already

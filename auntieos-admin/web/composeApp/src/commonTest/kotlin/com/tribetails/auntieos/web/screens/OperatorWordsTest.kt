@@ -11,8 +11,8 @@ class OperatorWordsTest {
 
     @Test
     fun notificationHeadlineReadsTheKeyAsWordsWhenThereIsNoTitle() {
-        assertEquals("Account welcome kinfolk", notificationHeadline("account.welcome.kinfolk", ""))
-        assertEquals("Account welcome kinfolk", notificationHeadline("account.welcome.kinfolk", "account.welcome.kinfolk"))
+        assertEquals("Account welcome Kinfolk", notificationHeadline("account.welcome.kinfolk", ""))
+        assertEquals("Account welcome Kinfolk", notificationHeadline("account.welcome.kinfolk", "account.welcome.kinfolk"))
         assertEquals("Welcome to MyTribe", notificationHeadline("account.welcome.kinfolk", "Welcome to MyTribe"))
         assertEquals("Notification", notificationHeadline("", ""))
     }

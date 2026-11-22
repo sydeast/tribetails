@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 
 /**
  * #1794: the visit clock's last sentence, held OUTSIDE the card that showed it.
@@ -85,12 +85,14 @@ export function visitClockInFlight(sessionId: string | null): string | null {
 /**
  * Settle the write stamped `seq`. Ignored when a newer write (or an `ask`) has
  * started on the same visit since, so a late dispatch cannot overwrite it.
+ * True when this write was still the visit's latest and its state landed.
  */
-export function settleVisitClockWrite(sessionId: string, seq: number, state: LifecycleWriteState): void {
+export function settleVisitClockWrite(sessionId: string, seq: number, state: LifecycleWriteState): boolean {
   const entry = entries.get(sessionId);
-  if (entry === undefined || entry.seq !== seq) return;
+  if (entry === undefined || entry.seq !== seq) return false;
   entries.set(sessionId, { seq, state, action: entry.action });
   emit();
+  return true;
 }
 
 /** Clear one visit's sentence and invalidate any write still settling. */
@@ -105,6 +107,35 @@ export function clearVisitClockWrite(sessionId: string): void {
 export function resetVisitClockOutcomes(): void {
   entries.clear();
   emit();
+}
+
+/**
+ * #1815: the clock's finished sentence, said once more where the operator is
+ * looking. A tap on an Upcoming card moves the card to Active, at the top of a
+ * long board, so the sentence that says whether the household was told landed
+ * out of view. Each settled answer about the household is announced here, and
+ * the board repeats it in a toast.
+ */
+type Announcement = (sessionId: string, message: string) => void;
+const announcers = new Set<Announcement>();
+
+/** Say one visit's finished sentence to every screen listening. */
+export function announceVisitClock(sessionId: string, message: string): void {
+  if (message.trim() === '') return;
+  for (const a of announcers) a(sessionId, message);
+}
+
+/** Listen for finished sentences while mounted. */
+export function useVisitClockAnnouncements(onAnnounce: Announcement): void {
+  const latest = useRef(onAnnounce);
+  latest.current = onAnnounce;
+  useEffect(() => {
+    const a: Announcement = (id, message) => latest.current(id, message);
+    announcers.add(a);
+    return () => {
+      announcers.delete(a);
+    };
+  }, []);
 }
 
 /** The live state for one visit, re-rendering when it changes. */

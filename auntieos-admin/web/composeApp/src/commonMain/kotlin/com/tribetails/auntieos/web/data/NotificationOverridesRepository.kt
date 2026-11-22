@@ -353,21 +353,21 @@ fun notifSections(audience: NotifAudience): List<NotifSection> = when (audience)
         NotifSection("Bookings and visits", listOf("visit")),
         NotifSection("Messages", listOf("messages")),
         NotifSection("Billing and payments", listOf("invoice")),
-        NotifSection("Ratings and pets", listOf("ratings")),
+        NotifSection("Ratings and Kin", listOf("ratings")),
         NotifSection("Account and security", listOf("account", "security")),
     )
     NotifAudience.Staff -> listOf(
         NotifSection("Assignments and schedule", listOf("schedule")),
         NotifSection("Visit workflow", listOf("visit")),
         NotifSection("KinTales and comments", listOf("kintale")),
-        NotifSection("Pets and profiles", listOf("home")),
+        NotifSection("Kin and profiles", listOf("home")),
     )
     NotifAudience.Kinfolk -> listOf(
         NotifSection("Visit updates", listOf("visit")),
         NotifSection("Upcoming care", listOf("schedule")),
         NotifSection("KinTales", listOf("kintale")),
         NotifSection("Billing and payments", listOf("invoice")),
-        NotifSection("Home and pets", listOf("home")),
+        NotifSection("Home and Kin", listOf("home")),
         NotifSection("Account and security", listOf("account", "security")),
         NotifSection("Newsletters and community", listOf("marketing")),
     )

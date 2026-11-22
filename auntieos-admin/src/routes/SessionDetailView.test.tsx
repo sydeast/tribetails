@@ -55,6 +55,11 @@ vi.mock('../lib/breadcrumbs', async (importOriginal) => {
   return { ...actual, useBreadcrumbs: () => ({ points: [], error: null, ready: true }) };
 });
 
+// #1815: Auntie Time repeats the clock's finished sentence in a toast.
+vi.mock('../components/Toast', async (orig) => ({
+  ...(await orig<typeof import('../components/Toast')>()),
+  useToast: () => ({ showToast: vi.fn(), dismissToast: vi.fn() }),
+}));
 import { SessionsView } from './SessionsView';
 import { SessionDetailView } from './SessionDetailView';
 

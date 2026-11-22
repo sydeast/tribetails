@@ -60,6 +60,8 @@ import com.tribetails.auntieos.web.ui.components.MediaCellGlyphs
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * MediaGalleryScreen - the Den's photo / video / document / audio gallery for an
@@ -181,7 +183,7 @@ private fun MediaGalleryHeader(
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "THE DEN · MEDIA",
+                        text = navKicker(Destination.Directory).uppercase(),
                         style = AuntieTheme.typography.mono.copy(fontSize = 11.sp, letterSpacing = 1.6.sp),
                         color = c.primary,
                     )

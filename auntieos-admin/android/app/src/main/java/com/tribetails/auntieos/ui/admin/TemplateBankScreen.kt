@@ -85,6 +85,8 @@ import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.AuntieSearchField
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 
 /**
@@ -495,7 +497,7 @@ fun TemplateBankBody(
     ) {
         item {
             DenScreenHeading(
-                kicker = "The Den · Admin",
+                kicker = railKicker(RailScreen.TEMPLATES),
                 title = "Template",
                 accentTail = "Bank.",
                 // The mock's own sentence, then the one gesture this console
@@ -786,7 +788,7 @@ private fun TemplateCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = titleWithBreaks(tpl.title.ifBlank { tpl.templateId.ifBlank { "Untitled template" } }),
+                text = titleWithBreaks(bankCardTitle(tpl.title, tpl.templateId)),
                 style = AuntieTheme.typography.headlineSmall,
                 color = c.textPrimary,
             )
@@ -1173,7 +1175,7 @@ private fun TemplateEditorScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         DenScreenHeading(
-            kicker = "The Den · Template bank",
+            kicker = railKicker(RailScreen.TEMPLATES),
             crumbs = listOf(
                 DenCrumb("Template bank", leave),
                 // #953 review fix: dead since 7a removed the only caller that
@@ -1513,3 +1515,13 @@ private fun TemplateEditorScreen(
  */
 internal fun templateSavedNotice(title: String): String =
     title.trim().let { if (it.isEmpty()) "Saved the untitled template." else "Saved $it." }
+
+/**
+ * #1887: a Template Bank card's title. A doc with no title comes back titled
+ * with its stored key ("account.welcome.kinfolk"), which reads as words here.
+ */
+internal fun bankCardTitle(title: String, templateId: String): String {
+    val t = title.trim()
+    if (t.isNotEmpty() && t != templateId.trim()) return title
+    return com.tribetails.auntieos.ui.admin.humanizeKey(templateId).ifBlank { "Untitled template" }
+}

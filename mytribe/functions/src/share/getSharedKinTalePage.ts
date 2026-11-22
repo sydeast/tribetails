@@ -439,7 +439,7 @@ ${galleryHtml}
 ${threadHtml}
 ${commentSectionHtml}`;
 
-  return renderDocument({ title: `${taleTitle} — MyTribe`, metaTags, bodyHtml });
+  return renderDocument({ title: `${taleTitle} · MyTribe`, metaTags, bodyHtml });
 }
 
 // ── PasscodeGate ──────────────────────────────────────────────────────────
@@ -485,7 +485,7 @@ function renderTerminalPage(status: 404 | 410, error: 'not-found' | 'revoked' | 
       <div class="et">${escapeHtml(c.title)}</div>
       <p>${escapeHtml(c.message)}</p>
     </section>`;
-  return renderDocument({ title: `${c.title} — MyTribe`, metaTags: genericMetaTags(), bodyHtml });
+  return renderDocument({ title: `${c.title} · MyTribe`, metaTags: genericMetaTags(), bodyHtml });
 }
 
 // ── guest-comment script (#1278) ─────────────────────────────────────────

@@ -84,6 +84,8 @@ import com.tribetails.auntieos.ui.components.TagAssignField
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 internal const val PREVIEW_DEBOUNCE_MS = 700L
 internal const val PREVIEW_LOADING_TEXT = "Loading preview…"
@@ -156,7 +158,7 @@ internal fun VisualTemplateEditorScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         DenScreenHeading(
-            kicker = "The Den · Template bank",
+            kicker = railKicker(RailScreen.TEMPLATES),
             crumbs = listOf(DenCrumb("Template bank", leave), DenCrumb("Edit template")),
             title = "Email",
             accentTail = "template",

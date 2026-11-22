@@ -80,6 +80,8 @@ import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.ui.components.RailScreen
+import com.tribetails.auntieos.ui.components.railKicker
 
 /**
  * Account Settings (punch list #4): the operator's own account, moved out of the
@@ -290,7 +292,7 @@ private fun AccountHero(
     }
     val name = profile.displayLabel
     DenScreenHeading(
-        kicker = "The Den · Account",
+        kicker = railKicker(RailScreen.ACCOUNT),
         crumbs = listOf(DenCrumb("Settings", onBack), DenCrumb("User profile")),
         title = name,
         detail = accountRoleLine(profile.title, sandbox),

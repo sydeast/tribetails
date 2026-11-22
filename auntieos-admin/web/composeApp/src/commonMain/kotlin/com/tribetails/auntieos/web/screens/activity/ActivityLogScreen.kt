@@ -70,6 +70,8 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.util.businessTodayIso
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Activity log (hash-chain audit trail) in the Den aesthetic. Reads the
@@ -169,7 +171,7 @@ fun ActivityLogScreen() {
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Activity log",
+            kicker     = navKicker(Destination.Activity),
             title      = "Every move,",
             accentTail = "sealed.",
             subtitle   = "The append-only audit trail. Every login, edit, and system event the app records, sealed into the hash chain.",

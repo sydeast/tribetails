@@ -52,4 +52,17 @@ class FeatureFlagsScreenCoverageTest {
             flagRowValue(mapOf("auntieos.totally.bogus" to true), "auntieos.totally.bogus"),
         )
     }
+
+    /**
+     * #1891: a flag's label and description are for the owner. A function name
+     * (recap_recent_comms), the word "callable", a plan phase or a vendor's
+     * plumbing term on this screen is developer wording.
+     */
+    @Test fun adminRows_describeEveryFlagWithoutDeveloperWording() {
+        val developer = Regex("""\b[a-z]+_[a-z0-9_]+\b|callable|\bPhase \d|WARNING-\d|\bFCM\b|webhook|\bvuln""", RegexOption.IGNORE_CASE)
+        for (flag in FLAGS) {
+            val text = "${flag.label} ${flag.detail}"
+            org.junit.Assert.assertNull("developer wording on flag ${flag.key}: $text", developer.find(text))
+        }
+    }
 }

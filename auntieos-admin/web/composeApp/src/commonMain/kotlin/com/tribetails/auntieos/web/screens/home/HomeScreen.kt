@@ -394,7 +394,9 @@ fun HomeScreen(
                                     formatValue = { it.roundToInt().toString() },
                                     trend = statCardTrend(
                                         draftsState,
-                                        ready = "${drafts.size} total drafts",
+                                        // #1850: what the number counts. "N total drafts"
+                                        // counted sent drafts too, so it disagreed with it.
+                                        ready = kinTalesReviewTrend(draftsPending.size),
                                         failed = "Couldn't load drafts",
                                     ),
                                     tone = AuntieStatusTone.Teal,
@@ -488,6 +490,10 @@ fun HomeScreen(
                                     draftsPending.isEmpty() -> EmptyHint("All caught up, no drafts waiting.")
                                     else -> Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
                                         draftsPending.take(4).forEachIndexed { i, d -> TaleRow(d, i, onOpen = { onOpenDraft(d) }) }
+                                        // #1850: say when the list draws fewer than the card counts.
+                                        pendingShownLine(draftsPending.take(4).size, draftsPending.size)?.let {
+                                            Text(it, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                                        }
                                     }
                                 }
                                 Spacer(Modifier.height(14.dp))
@@ -939,3 +945,12 @@ internal fun taleRowMeta(draft: GeneratedDraft): String = buildString {
     if (draft.household().isNotBlank()) append(" · ${draft.household()}")
     if (draft.created().isNotBlank()) append(" · ${draft.created().take(10)}")
 }
+/**
+ * #1850: the line under "KinTales to review": what its number counts, never a
+ * second, different count beside it.
+ */
+fun kinTalesReviewTrend(pending: Int): String =
+    if (pending == 0) "all caught up" else "drafts waiting to send"
+/** #1850: "Newest 4 of 12 drafts." under KinTales pending when it draws fewer than are waiting. */
+fun pendingShownLine(shown: Int, total: Int): String? =
+    if (total > shown) "Newest $shown of $total drafts." else null

@@ -285,12 +285,12 @@ class NotificationProvenanceTest {
         assertEquals(mapOf("kinfolkId" to "Household reference"), decoded!!.mergeFieldLabels)
     }
     @Test
-    fun namesTheRecipientAndKeepsTheUidOnlyWhenNobodyAnswers() {
+    fun namesTheRecipientAndNeverPrintsTheUid() {
         val named = notificationDeliveryRowFromMap(mapOf("recipientUid" to "kin1", "recipientName" to "Dre East"))
         assertEquals("Dre East", notifDeliveryRecipient(named))
         val ghost = notificationDeliveryRowFromMap(mapOf("recipientUid" to "ghost"))
         assertNull(ghost.recipientName)
-        assertEquals("ghost", notifDeliveryRecipient(ghost))
+        assertEquals("someone with no name on file", notifDeliveryRecipient(ghost))
         assertEquals("an unknown recipient", notifDeliveryRecipient(NotificationDeliveryRow()))
     }
 

@@ -84,6 +84,8 @@ import com.tribetails.auntieos.web.util.openAudioBytes
 import com.tribetails.auntieos.web.util.openUrl
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 // `internal`, not `private`: `VoicemailLog.toEntry()` below returns an
 // `InboxEntry` carrying a `Channel`, and a Kotlin function's visibility can
@@ -161,7 +163,7 @@ fun InboxScreen() {
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker     = "The Den · Inbox",
+            kicker     = navKicker(Destination.Inbox),
             title      = "Inbox",
             // Operator-facing UI chrome (no kinfolk-facing copy).
             subtitle   = "Voicemails, calls, SMS, and emails, everywhere kinfolk reach out.",

@@ -139,19 +139,19 @@ const SCREENS: readonly Screen[] = [
   // email), which read Firestore directly. The thread list above them loads
   // through the `listConversations` callable and renders its error state under
   // this harness, so it shares the fix and not the proof.
-  { slug: 'inbox', kicker: 'The Den · Inbox', row: '.inbox__row-main', identity: '.inbox__row-who' },
+  { slug: 'inbox', kicker: 'More · Inbox', row: '.inbox__row-main', identity: '.inbox__row-who' },
   // The Activity log row is the disclosure button since #755 (time, glyph
   // tile, meta, and a seq column the phone rule hides); the meta column is the
   // one carrying the action and its context.
   {
     slug: 'activity',
-    kicker: 'The Den · Activity log',
+    kicker: 'More · Activity Log',
     row: '.activity__summary',
     identity: '.activity__meta',
   },
   {
     slug: 'notifications',
-    kicker: 'The Den · Notifications',
+    kicker: 'More · Notifications',
     row: '.notif-row',
     identity: '.notif-row__body',
   },
@@ -565,7 +565,7 @@ test('the invoice ledger tables span their panel at 390px, and only Payment Hist
  * signal that the count line has become the only wayfinding left.
  */
 test('the form-schema wizard, its rail and its footer fit at 390px', async ({ page }) => {
-  await openScreen(page, 'form-schemas', 'The Den · Admin');
+  await openScreen(page, 'form-schemas', 'More · Form Schemas');
   await page.getByRole('button', { name: 'New schema', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   const rail = page.getByRole('navigation', { name: 'New Form Schema steps' });

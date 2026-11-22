@@ -26,6 +26,8 @@ import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
+import com.tribetails.auntieos.web.ui.shell.navKicker
+import com.tribetails.auntieos.web.ui.shell.Destination
 
 /**
  * Account Settings (test-run punch list #4): the operator's OWN account, moved out
@@ -64,7 +66,7 @@ fun AccountSettingsScreen(
 
     ScreenScaffold {
         DenScreenHeading(
-            kicker = "The Den · Account",
+            kicker = navKicker(Destination.AccountSettings),
             title = "Your account.",
             subtitle = "Your personal profile and login. Business settings live under Settings.",
         )

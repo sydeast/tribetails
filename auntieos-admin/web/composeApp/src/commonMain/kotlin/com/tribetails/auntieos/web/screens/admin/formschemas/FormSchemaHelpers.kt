@@ -10,7 +10,7 @@ import com.tribetails.auntieos.web.data.FormSectionSpec
  */
 
 // Identifier regex contracts, kept in lockstep with the backend Zod schema.
-// Schema ids may include dot/hyphen (e.g. `tribe.profile-v2`); field keys are
+// Short names may include dot/hyphen (e.g. `tribe.profile-v2`); field keys are
 // stricter (used as JS object keys / Firestore field paths) → letters/digits/_.
 private val SCHEMA_ID_REGEX = Regex("^[a-zA-Z][a-zA-Z0-9_.\\-]*$")
 private val FIELD_KEY_REGEX = Regex("^[a-zA-Z][a-zA-Z0-9_]*$")
@@ -151,10 +151,10 @@ fun validateFormSchema(schema: FormSchema): FormSchemaValidationReport {
         topErrs.add("Schema name is required.")
     }
     if (schema.id.length > r.ID) {
-        topErrs.add("Schema id is ${schema.id.length} characters long. The limit is ${r.ID}.")
+        topErrs.add("Short name is ${schema.id.length} characters long. The limit is ${r.ID}.")
     } else if (schema.id.isNotBlank() && !SCHEMA_ID_REGEX.matches(schema.id)) {
         topErrs.add(
-            "Schema id '${schema.id}' must start with a letter and contain only letters, numbers, underscores, dots, or hyphens.",
+            "Short name '${schema.id}' must start with a letter and contain only letters, numbers, underscores, dots, or hyphens.",
         )
     }
     topErrs.addIf(r.textProblem("Name", schema.name, r.NAME))

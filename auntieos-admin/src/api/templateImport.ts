@@ -167,8 +167,8 @@ export function tickableTemplateIds(report: TemplateImportReport): string[] {
 export function channelNoteText(channel: TemplateImportChannelRow, ticked: boolean): string {
   if (ticked && channel.outcome === 'skipped') {
     return (
-      `The stored ${channel.channel} copy differs from the repo copy. ` +
-      'Importing replaces your stored copy with the repo wording.'
+      `The stored ${channel.channel} copy differs from the built-in copy. ` +
+      'Importing replaces your stored copy with the built-in wording.'
     );
   }
   return channel.notes.join(' ');
@@ -178,7 +178,7 @@ export function channelNoteText(channel: TemplateImportChannelRow, ticked: boole
 export function importRowSummary(row: TemplateImportRow, ticked = false): string {
   if (row.blocked) return 'Refused';
   const outcomes = row.channels.map((c) => c.outcome);
-  if (outcomes.every((o) => o === 'unchanged')) return 'Already matches the repo';
+  if (outcomes.every((o) => o === 'unchanged')) return 'Already matches the built-in copy';
   if (outcomes.includes('skipped')) {
     return ticked ? 'Differs, selected for overwrite' : 'Differs, not selected for overwrite';
   }
@@ -195,7 +195,7 @@ export function importRowSummary(row: TemplateImportRow, ticked = false): string
 export function importPlanHeadline(report: TemplateImportReport): string {
   const writes = plannedWriteCount(report);
   if (writes === 0 && report.refused.length === 0) {
-    return 'Every template on file already matches the repo. There is nothing to import.';
+    return 'Every template on file already matches the built-in copy. There is nothing to import.';
   }
   const parts: string[] = [];
   if (report.counts.create) parts.push(`${report.counts.create} to create`);

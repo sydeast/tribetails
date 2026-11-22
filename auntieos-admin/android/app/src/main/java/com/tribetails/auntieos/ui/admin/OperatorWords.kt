@@ -7,22 +7,28 @@ package com.tribetails.auntieos.ui.admin
  * `lib/formSchemaFormat.ts`) so the two clients say the same words.
  */
 
-/** `account.welcome.kinfolk` as "Account welcome kinfolk": the last resort for a key with no label. */
+/** `account.welcome.kinfolk` as "Account welcome Kinfolk": the last resort for a key with no label. */
 fun humanizeKey(raw: String): String {
     val words = raw.trim()
         .split(Regex("[._\\-\\s]+"))
         .filter { it.isNotEmpty() }
-        .joinToString(" ")
-        .lowercase()
+        .joinToString(" ") { KEY_WORDS[it.lowercase()] ?: it.lowercase() }
     return words.replaceFirstChar { it.uppercaseChar() }
 }
 
+/** #1887: words a stored key spells in lower case, as the app spells them. */
+private val KEY_WORDS = mapOf(
+    "pet" to "Kin", "pets" to "Kin", "kin" to "Kin", "kinfolk" to "Kinfolk",
+    "kintale" to "KinTale", "kintales" to "KinTales", "kincare" to "KinCare",
+    "auntie" to "Auntie", "aunties" to "Aunties", "tribe" to "Tribe",
+    "sms" to "SMS", "api" to "API",
+)
 private const val UNCATEGORIZED = "uncategorized"
 
 /** Category words, in the vocabulary the notification settings sections already use. */
 private val CATEGORY_LABELS = mapOf(
     "account" to "Account",
-    "home" to "Home and pets",
+    "home" to "Home and Kin",
     "invoice" to "Billing",
     "kintale" to "KinTales",
     "marketing" to "Newsletters",

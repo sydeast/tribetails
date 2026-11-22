@@ -497,11 +497,11 @@ export function InvoiceDetail() {
                 <div className="meta-strip">
                   <div>
                     <div className="lbl">Date</div>
-                    <div className="val">{longDateLabel(inv.date) ?? '—'}</div>
+                    <div className="val">{longDateLabel(inv.date) ?? 'Not set'}</div>
                   </div>
                   <div>
                     <div className="lbl">Due Date</div>
-                    <div className="val">{longDateLabel(inv.dueDate) ?? '—'}</div>
+                    <div className="val">{longDateLabel(inv.dueDate) ?? 'Not set'}</div>
                   </div>
                   <div>
                     <div className="lbl">Status</div>
@@ -509,7 +509,7 @@ export function InvoiceDetail() {
                   </div>
                   <div>
                     <div className="lbl">Terms</div>
-                    <div className="val">{inv.terms ?? '—'}</div>
+                    <div className="val">{inv.terms ?? 'Not set'}</div>
                   </div>
                 </div>
 
@@ -543,8 +543,8 @@ export function InvoiceDetail() {
                               <small>{lineDiscountLine(item.discountCents)}</small>
                             )}
                           </td>
-                          <td className="date">{longDateLabel(item.dateIso) ?? '—'}</td>
-                          <td className="r amt">{item.amountCents !== null ? formatCentsUsd(item.amountCents) : '—'}</td>
+                          <td className="date">{longDateLabel(item.dateIso) ?? ''}</td>
+                          <td className="r amt">{item.amountCents !== null ? formatCentsUsd(item.amountCents) : 'Not set'}</td>
                         </tr>
                       ))}
                     </tbody>

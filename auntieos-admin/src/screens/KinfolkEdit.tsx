@@ -42,6 +42,7 @@ import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { useToast } from '../components/Toast';
 import { useAdminAccess } from '../lib/access';
 import './KinfolkEdit.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Kinfolk (household) editor: the WRITE surface for `kinfolk/{id}`, ported from
@@ -512,7 +513,7 @@ export function KinfolkEdit({
   return (
     <div className="screen" data-screen="kinfolk-edit">
       <DenScreenHeading
-        kicker="The Den · Directory"
+        kicker={navKicker('directory')}
         title={`Edit ${kinfolkName || kinfolkId}`}
         subtitle="Contact, access, and vet details for this household."
         trailing={<GhostButton label="Cancel" onClick={onCancel} disabled={leaveHeld} />}

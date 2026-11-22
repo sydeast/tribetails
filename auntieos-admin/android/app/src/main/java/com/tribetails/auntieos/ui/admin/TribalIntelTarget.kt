@@ -217,5 +217,5 @@ fun tribalIntelTargetLabel(
 }
 
 /** #1616: what this screen holds. The same two strings ship on web and the desktop console. */
-const val TRIBAL_INTEL_SUBTITLE = "Notes about a household, a person or a pet, written for the dossier and the 411."
-const val TRIBAL_INTEL_EMPTY_MESSAGE = "Notes about a household, a person or a pet appear here once you add them."
+const val TRIBAL_INTEL_SUBTITLE = "Notes about a household, a person or a Kin, written for the dossier and the 411."
+const val TRIBAL_INTEL_EMPTY_MESSAGE = "Notes about a household, a person or a Kin appear here once you add them."

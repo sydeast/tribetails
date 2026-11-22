@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { ScheduleSessionEntry, BusySlotEntry } from '../api/schedule';
 import {
   HOUR_HEIGHT_PX,
@@ -7,12 +7,16 @@ import {
   businessMinutesNow,
   businessMinutesOfDay,
   clampDropMinute,
+  gridLanes,
   gridPlacement,
   gridWindowFor,
   hhmmFromMinutes,
   hourLabel,
   minuteFromOffsetPx,
   snapMinuteOfDay,
+  visitBlockPlacement,
+  type GridLane,
+  type GridPlacement,
   type GridWindow,
 } from '../lib/scheduleGrid';
 import { visitDurationMinutes } from '../lib/bookingDetailFormat';
@@ -392,11 +396,7 @@ export function ScheduleWeekGrid({
               );
             })}
 
-            {(byDay.get(day) ?? []).map((entry) => {
-              const startMinute = businessMinutesOfDay(entry.startTime, businessZone);
-              if (startMinute === null) return null;
-              const place = gridPlacement(startMinute, visitDurationMinutes(entry), gridWindow);
-              if (place === null) return null;
+            {placedVisits(byDay.get(day) ?? [], businessZone, gridWindow).map(({ entry, startMinute, place, lane }) => {
               const dragging = drag?.sessionId === entry._id && drag.moved;
               const previewTop = dragging ? previewTopPx(drag.minute, gridWindow) : place.topPx;
               const pending = pendingSessionId === entry._id;
@@ -408,8 +408,13 @@ export function ScheduleWeekGrid({
                   style={{
                     top: `${previewTop}px`,
                     height: `${place.heightPx}px`,
+                    // #1861: visits whose blocks overlap share the column side by side.
+                    ...laneStyle(lane),
                     ...(dragging && drag.dxPx !== 0 && { transform: `translateX(${drag.dxPx}px)` }),
                   }}
+                  data-lane={lane.lanes > 1 ? `${String(lane.lane + 1)}/${String(lane.lanes)}` : undefined}
+                  // A narrow lane cuts the household's name; the pointer still reads all of it.
+                  title={lane.lanes > 1 ? `${hhmmFromMinutes(startMinute)} ${sessionHousehold(str(entry.kinfolkName))}` : undefined}
                   data-session-id={entry._id}
                   data-start-minute={startMinute}
                   // The mock tints every block by its service type. It is the
@@ -419,7 +424,8 @@ export function ScheduleWeekGrid({
                   data-tone={bookingServiceTone(str(entry.serviceType), catalog)}
                   aria-label={`${sessionHousehold(str(entry.kinfolkName))} at ${hhmmFromMinutes(startMinute)}. Open to reschedule.`}
                   disabled={pending}
-                  onPointerDown={(e) => onBlockPointerDown(e, entry, dayIndex, place.topPx, startMinute)}
+                  // The visit's own start, not a block lifted off the bottom edge (#1861).
+                  onPointerDown={(e) => onBlockPointerDown(e, entry, dayIndex, previewTopPx(startMinute, gridWindow), startMinute)}
                   onPointerMove={onBlockPointerMove}
                   onPointerUp={(e) => onBlockPointerUp(e, entry)}
                   onPointerCancel={() => setDrag(null)}
@@ -458,6 +464,38 @@ export function ScheduleWeekGrid({
   );
 }
 
+/**
+ * #1861: one day's visits as the column draws them: each one placed, and given
+ * its lane among the blocks it overlaps. A visit with no readable start, or one
+ * outside the drawn hours, is left out here and counted under the grid.
+ */
+function placedVisits(rows: readonly ScheduleSessionEntry[], businessZone: string, window: GridWindow) {
+  const placed: { entry: ScheduleSessionEntry; startMinute: number; place: GridPlacement }[] = [];
+  for (const entry of rows) {
+    const startMinute = businessMinutesOfDay(entry.startTime, businessZone);
+    if (startMinute === null) continue;
+    const place = visitBlockPlacement(startMinute, visitDurationMinutes(entry), window);
+    if (place !== null) placed.push({ entry, startMinute, place });
+  }
+
+  const lanes = gridLanes(placed.map((p) => ({ id: p.entry._id, ...p.place })));
+  return placed.map((p) => ({ ...p, lane: lanes.get(p.entry._id) ?? { lane: 0, lanes: 1 } }));
+}
+
+/** Inset of a block from its column's edges, as `.schedule-grid__block` sets it. */
+const BLOCK_INSET_PX = 5;
+/** Gap between two blocks drawn side by side. */
+const LANE_GAP_PX = 3;
+/** #1861: the left edge and width of a block in its lane; nothing for a lone block. */
+function laneStyle({ lane, lanes }: GridLane): CSSProperties {
+  if (lanes <= 1) return {};
+  const usable = `(100% - ${String(2 * BLOCK_INSET_PX)}px)`;
+  return {
+    left: `calc(${String(BLOCK_INSET_PX)}px + ${usable} * ${String(lane)} / ${String(lanes)})`,
+    width: `calc(${usable} / ${String(lanes)} - ${String(LANE_GAP_PX)}px)`,
+    right: 'auto',
+  };
+}
 /** Top offset for a previewed minute, the inverse of `minuteFromOffsetPx`. */
 function previewTopPx(minuteOfDay: number, window: GridWindow): number {
   return (HOUR_HEIGHT_PX * (minuteOfDay - window.startHour * 60)) / 60;

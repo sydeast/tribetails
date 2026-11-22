@@ -28,6 +28,7 @@ import { DoNotSendSection } from './settings/DoNotSendSection';
 import { NotificationGate } from './NotificationGate';
 import { TagsEditor } from './TagsEditor';
 import './Settings.css';
+import { navKicker } from '../lib/nav';
 
 /**
  * Admin Settings, as ONE nav-driven screen.
@@ -258,7 +259,7 @@ export function Settings({ initialSection, onSectionChange }: SettingsProps = {}
           runs". The explanation is the heading's tooltip; the last-saved stamp
           is a value, so it sits on `detail` once the doc is in. */}
       <DenScreenHeading
-        kicker="The Den · Settings"
+        kicker={navKicker('settings')}
         title="How the Den"
         accentTail="runs."
         subtitle="Pick a section on the left. Each one edits and saves on its own."
