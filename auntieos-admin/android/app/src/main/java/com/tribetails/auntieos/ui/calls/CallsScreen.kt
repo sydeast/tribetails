@@ -130,7 +130,7 @@ fun AddKinfolkDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
         }
     ) {
         Column {
-            Text("Enter the name for this new client profile.")
+            Text("Enter the name for this new Kinfolk profile.")
             Spacer(Modifier.height(8.dp))
             AuntieField(
                 value = name,

@@ -102,6 +102,8 @@ export async function resolveShareLink(
       event: AUDIT_EVENTS.CONTENT_SHARE_LINK_EXPIRED,
       severity: 'info',
       actorRole: 'SYSTEM',
+      // #1818: words, not the stored key.
+      description: (await import('./activityWords.js')).shareLinkExpiredWords(),
       familyId: data.tribeId,
       payload: { shareId },
     });

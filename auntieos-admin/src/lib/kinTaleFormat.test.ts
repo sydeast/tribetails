@@ -124,9 +124,21 @@ describe('kinTaleHeadline', () => {
 });
 
 describe('sentViaLabel', () => {
-  it('passes a real channel through, lower-cased', () => {
+  it('says a real channel as a word', () => {
     expect(sentViaLabel('EMAIL')).toBe('email');
-    expect(sentViaLabel('sms')).toBe('sms');
+    expect(sentViaLabel('sms')).toBe('text');
+    expect(sentViaLabel('push')).toBe('push');
+  });
+
+  it("#1817: reads the send path's markers as MyTribe, never as a channel called pending", () => {
+    expect(sentViaLabel('pending')).toBe('MyTribe');
+    expect(sentViaLabel('catalog')).toBe('MyTribe');
+    expect(sentViaLabel(' Pending ')).toBe('MyTribe');
+  });
+
+  it('never prints a stored value it does not know', () => {
+    expect(sentViaLabel('dispatch_v2')).toBeNull();
+    expect(sentViaLabel('kin_care_reports')).toBeNull();
   });
 
   it('collapses both legacy backfill markers to "imported", never leaking the raw collection name', () => {

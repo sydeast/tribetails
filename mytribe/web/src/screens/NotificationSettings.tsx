@@ -296,6 +296,10 @@ export function NotificationSettings() {
   // the first section, where the page opens.
   const [currentSection, setCurrentSection] = useState<string | null>(null);
   const [showSaved, setShowSaved] = useState(false);
+  // #1904: the card the last tap was on. Its own header says Saving, Saved or
+  // Not saved, beside the switch that moved, because the page's save bar is
+  // at the foot of a long page and out of sight from most cards.
+  const [savedCard, setSavedCard] = useState<string | null>(null);
   // Seed local state once from the server. After that it only changes when a
   // save is confirmed (see `save` below), so what is on screen is what the
   // server holds, never a guess.
@@ -380,11 +384,13 @@ export function NotificationSettings() {
     if (!edited || busy || !categoryToggleableChannels(cat).includes(ch)) return;
     const current = channelChecked(cat, ch, edited.byCategory[cat.id]);
     setShowSaved(false);
+    setSavedCard(cat.id);
     save.mutate({ byCategory: { [cat.id]: { [ch]: !current } } });
   }
   function toggleCategoryMaster(cat: CategoryDto) {
     if (!edited || busy) return;
     setShowSaved(false);
+    setSavedCard(cat.id);
     if (cat.id === 'marketing') {
       // Mixed turns everything on, the usual answer to a click on a mixed switch.
       const next = marketingMasterState(cat, edited.marketingOptIn) !== 'on';
@@ -414,6 +420,7 @@ export function NotificationSettings() {
     const next = !current;
     const inherited = keyChannelChecked(key, ch, undefined, edited.byCategory[cat.id]);
     setShowSaved(false);
+    setSavedCard(cat.id);
     save.mutate({ byKey: { [key.key]: { [ch]: next === inherited ? null : next } } });
   }
   function renderCard(cat: CategoryDto, index: number) {
@@ -486,6 +493,20 @@ export function NotificationSettings() {
               onChange={() => toggleCategoryMaster(cat)}
             />
           </div>
+          {savedCard === cat.id && (
+            <span className="nf-cardstatus" data-testid={`card-status-${cat.id}`} aria-hidden="true">
+              {busy ? (
+                <span className="nf-saving">
+                  <span className="loading-spinner loading-spinner--inline" />
+                  Saving…
+                </span>
+              ) : save.phase === 'failed' ? (
+                <span className="nf-cardstatus-failed">Not saved</span>
+              ) : showSaved ? (
+                <span className="nf-cardstatus-ok">{'✓'} Saved</span>
+              ) : null}
+            </span>
+          )}
           <div className="exg" role="group" aria-label="Expand or collapse channels">
             <button type="button" aria-pressed={isExpanded} onClick={() => setFolded(cat.id, false)}>
               Expand

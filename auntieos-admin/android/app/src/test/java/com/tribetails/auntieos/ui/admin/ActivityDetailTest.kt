@@ -48,12 +48,11 @@ class ActivityDetailTest {
     )
 
     @Test
-    fun detailLeadsWithTheFullTimestampThatTheRowTruncates() {
-        // The row shows `HH:mm`. The point of opening an entry is to see what it
-        // cut, and "which second" is routinely the question when reconciling
-        // against a provider's logs.
-        // #1828: the business reading in the admin shape, never the stored UTC string.
-        assertEquals("When" to "Aug 3, 2026 09:02", activityDetailRows(entry()).first())
+    fun detailLeadsWithOneReadableTimeInTheBusinessZone() {
+        // #1818: never the raw UTC stamp, and no second "Business time" row.
+        val rows = activityDetailRows(entry(), java.time.ZoneId.of("America/Chicago"))
+        assertEquals("When" to "Aug 3, 2026 09:02", rows.first())
+        assertTrue(rows.none { it.first == "Business time" || it.second.contains("2026-08-03T") })
     }
 
     @Test
@@ -67,14 +66,31 @@ class ActivityDetailTest {
     }
 
     @Test
-    fun detailRendersTheTargetAsAPathNeverAFabricatedLink() {
-        val rows = activityDetailRows(entry(targetCollection = "notifications", targetId = "n1"))
-        assertTrue(rows.contains("Target" to "notifications/n1"))
+    fun detailShowsNoStoredKeyNoTargetPathAndNoHouseholdId() {
+        // #1818: the walk read "ACTION CANCEL_BOOKING_SERIES", the household as an id and a path.
+        val rows = activityDetailRows(
+            entry(targetCollection = "kin_care_sessions", targetId = "vis_ABCDEFGHIJ0123456789").apply { familyId = "fam1" },
+        )
+        val labels = rows.map { it.first }
+        for (l in listOf("Action", "Actor id", "Target", "Request", "Client request", "Business time", "Household")) {
+            assertTrue("$l is shown", l !in labels)
+        }
+        assertTrue(rows.none { it.second.contains("NOTIFICATION_RECEIVED") || it.second.contains("fam1") || it.second.contains("vis_") })
     }
 
     @Test
-    fun detailFallsBackToAGenericSegmentRatherThanDroppingABareTargetId() {
-        assertTrue(activityDetailRows(entry(targetId = "n1")).contains("Target" to "target/n1"))
+    fun detailNamesTheHouseholdFromTheDirectory() {
+        val rows = activityDetailRows(
+            entry().apply { familyId = "fam1" },
+            households = mapOf("fam1" to "The Whitfields"),
+        )
+        assertTrue(rows.contains("Household" to "The Whitfields"))
+    }
+
+    @Test
+    fun detailSaysTheStatusAndSeverityInWords() {
+        assertTrue(activityDetailRows(entry(severity = "warn")).contains("Severity" to "Warning"))
+        assertTrue(activityDetailRows(entry()).contains("Status" to "Done"))
     }
 
     @Test
@@ -85,12 +101,11 @@ class ActivityDetailTest {
     }
 
     /**
-     * THE FIELD THAT ANSWERS THE COMPLAINT. The description says a notification
-     * was delivered via email; the payload says to whom, for which notification,
-     * and with which provider message id.
+     * #1818: what happened, in words. The ids, the stored key and the provider's
+     * message id stay on the sealed entry, and search still finds them.
      */
     @Test
-    fun payloadFlattensWhatActuallyHappened() {
+    fun payloadListsWhatHappenedInWordsWithNoIdOrKey() {
         val rows = activityPayloadRows(
             entry(
                 payload = mapOf(
@@ -101,21 +116,56 @@ class ActivityDetailTest {
                 ),
             ),
         )
+        assertEquals(listOf("Channel" to "email"), rows)
+        assertTrue(matchesQuery(entry(payload = mapOf("providerMessageId" to "sg-88")), "sg-88"))
+    }
+
+    @Test
+    fun payloadReadsTheWalksCancelSeriesRowInWords() {
+        val rows = activityPayloadRows(
+            entry(
+                payload = mapOf(
+                    "affectedVisits" to 2,
+                    "batchId" to "req_ABCDEFGHIJ0123456789",
+                    "failedVisits" to 0,
+                    "kinfolkId" to "Xy7Kq2Lm9Pz4Rt6Vb1Nc",
+                    "sessionsCreated" to 0,
+                ),
+            ),
+        )
+        assertEquals(listOf("Affected visits" to "2", "Failed visits" to "0", "Sessions created" to "0"), rows)
+    }
+
+    @Test
+    fun payloadHidesIdValuesAndReadsTimesStatusesAndKeysAsWords() {
+        val rows = activityPayloadRows(
+            entry(
+                payload = mapOf(
+                    "visit" to "vis_ABCDEFGHIJ0123456789",
+                    "where" to "kin_care_sessions/abc",
+                    "status" to "ON_MY_WAY",
+                    "startTime" to "2026-11-11T17:33:35.411Z",
+                    "notice" to "kincare.booking.confirm",
+                    "recordedAfterTheFact" to false,
+                ),
+            ),
+            java.time.ZoneId.of("America/Chicago"),
+        )
         assertEquals(
             listOf(
-                "channel" to "email",
-                "key" to "kincare.booking.confirm",
-                "notificationId" to "n1",
-                "providerMessageId" to "sg-88",
+                "Notice" to "KinCare booking confirm",
+                "Recorded after the fact" to "no",
+                "Start time" to "Nov 11, 2026 11:33",
+                "Status" to "On my way",
             ),
             rows,
         )
     }
 
     @Test
-    fun payloadFlattensNestedMapsToDottedPaths() {
+    fun payloadFlattensNestedMaps() {
         assertEquals(
-            listOf("result.scanned" to "40", "result.split" to "3"),
+            listOf("Result scanned" to "40", "Result split" to "3"),
             activityPayloadRows(entry(payload = mapOf("result" to mapOf("split" to 3, "scanned" to 40)))),
         )
     }
@@ -123,7 +173,7 @@ class ActivityDetailTest {
     @Test
     fun payloadKeepsAnArrayOnOneLineBecauseItIsOneField() {
         assertEquals(
-            listOf("channels" to "email, sms"),
+            listOf("Channels" to "email, sms"),
             activityPayloadRows(entry(payload = mapOf("channels" to listOf("email", "sms")))),
         )
     }
@@ -162,15 +212,12 @@ class ActivityDetailTest {
      * stays on the list, as the word "none" rather than the literal "null" (#1592).
      */
     @Test
-    fun payloadPrintsARecordedNullAndAnEmptyMap() {
+    fun payloadPrintsARecordedNullAndLeavesOutAnEmptyMap() {
         assertEquals(
-            listOf("providerMessageId" to "none"),
-            activityPayloadRows(entry(payload = mapOf("providerMessageId" to null))),
+            listOf("Reason" to "none"),
+            activityPayloadRows(entry(payload = mapOf("reason" to null))),
         )
-        assertEquals(
-            listOf("extra" to "{}"),
-            activityPayloadRows(entry(payload = mapOf("extra" to emptyMap<String, Any?>()))),
-        )
+        assertTrue(activityPayloadRows(entry(payload = mapOf("extra" to emptyMap<String, Any?>()))).isEmpty())
     }
 
     @Test
@@ -216,11 +263,7 @@ class ActivityDetailTest {
             ),
         )
         assertEquals(
-            listOf(
-                "code" to "failed-precondition",
-                "kinfolkId" to "fam1",
-                "reason" to "An Emergency Contact has to be someone outside the household.",
-            ),
+            listOf("Reason" to "An Emergency Contact has to be someone outside the household."),
             activityPayloadRows(refused),
         )
     }

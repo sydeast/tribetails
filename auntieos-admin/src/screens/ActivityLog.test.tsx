@@ -5,10 +5,11 @@ import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type ActivityLogEntry, type VerifyResult } from '../api/activityLog';
 
-const { useCollection, verifyActivityLogChain, getBusinessSettings } = vi.hoisted(() => ({
+const { useCollection, verifyActivityLogChain, getBusinessSettings, fetchOlderActivity } = vi.hoisted(() => ({
   useCollection: vi.fn(),
   verifyActivityLogChain: vi.fn(),
   getBusinessSettings: vi.fn(),
+  fetchOlderActivity: vi.fn(),
 }));
 vi.mock('../api/settings', async (orig) => ({
   ...(await orig<typeof import('../api/settings')>()),
@@ -25,6 +26,7 @@ vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fn
 vi.mock('../api/activityLog', async (orig) => ({
   ...(await orig<typeof import('../api/activityLog')>()),
   verifyActivityLogChain,
+  fetchOlderActivity,
 }));
 // #1592: the shared staff-name read (`listStaff`), stubbed so no test dials it.
 const { staffNames, staffRoles } = vi.hoisted(() => ({
@@ -36,7 +38,14 @@ vi.mock('../lib/useStaffNames', () => ({
   useStaffRoles: () => staffRoles.current,
 }));
 
-import { ActivityLog, BUSINESS_CLOCK_FAILED, BUSINESS_CLOCK_LOADING } from './ActivityLog';
+import {
+  ActivityLog,
+  BUSINESS_CLOCK_FAILED,
+  BUSINESS_CLOCK_LOADING,
+  LOAD_OLDER_LABEL,
+  LOADING_OLDER_LABEL,
+  OLDER_FAILED,
+} from './ActivityLog';
 import { businessTodayIso } from '../lib/businessZoneTime';
 import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
 
@@ -53,6 +62,7 @@ const OK: VerifyResult = { ok: true, scanned: 40, firstSeq: 1, lastSeq: 40, unch
 beforeEach(() => {
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<ActivityLogEntry[]>);
   verifyActivityLogChain.mockReset().mockResolvedValue(OK);
+  fetchOlderActivity.mockReset().mockResolvedValue([]);
   getBusinessSettings.mockReset().mockResolvedValue({ timeZone: '' });
   currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
   call.mockReset().mockImplementation(staffOnlyCall);
@@ -67,14 +77,23 @@ describe('ActivityLog actor names (#1592)', () => {
     render(<ActivityLog />);
     expect(screen.getByText(/signed in · Syd East/)).toBeInTheDocument();
     expect(screen.queryByText(/signed in · u1/)).toBeNull();
-    await userEvent.type(screen.getByPlaceholderText(/Search actor/), 'syd');
+    await userEvent.type(screen.getByPlaceholderText(/Search activity/), 'syd');
     expect(screen.getByText(/signed in · Syd East/)).toBeInTheDocument();
   });
 
-  it('keeps a uid nobody on staff answers to, rather than showing nothing', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ actorId: 'gone-uid' })] });
+  it('never prints a uid nobody on staff answers to, or a sign-in email (#1818)', () => {
+    staffNames.current = new Map([['u2', 'e2e-admin@tribetails.com']]);
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 'a', actorId: 'gone-uid', actorRole: 'PRIMARY' }),
+        entry({ _id: 'b', actorId: 'u2', actorRole: 'AUNTIE', description: 'signed in again' }),
+      ],
+    });
     render(<ActivityLog />);
-    expect(screen.getByText(/signed in · gone-uid/)).toBeInTheDocument();
+    expect(screen.getByText('signed in · Primary kinfolk')).toBeInTheDocument();
+    expect(screen.getByText('signed in again · Staff')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/gone-uid|@tribetails\.com/);
   });
 });
 
@@ -87,8 +106,10 @@ describe('ActivityLog', () => {
     expect(screen.getByRole('heading', { level: 3, name: 'Jul 16' })).toBeInTheDocument();
     expect(screen.getByText('#12')).toBeInTheDocument();
     expect(screen.getByText('deadbeef')).toBeInTheDocument();
-    expect(screen.getByText('LOGIN')).toBeInTheDocument();
-    expect(screen.getByText(/signed in · u1/)).toBeInTheDocument();
+    expect(screen.getByText('Login')).toBeInTheDocument();
+    // #1818: before the roster answers, no uid stands in for the actor.
+    expect(screen.getByText('signed in')).toBeInTheDocument();
+    expect(screen.queryByText(/u1/)).toBeNull();
   });
 
   it('surfaces a listener error, never a false empty', () => {
@@ -184,12 +205,12 @@ describe('ActivityLog stored ids and keys (#1752)', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [credit, delivered] });
     render(<ActivityLog />);
     expect(screen.getByText(/Gave \$25\.00 account credit/)).toBeInTheDocument();
-    expect(screen.getByText(/Delivered "Kincare booking confirm" by email/)).toBeInTheDocument();
+    expect(screen.getByText(/Delivered "KinCare booking confirm" by email/)).toBeInTheDocument();
     expect(screen.queryByText(/given to household kf_rivera/)).toBeNull();
     expect(screen.queryByText(/kincare\.booking\.confirm delivered/)).toBeNull();
-    await userEvent.type(screen.getByPlaceholderText(/Search actor/), 'account credit');
+    await userEvent.type(screen.getByPlaceholderText(/Search activity/), 'account credit');
     expect(screen.getByText(/Gave \$25\.00 account credit/)).toBeInTheDocument();
-    expect(screen.queryByText(/Delivered "Kincare booking confirm"/)).toBeNull();
+    expect(screen.queryByText(/Delivered "KinCare booking confirm"/)).toBeNull();
     expect(credit.description).toBe('Account credit of 2500 cents given to household kf_rivera');
   });
 });
@@ -219,7 +240,7 @@ describe('ActivityLog notices that did not go out (#1819, #1905)', () => {
     const row = screen.getByRole('button', { name: /Notification not sent/ });
     expect(within(row).getByText('Notification not sent')).toHaveClass('activity__title');
     expect(
-      within(row).getByText('Held back "Kincare auntie on my way": notices to households are turned off'),
+      within(row).getByText('Held back "KinCare Auntie on my way": notices to households are turned off'),
     ).toBeInTheDocument();
     expect(screen.queryByText('Notification dispatched')).toBeNull();
     expect(screen.queryByText(/uid=/)).toBeNull();
@@ -234,7 +255,9 @@ describe('ActivityLog notices that did not go out (#1819, #1905)', () => {
     const detail = document.getElementById('log-detail-held1') as HTMLElement;
     expect(within(detail).getByText('Not sent')).toBeInTheDocument();
     expect(within(detail).queryByText('SUCCESS')).toBeNull();
-    expect(within(detail).getByText('household_notices_off')).toBeInTheDocument();
+    // #1818: the stored reason reads as words, never as its key.
+    expect(within(detail).getByText('Household notices off')).toBeInTheDocument();
+    expect(within(detail).queryByText('household_notices_off')).toBeNull();
   });
 
   it('is not listed under Success, and is not a Problem', async () => {
@@ -242,7 +265,7 @@ describe('ActivityLog notices that did not go out (#1819, #1905)', () => {
     render(<ActivityLog />);
     await userEvent.click(screen.getByRole('tab', { name: 'Success' }));
     expect(screen.queryByText('Notification not sent')).toBeNull();
-    expect(screen.getByText('LOGIN')).toBeInTheDocument();
+    expect(screen.getByText('Login')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'Problems' }));
     expect(screen.queryByText('Notification not sent')).toBeNull();
   });
@@ -303,13 +326,13 @@ describe('ActivityLog notices that did not go out (#1819, #1905)', () => {
     expect(screen.getByText(/the send failed/)).toBeInTheDocument();
   });
 
-  it('a row of another kind still ends with its target', () => {
+  it('#1818: a row of another kind no longer ends with its target either', () => {
     useCollection.mockReturnValue({
       status: 'ready',
       data: [entry({ _id: 'v1', actionType: 'VISIT_ARRIVED', targetId: 's1', targetCollection: 'kin_care_sessions' })],
     });
     render(<ActivityLog />);
-    expect(screen.getByText(/kin_care_sessions\/s1/)).toBeInTheDocument();
+    expect(screen.queryByText(/kin_care_sessions/)).toBeNull();
   });
 });
 
@@ -341,7 +364,7 @@ describe('ActivityLog entry detail', () => {
   it('rows are closed by default, so the feed still scans', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [delivered] });
     render(<ActivityLog />);
-    expect(screen.getByRole('button', { name: /NOTIFICATION_RECEIVED/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Notification received/ })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
@@ -350,25 +373,28 @@ describe('ActivityLog entry detail', () => {
   it('opens to show the payload, which is the field that says what happened', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [delivered] });
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /NOTIFICATION_RECEIVED/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Notification received/ }));
     expect(screen.getByText('What happened')).toBeInTheDocument();
-    expect(screen.getByText('providerMessageId')).toBeInTheDocument();
-    expect(screen.getByText('sg-88')).toBeInTheDocument();
-    expect(screen.getByText('channel')).toBeInTheDocument();
+    // #1818: labels in words, and no id or stored key among the values.
+    expect(screen.getByText('Channel')).toBeInTheDocument();
+    expect(screen.getByText('email')).toBeInTheDocument();
+    expect(screen.queryByText('providerMessageId')).toBeNull();
+    expect(screen.queryByText('sg-88')).toBeNull();
   });
-  it('opens to the FULL timestamp and the provenance the row truncates', async () => {
+  it('opens to one readable time and the provenance, with no path, id or stored key (#1818)', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [delivered] });
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /NOTIFICATION_RECEIVED/ }));
-    expect(screen.getByText('Aug 3, 2026 09:02')).toBeInTheDocument();
-    expect(screen.getByText('Severity')).toBeInTheDocument();
-    expect(screen.getByText('Actor role')).toBeInTheDocument();
-    expect(screen.getByText('notifications/n1')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Notification received/ }));
+    const detail = document.getElementById('log-detail-e2') as HTMLElement;
+    expect(within(detail).getByText('Aug 3, 2026 09:02')).toBeInTheDocument();
+    expect(within(detail).getByText('Severity')).toBeInTheDocument();
+    expect(within(detail).getByText('Actor role')).toBeInTheDocument();
+    expect(detail.textContent).not.toMatch(/2026-08-03T|notifications\/n1|NOTIFICATION_RECEIVED|Actor id|Business time/);
   });
   it('shows the FULL chain hashes, because a truncated hash verifies nothing', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [delivered] });
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /NOTIFICATION_RECEIVED/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Notification received/ }));
     expect(screen.getByText('a'.repeat(64))).toBeInTheDocument();
     expect(screen.getByText('b'.repeat(64))).toBeInTheDocument();
   });
@@ -380,14 +406,14 @@ describe('ActivityLog entry detail', () => {
   it('says so out loud when an entry was written with no payload', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /LOGIN/ }));
-    expect(screen.getByText(/written with no payload/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Login/ }));
+    expect(screen.getByText('Nothing more was recorded.')).toBeInTheDocument();
   });
   it('names a legacy pre-chain entry as outside verification, rather than faking a seal', async () => {
     const { seq: _dropped, ...legacy } = entry({ _id: 'e3' });
     useCollection.mockReturnValue({ status: 'ready', data: [legacy] });
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /LOGIN/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Login/ }));
     expect(screen.getByText(/before the hash chain/i)).toBeInTheDocument();
   });
   it('keeps two entries open at once, because comparing them is the point', async () => {
@@ -396,14 +422,14 @@ describe('ActivityLog entry detail', () => {
       data: [delivered, entry({ _id: 'e4', actionType: 'NOTIFICATION_DISPATCHED' })],
     });
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: /NOTIFICATION_RECEIVED/ }));
-    await userEvent.click(screen.getByRole('button', { name: /NOTIFICATION_DISPATCHED/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Notification received/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Notification dispatched/ }));
     expect(screen.getAllByText('What happened')).toHaveLength(2);
   });
   it('closes again', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [delivered] });
     render(<ActivityLog />);
-    const opener = screen.getByRole('button', { name: /NOTIFICATION_RECEIVED/ });
+    const opener = screen.getByRole('button', { name: /Notification received/ });
     await userEvent.click(opener);
     expect(screen.getByText('What happened')).toBeInTheDocument();
     await userEvent.click(opener);
@@ -425,9 +451,9 @@ describe('ActivityLog filtering', () => {
     useCollection.mockReturnValue({ status: 'ready', data: rows });
     render(<ActivityLog />);
     await userEvent.click(screen.getByRole('tab', { name: 'Problems' }));
-    expect(screen.getByText('ERROR_FUNCTION_FAILURE')).toBeInTheDocument();
-    expect(screen.getByText('OLD_THING')).toBeInTheDocument();
-    expect(screen.queryByText('LOGIN')).toBeNull();
+    expect(screen.getByText('Error function failure')).toBeInTheDocument();
+    expect(screen.getByText('Old thing')).toBeInTheDocument();
+    expect(screen.queryByText('Login')).toBeNull();
     expect(screen.getByText(/2 of 3 loaded/i)).toBeInTheDocument();
   });
   /**
@@ -444,15 +470,15 @@ describe('ActivityLog filtering', () => {
     });
     render(<ActivityLog />);
     await userEvent.type(screen.getByRole('searchbox'), 'req_991');
-    expect(screen.getByText('BOOKING_SUBMITTED')).toBeInTheDocument();
-    expect(screen.queryByText('LOGIN')).toBeNull();
+    expect(screen.getByText('Booking submitted')).toBeInTheDocument();
+    expect(screen.queryByText('Login')).toBeNull();
   });
   it('says nothing matches rather than silently falling back to everything', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: rows });
     render(<ActivityLog />);
     await userEvent.type(screen.getByRole('searchbox'), 'zzzz');
     expect(screen.getByText(/no entries match this filter/i)).toBeInTheDocument();
-    expect(screen.queryByText('LOGIN')).toBeNull();
+    expect(screen.queryByText('Login')).toBeNull();
   });
   it('keeps only the active status tab in the tab order, per the roving convention', () => {
     useCollection.mockReturnValue({ status: 'ready', data: rows });
@@ -492,12 +518,12 @@ describe('ActivityLog filtering', () => {
     });
     render(<ActivityLog />);
     await userEvent.click(screen.getByRole('tab', { name: 'Bookings' }));
-    expect(screen.getByText('BOOKING_SUBMITTED')).toBeInTheDocument();
-    expect(screen.getByText('KINCARE_ARRIVED')).toBeInTheDocument();
-    expect(screen.queryByText('NOTIFICATION_VIEWED')).toBeNull();
+    expect(screen.getByText('Booking submitted')).toBeInTheDocument();
+    expect(screen.getByText('KinCare arrived')).toBeInTheDocument();
+    expect(screen.queryByText('Notification viewed')).toBeNull();
     await userEvent.click(screen.getByRole('tab', { name: 'Problems' }));
-    expect(screen.queryByText('BOOKING_SUBMITTED')).toBeNull();
-    expect(screen.getByText('KINCARE_ARRIVED')).toBeInTheDocument();
+    expect(screen.queryByText('Booking submitted')).toBeNull();
+    expect(screen.getByText('KinCare arrived')).toBeInTheDocument();
     expect(screen.getByText(/1 of 3 loaded/i)).toBeInTheDocument();
   });
   it('has a Billing chip that holds the billing events and an Admin chip that is not empty (#1613)', async () => {
@@ -513,15 +539,15 @@ describe('ActivityLog filtering', () => {
     });
     render(<ActivityLog />);
     await userEvent.click(screen.getByRole('tab', { name: 'Billing' }));
-    expect(screen.getByText('BILLING_DRAFT_INVOICE_SENT')).toBeInTheDocument();
-    expect(screen.getByText('BILLING_PAYMENT_RECORDED')).toBeInTheDocument();
-    expect(screen.queryByText('THEME_BRAND_TOKENS_UPDATED')).toBeNull();
+    expect(screen.getByText('Billing draft invoice sent')).toBeInTheDocument();
+    expect(screen.getByText('Billing payment recorded')).toBeInTheDocument();
+    expect(screen.queryByText('Theme brand tokens updated')).toBeNull();
     await userEvent.click(screen.getByRole('tab', { name: 'KinTales' }));
-    expect(screen.queryByText('BILLING_DRAFT_INVOICE_SENT')).toBeNull();
-    expect(screen.getByText('CONTENT_KINTALE_NOTE_ADDED')).toBeInTheDocument();
+    expect(screen.queryByText('Billing draft invoice sent')).toBeNull();
+    expect(screen.getByText('Content KinTale note added')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'Admin' }));
-    expect(screen.getByText('THEME_BRAND_TOKENS_UPDATED')).toBeInTheDocument();
-    expect(screen.getByText('MEMBERSHIP_INVITE_SENT')).toBeInTheDocument();
+    expect(screen.getByText('Theme brand tokens updated')).toBeInTheDocument();
+    expect(screen.getByText('Membership invite sent')).toBeInTheDocument();
   });
 });
 
@@ -554,16 +580,17 @@ describe('ActivityLog against its mock', () => {
     expect(document.querySelector('.activity__chain')).toHaveAttribute('data-state', 'broken');
     expect(screen.getByRole('alert')).toHaveTextContent(/chain broken/i);
   });
-  it('draws the row as time, category tile, title with the raw code, and the seq column', () => {
+  it('draws the row as time, category tile, title in words with no stored key, and the seq column', () => {
     useCollection.mockReturnValue({
       status: 'ready',
       data: [entry({ actionType: 'KINCARE_ARRIVED', description: '', timestamp: '2026-07-16T14:14:00Z' })],
     });
     render(<ActivityLog />);
-    const row = screen.getByRole('button', { name: /KINCARE_ARRIVED/ });
+    const row = screen.getByRole('button', { name: /KinCare arrived/ });
     expect(within(row).getByText('09:14')).toHaveClass('activity__time');
-    expect(within(row).getByText('Kincare arrived')).toHaveClass('activity__title');
-    expect(within(row).getByText('KINCARE_ARRIVED')).toHaveClass('activity__code');
+    // #1881: the brand word keeps its casing. #1818: no stored key beside it.
+    expect(within(row).getByText('KinCare arrived')).toHaveClass('activity__title');
+    expect(row.textContent).not.toContain('KINCARE_ARRIVED');
     const tile = row.querySelector('.icon-tile');
     expect(tile).toHaveAttribute('data-tone', 'orange');
     expect(tile).toHaveTextContent('◷');
@@ -579,7 +606,7 @@ describe('ActivityLog against its mock', () => {
       data: [entry({ actionType: 'NOTIFICATION_DISPATCHED', status: 'FAILURE' })],
     });
     render(<ActivityLog />);
-    const tile = screen.getByRole('button', { name: /NOTIFICATION_DISPATCHED/ }).querySelector('.icon-tile');
+    const tile = screen.getByRole('button', { name: /Notification dispatched/ }).querySelector('.icon-tile');
     expect(tile).toHaveAttribute('data-tone', 'error');
     expect(tile).toHaveTextContent('⚠');
   });
@@ -587,7 +614,7 @@ describe('ActivityLog against its mock', () => {
     const { seq: _dropped, ...legacy } = entry({ _id: 'e3' });
     useCollection.mockReturnValue({ status: 'ready', data: [legacy] });
     render(<ActivityLog />);
-    const row = screen.getByRole('button', { name: /LOGIN/ });
+    const row = screen.getByRole('button', { name: /Login/ });
     expect(within(row).getByText('legacy')).toHaveClass('activity__seq-n');
     expect(row.querySelector('.activity__hash')).toBeNull();
   });
@@ -672,7 +699,9 @@ describe('ActivityLog actor role (#1820)', () => {
   async function openedRole(e: ActivityLogEntry): Promise<string | null> {
     useCollection.mockReturnValue({ status: 'ready', data: [e] });
     render(<ActivityLog />);
-    await userEvent.click(screen.getByRole('button', { name: new RegExp(e.actionType ?? '') }));
+    // #1818: the row is named by its title in words, so open the one row there is.
+    const row = screen.getAllByRole('button').find((b) => b.hasAttribute('aria-expanded')) as HTMLElement;
+    await userEvent.click(row);
     const label = screen.getByText('Actor role');
     return label.parentElement?.textContent?.replace('Actor role', '').trim() ?? null;
   }
@@ -788,13 +817,14 @@ describe('ActivityLog household looks (#1839)', () => {
     expect(STORED_LOOK.description).toBe('OPERATOR_CROSSTENANT_ACCESS uid=owner-uid target=Xk29fLq0aBcD3eFgH1jK');
   });
 
-  it('opened, the record still carries the key and the household, and names her Auntie', async () => {
+  it('opened, it names her Auntie and shows no stored key or household id (#1818)', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [AUNTIE_LOOK] });
     render(<ActivityLog />);
     await userEvent.click(rowOf(/Household opened/));
     const actorRole = screen.getByText('Actor role').parentElement?.textContent?.replace('Actor role', '').trim();
     expect(actorRole).toBe('Auntie');
-    expect(screen.getByText('OPERATOR_CROSSTENANT_ACCESS')).toBeInTheDocument();
+    const detail = document.getElementById('log-detail-look-new') as HTMLElement;
+    expect(detail.textContent).not.toMatch(/OPERATOR_CROSSTENANT_ACCESS|Operator crosstenant access|Xk29fLq0aBcD3eFgH1jK/);
   });
 
   it('a failed look still wears the warning, as every failure does', () => {
@@ -809,7 +839,7 @@ describe('ActivityLog household looks (#1839)', () => {
       data: [AUNTIE_LOOK, entry({ _id: 'other', actionType: 'LOGIN', description: 'signed in' })],
     });
     render(<ActivityLog />);
-    await userEvent.type(screen.getByPlaceholderText(/Search actor/), 'household opened');
+    await userEvent.type(screen.getByPlaceholderText(/Search activity/), 'household opened');
     expect(screen.getAllByText('Household opened')).toHaveLength(1);
     expect(screen.queryByText(/signed in/)).toBeNull();
   });
@@ -876,5 +906,83 @@ describe('ActivityLog business clock (#2192)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(shownTime()).toBe('14:34'));
     expect(getBusinessSettings).not.toHaveBeenCalled();
+  });
+});
+/**
+ * #1880: the list ended at the newest 200 ("200 of 200 loaded") with no way to
+ * reach the other 859 entries of the chain.
+ */
+describe('ActivityLog older entries (#1880)', () => {
+  const page = (from: number, n: number): ActivityLogEntry[] =>
+    Array.from({ length: n }, (_, i) =>
+      entry({ _id: `e${from - i}`, seq: from - i, description: `line ${from - i}` }),
+    );
+  it('offers older entries under a full live list, reads them below the oldest one, and lists them', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: page(1059, 200) });
+    let resolvePage: (rows: ActivityLogEntry[]) => void = () => {};
+    fetchOlderActivity.mockImplementation(() => new Promise((r) => (resolvePage = r)));
+    render(<ActivityLog />);
+    expect(screen.getByText('200 of 200 loaded')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: LOAD_OLDER_LABEL }));
+    // The wait has its cue, and the press cannot be repeated while it runs.
+    expect(screen.getByText(LOADING_OLDER_LABEL)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: LOAD_OLDER_LABEL })).toBeNull();
+    expect(fetchOlderActivity).toHaveBeenCalledWith(860, 200);
+    resolvePage(page(859, 200));
+    expect(await screen.findByText('400 of 400 loaded')).toBeInTheDocument();
+    expect(screen.getByText(/line 660/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: LOAD_OLDER_LABEL })).toBeInTheDocument();
+  });
+  it('keeps the rows new entries push out of the newest 200, so no entry falls between the pages', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: page(1059, 200) });
+    fetchOlderActivity.mockResolvedValueOnce(page(859, 200)).mockResolvedValueOnce(page(659, 200));
+    const { rerender } = render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('button', { name: LOAD_OLDER_LABEL }));
+    await screen.findByText('400 of 400 loaded');
+    // Five new entries arrive: the live newest 200 now starts at 865.
+    useCollection.mockReturnValue({ status: 'ready', data: page(1064, 200) });
+    rerender(<ActivityLog />);
+    expect(await screen.findByText('405 of 405 loaded')).toBeInTheDocument();
+    for (const seq of [860, 862, 864]) expect(screen.getByText(new RegExp(`line ${seq}\\b`))).toBeInTheDocument();
+    // The next press still starts below the oldest entry on screen.
+    await userEvent.click(screen.getByRole('button', { name: LOAD_OLDER_LABEL }));
+    expect(fetchOlderActivity).toHaveBeenLastCalledWith(660, 200);
+    expect(await screen.findByText('605 of 605 loaded')).toBeInTheDocument();
+  });
+  it('stops offering once a page comes back short, because nothing older is left', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: page(250, 200) });
+    fetchOlderActivity.mockResolvedValue(page(50, 50));
+    render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('button', { name: LOAD_OLDER_LABEL }));
+    expect(await screen.findByText('250 of 250 loaded')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: LOAD_OLDER_LABEL })).toBeNull();
+  });
+  it('says so when the read fails, keeps the rows on screen, and tries again', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: page(500, 200) });
+    fetchOlderActivity.mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(page(300, 10));
+    render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('button', { name: LOAD_OLDER_LABEL }));
+    expect(await screen.findByText(OLDER_FAILED)).toBeInTheDocument();
+    expect(screen.getByText('200 of 200 loaded')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('210 of 210 loaded')).toBeInTheDocument();
+  });
+  it('offers nothing under a list that is not full', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: page(12, 12) });
+    render(<ActivityLog />);
+    expect(screen.queryByRole('button', { name: LOAD_OLDER_LABEL })).toBeNull();
+    expect(fetchOlderActivity).not.toHaveBeenCalled();
+  });
+  it('filters and searches the older entries with the rest', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: page(1000, 200) });
+    fetchOlderActivity.mockResolvedValue([
+      entry({ _id: 'old', seq: 5, actionType: 'BILLING_INVOICE_PAID', description: 'Invoice 1001 paid by card' }),
+    ]);
+    render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('button', { name: LOAD_OLDER_LABEL }));
+    await screen.findByText('201 of 201 loaded');
+    await userEvent.click(screen.getByRole('tab', { name: 'Billing' }));
+    expect(screen.getByText(/Invoice 1001 paid by card/)).toBeInTheDocument();
+    expect(screen.getByText('1 of 201 loaded')).toBeInTheDocument();
   });
 });

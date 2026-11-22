@@ -4,7 +4,7 @@ import { type StaffRole } from '../api/staff';
 import { businessInstantMs, businessWallClock } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { dayKeyLabel, formatHHmm } from './time';
-import { activityDescriptionWords, noticeNotSentWords } from './activityWords';
+import { activityDescriptionWords, activityTitleWords, brandWords, noticeNotSentWords } from './activityWords';
 
 /**
  * What an Activity Log row shows when it is OPENED.
@@ -37,51 +37,77 @@ export interface ActivityDetailRow {
 /**
  * The identity + provenance fields, in a fixed order, absent ones dropped.
  *
- * The full ISO `timestamp` leads, not the `HH:mm` slice the collapsed row shows:
- * the whole point of opening an entry is to see the parts the row truncates, and
- * "which second" is routinely the question when reconciling an audit trail
- * against a provider's logs.
+ * #1818: in words. The opened entry used to list the stored key ("ACTION
+ * CANCEL_BOOKING_SERIES"), the actor's uid, the household's id, the target's
+ * database path, request ids, and the raw UTC stamp beside the business time.
+ * Now it is one readable time, the person and the household by name, and the
+ * status and severity in words. The ids stay on the sealed entry, and the
+ * search box still finds a row by them.
  */
 export function activityDetailRows(
   entry: ActivityLogEntry,
   zone: string = DEFAULT_BUSINESS_TIME_ZONE,
-  /** uid -> name (`useStaffNames`), #1592. A uid it does not know shows as it is. */
+  /** uid -> name (`useStaffNames`), #1592. Only a real name is shown, never an email or a uid. */
   names: ReadonlyMap<string, string> = new Map(),
   /** uid -> 'owner' | 'auntie' (`useStaffRoles`), #1820. See `actorRoleFor`. */
   roles: ReadonlyMap<string, StaffRole> = new Map(),
+  /** household id -> name (the Kinfolk roster), #1818. A household it does not hold is left out. */
+  households: ReadonlyMap<string, string> = new Map(),
 ): ActivityDetailRow[] {
   const rows: ActivityDetailRow[] = [];
   const push = (label: string, value: string): void => {
     if (value.trim() !== '') rows.push({ label, value });
   };
-
-  // #1828: read on the business's calendar in the admin shape, "Nov 10, 2026
-  // 22:32". The stored UTC stamp used to sit here as written, a machine
-  // string beside the readable one (#1585 added the business reading).
+  // The stored stamp is UTC; it reads in the business zone (#1585), once.
   const when = activityWhen(str(entry.timestamp), zone);
-  push('When', when !== null ? `${dayKeyLabel(when.dayKey)} ${when.clock}` : str(entry.timestamp));
-  push('Action', str(entry.actionType));
+  push('When', when !== null ? activityWhenWords(when) : '');
   push('Status', activityStatusWords(entry));
-  push('Severity', str(entry.severity));
-  // #1592: the person by name. The uid stays on the opened record beside it,
-  // because this is the evidence log and the uid is what the record holds.
-  const actorId = str(entry.actorId).trim();
-  const actorName = names.get(actorId);
-  push('Actor', actorName ?? actorId);
-  if (actorName !== undefined) push('Actor id', actorId);
+  push('Severity', severityWords(str(entry.severity)));
+  push('Actor', activityActorName(entry, names));
   push('Actor role', actorRoleFor(entry, roles));
-  push('Household', str(entry.familyId));
-  // A path, not a link. Where a route exists the screen offers one separately;
-  // where none does, the path is still the most useful thing that can honestly
-  // be shown (page-spec 22 item 1: "render the path read-only, do not fabricate
-  // a link").
-  const target = str(entry.targetId);
-  if (target !== '') push('Target', `${str(entry.targetCollection) || 'target'}/${target}`);
-  push('Request', str(entry.requestId));
-  push('Client request', str(entry.clientRequestId));
+  push('Household', households.get(str(entry.familyId).trim()) ?? '');
   push('IP', str(entry.ip));
   push('User agent', str(entry.userAgent));
   return rows;
+}
+
+/** `Nov 11, 2026 11:33`: an entry's time as the opened entry reads it (#1818), in the admin shape (#1828). */
+export function activityWhenWords(when: ActivityWhen): string {
+  return `${dayKeyLabel(when.dayKey)} ${when.clock}`;
+}
+
+const SEVERITY_WORDS: Readonly<Record<string, string>> = { info: 'Info', warn: 'Warning', critical: 'Critical' };
+function severityWords(raw: string): string {
+  const s = raw.trim().toLowerCase();
+  return s === '' ? '' : (SEVERITY_WORDS[s] ?? brandWords(s));
+}
+
+/**
+ * #1818: the actor's name, or nothing. The roster's label falls back to a
+ * sign-in email and then the uid, and neither belongs on screen; nor does the
+ * uid the row showed before the roster answered.
+ */
+export function activityActorName(entry: ActivityLogEntry, names: ReadonlyMap<string, string>): string {
+  const actor = str(entry.actorId).trim();
+  if (actor === '') return '';
+  const name = (names.get(actor) ?? '').trim();
+  return name === '' || name === actor || name.includes('@') ? '' : name;
+}
+
+/**
+ * #1818: who did it, as the collapsed row says it: the person's name, or the
+ * role they held ("Operator", "Auntie", "Primary kinfolk", "System") when the
+ * roster has no name for them. Never an email or a uid.
+ */
+export function activityActorWords(
+  entry: ActivityLogEntry,
+  names: ReadonlyMap<string, string>,
+  roles: ReadonlyMap<string, StaffRole> = new Map(),
+): string {
+  const name = activityActorName(entry, names);
+  if (name !== '') return name;
+  if (str(entry.actorId).trim() === '' && str(entry.actorRole).trim() === '') return '';
+  return actorRoleFor(entry, roles);
 }
 
 /**
@@ -125,36 +151,58 @@ export function activityChainRows(entry: ActivityLogEntry): ActivityDetailRow[] 
  * Sorted so two entries of the same type list their fields in the same order,
  * which is what makes them comparable by eye.
  */
-export function activityPayloadRows(entry: ActivityLogEntry): ActivityDetailRow[] {
+export function activityPayloadRows(
+  entry: ActivityLogEntry,
+  zone: string = DEFAULT_BUSINESS_TIME_ZONE,
+): ActivityDetailRow[] {
   const out: ActivityDetailRow[] = [];
-
-  const walk = (value: unknown, path: string): void => {
+  const walk = (value: unknown, path: string, leaf: string): void => {
+    // #1818: an id, a stored key, a hash or a path is not shown. It stays on
+    // the sealed entry, and the search box still finds the row by it.
+    if (isHiddenPayloadKey(leaf)) return;
     if (Array.isArray(value)) {
       // Arrays render as one line: an audit payload's arrays are short lists
       // (channel names, ids), and exploding them into `channels.0` / `channels.1`
       // buries the fact that they are one field.
-      out.push({ label: path, value: value.map((v) => renderScalar(v)).join(', ') });
+      const items = value.map((v) => renderScalar(v, zone)).filter((v) => v !== '' && !looksLikeId(v));
+      if (items.length > 0) out.push({ label: payloadLabel(path), value: items.join(', ') });
       return;
     }
     if (typeof value === 'object' && value !== null) {
       const map = value as Record<string, unknown>;
       const keys = Object.keys(map).sort();
-      // An empty nested map is reported rather than dropped: "this field is here
-      // and it is empty" is a different fact from "this field is absent", and in
-      // an audit trail the difference can matter.
-      if (keys.length === 0) {
-        out.push({ label: path, value: '{}' });
-        return;
-      }
-      for (const k of keys) walk(map[k], path === '' ? k : `${path}.${k}`);
+      for (const k of keys) walk(map[k], path === '' ? k : `${path}.${k}`, k);
       return;
     }
-    out.push({ label: path, value: renderScalar(value) });
+    const text = renderScalar(value, zone);
+    if (text === '' || looksLikeId(text)) return;
+    out.push({ label: payloadLabel(path), value: text });
   };
-
   const payload = rec(entry.payload);
-  for (const k of Object.keys(payload).sort()) walk(payload[k], k);
+  for (const k of Object.keys(payload).sort()) walk(payload[k], k, k);
   return out;
+}
+
+/** `affectedVisits` reads "Affected visits"; `result.scanned` reads "Result scanned". */
+function payloadLabel(path: string): string {
+  return brandWords(path.replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
+}
+
+/** A key whose value is an id, a stored key, a hash or a database path (#1818). */
+function isHiddenPayloadKey(key: string): boolean {
+  return /(?:^|[a-z0-9])(?:Id|Ids|Uid|Uids|Key|Keys|Hash|Path)$/.test(key) || /^(?:id|ids|uid|uids|key|keys|hash|path|admin|staffRole|code)$/i.test(key);
+}
+
+/**
+ * A value that is an id or a path rather than words (#1818): a stored id with
+ * a prefix (`vis_...`, `req_...`), a long run of letters and digits, or a path.
+ */
+function looksLikeId(text: string): boolean {
+  const t = text.trim();
+  if (/\s/.test(t)) return false;
+  if (/^[A-Za-z]{2,6}_[A-Za-z0-9_-]{8,}$/.test(t)) return true;
+  if (/^[A-Za-z0-9_-]{16,}$/.test(t) && /\d/.test(t) && /[A-Za-z]/.test(t)) return true;
+  return /^[\w-]+(?:\/[\w-]+)+$/.test(t);
 }
 
 /**
@@ -162,14 +210,28 @@ export function activityPayloadRows(entry: ActivityLogEntry): ActivityDetailRow[
  * because it is a decision the writer made and blanking it would hide that; it
  * is a word rather than the literal "null" because an operator reads it (#1592).
  */
-function renderScalar(v: unknown): string {
+function renderScalar(v: unknown, zone: string = DEFAULT_BUSINESS_TIME_ZONE): string {
   if (v === null) return 'none';
   if (v === undefined) return '';
-  if (typeof v === 'string') return v;
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'string') return valueWords(v, zone);
+  if (typeof v === 'number' || typeof v === 'boolean') return v === true ? 'yes' : v === false ? 'no' : String(v);
   // A Firestore Timestamp or anything else exotic. Never `String(obj)`, which
   // yields "[object Object]" and tells a reader nothing.
   return JSON.stringify(v);
+}
+
+/**
+ * #1818: a stored value in words. A time reads in the business zone, a stored
+ * status or key (`SCHEDULED`, `kincare.booking.confirm`) reads as words.
+ */
+function valueWords(raw: string, zone: string): string {
+  const t = raw.trim();
+  const when = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t) ? activityWhen(t, zone) : null;
+  if (when !== null) return activityWhenWords(when);
+  if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$|^[A-Z]{3,}$/.test(t)) return brandWords(t);
+  if (/^[a-z]+(?:\.[a-z_]+)+$/.test(t)) return brandWords(t);
+  if (/^[a-z]+(?:_[a-z]+)+$/.test(t)) return brandWords(t);
+  return raw;
 }
 
 /**
@@ -205,7 +267,10 @@ export function activityMatchesQuery(
     str(entry.targetCollection),
     str(entry.status),
     str(entry.severity),
+    str(entry.familyId),
     ...activityPayloadRows(entry).map((r) => `${r.label} ${r.value}`),
+    // #1818: the ids the screen no longer shows still find their row.
+    JSON.stringify(rec(entry.payload)),
   ]
     .join(' ')
     .toLowerCase();
@@ -301,13 +366,18 @@ export function activityCategoryOf(entry: ActivityLogEntry): RealCategory | null
   const a = str(entry.actionType).toUpperCase();
   return CATEGORY_RULES.find(([, claims]) => claims(a))?.[0] ?? null;
 }
+
 export function activityMatchesCategory(entry: ActivityLogEntry, category: ActivityCategory): boolean {
   return category === 'all' || activityCategoryOf(entry) === category;
 }
-/** `KINCARE_ARRIVED` reads as "Kincare arrived": the mock's bold line. Mirrors Android's `humanizeAction`. */
+
+/**
+ * `KINCARE_ARRIVED` reads as "KinCare arrived": the mock's bold line, brand
+ * words in their casing (#1881). Mirrors Android's `humanizeAction`.
+ */
 export function humanizeAction(actionType: string): string {
-  const lower = actionType.toLowerCase().replace(/_/g, ' ').trim();
-  return lower === '' ? 'Event' : lower.charAt(0).toUpperCase() + lower.slice(1);
+  const words = brandWords(actionType);
+  return words === '' ? 'Event' : words;
 }
 
 /**
@@ -324,17 +394,12 @@ export function activityIsHouseholdLook(entry: ActivityLogEntry): boolean {
 }
 
 /**
- * The row's bold line. A kind with a plain title (#1839) shows that title and no
- * stored key beside it; every other kind keeps the humanized key and its code.
- * Same rule as Android and the desktop console (`activityTitle`).
+ * The row's bold line: the kind's plain title, or its key in words (#1818,
+ * #1881). The stored key itself is never on screen. Same rule as Android and
+ * the desktop console (`activityTitle`).
  */
 export function activityTitle(actionType: string): string {
-  return actionType.trim().toUpperCase() === HOUSEHOLD_LOOK_ACTION ? HOUSEHOLD_LOOK_TITLE : humanizeAction(actionType);
-}
-
-/** Whether the row prints the stored key beside its title. False for a kind with a plain title. */
-export function activityShowsCode(actionType: string): boolean {
-  return actionType.trim() !== '' && activityTitle(actionType) === humanizeAction(actionType);
+  return activityTitleWords(actionType);
 }
 // ── a notice that did not go out (#1819, #1905) ──────────────────────────────
 //
@@ -354,18 +419,17 @@ function isLegacyHeldNotice(entry: ActivityLogEntry): boolean {
   const ids = payload['dispatchIds'];
   return str(payload['reason']).trim() !== '' && Array.isArray(ids) && ids.length === 0;
 }
+
 /** Is this entry a notice that did not go out, in either stored form? */
 export function activityIsNoticeNotSent(entry: ActivityLogEntry): boolean {
   return str(entry.actionType).trim().toUpperCase() === NOTICE_NOT_SENT_ACTION || isLegacyHeldNotice(entry);
 }
+
 /** The row's bold line for this entry: `activityTitle`, except a held notice stored as "dispatched". */
 export function activityEntryTitle(entry: ActivityLogEntry): string {
   return isLegacyHeldNotice(entry) ? NOTICE_NOT_SENT_TITLE : activityTitle(str(entry.actionType));
 }
-/** Whether the row prints the stored key beside the title. Never beside a title that contradicts it. */
-export function activityEntryShowsCode(entry: ActivityLogEntry): boolean {
-  return !isLegacyHeldNotice(entry) && activityShowsCode(str(entry.actionType));
-}
+
 /** The row's sentence: the stored description in words, or the held notice's reason in words. */
 export function activityEntryDescription(entry: ActivityLogEntry): string {
   if (isLegacyHeldNotice(entry)) {
@@ -374,21 +438,49 @@ export function activityEntryDescription(entry: ActivityLogEntry): string {
   }
   return activityDescriptionWords(str(entry.description));
 }
+
 /** The status the opened entry shows. "Not sent" for a notice that did not go out and did not fail. */
 export function activityStatusWords(entry: ActivityLogEntry): string {
   const status = str(entry.status);
   const s = status.trim().toUpperCase();
   if (s === 'NOT_SENT') return NOT_SENT_STATUS_WORDS;
   if (isLegacyHeldNotice(entry) && s === 'SUCCESS') return NOT_SENT_STATUS_WORDS;
-  return status;
+  // #1818: the stored status in words.
+  return STATUS_WORDS[s] ?? brandWords(status);
 }
+
+const STATUS_WORDS: Readonly<Record<string, string>> = {
+  SUCCESS: 'Done',
+  FAILURE: 'Failed',
+  ERROR: 'Failed',
+  PENDING: 'Pending',
+};
+
 /**
- * Whether the row may end with the entry's target path. Not on a notification
- * row (#1905): the walk read "notifications/<id>" at the end of each one, and
- * the opened entry already carries the target.
+ * The collapsed row's grey line (#1818): the sentence, then who did it. No
+ * database path, no id, no email. A sentence that only repeats the title is
+ * left off; a stored "<KEY> uid=<id>" reads as nothing for the same reason.
  */
-export function activityRowShowsTarget(entry: ActivityLogEntry): boolean {
-  return activityCategoryOf(entry) !== 'notifications';
+export function activityRowContext(
+  entry: ActivityLogEntry,
+  names: ReadonlyMap<string, string> = new Map(),
+  roles: ReadonlyMap<string, StaffRole> = new Map(),
+): string {
+  const parts: string[] = [];
+  const description = activityEntryDescription(entry).trim();
+  const title = activityEntryTitle(entry).trim();
+  if (description !== '' && description.toLowerCase() !== title.toLowerCase()) parts.push(description);
+  if (activityIsHouseholdLook(entry)) {
+    // #1839: a look the server wrote in words already names the Auntie and the
+    // household. A look stored as the bare key names nobody, so it keeps the name.
+    const namedInWords = description !== '' && description === str(entry.description).trim();
+    const who = namedInWords ? '' : activityActorName(entry, names);
+    if (who !== '') parts.push(who);
+    return parts.join(' · ');
+  }
+  const who = activityActorWords(entry, names, roles);
+  if (who !== '') parts.push(who);
+  return parts.join(' · ');
 }
 
 /** True when the wire status is a failure, in either spelling the writers have used. */
@@ -422,6 +514,7 @@ export interface ActivityWhen {
   dayKey: string;
   clock: string;
 }
+
 /**
  * Reads a log timestamp in the BUSINESS zone (#1585), never the device's and
  * never the UTC wall clock the string happens to carry. A stamp with a zone
@@ -438,6 +531,7 @@ export function activityWhen(timestamp: string, zone: string = DEFAULT_BUSINESS_
   const [h, m] = wc.hhmm.split(':').map(Number) as [number, number];
   return { dayKey: wc.dateIso, clock: formatHHmm(h, m) };
 }
+
 /** Local `YYYY-MM-DD` for a Date, the shape `activityDayLabel` compares against. */
 export function localDayKey(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');

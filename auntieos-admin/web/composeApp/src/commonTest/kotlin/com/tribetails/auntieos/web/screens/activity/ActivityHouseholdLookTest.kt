@@ -35,11 +35,13 @@ class ActivityHouseholdLookTest {
     @Test
     fun theTitleIsPlainAndTheKeyIsNotShown() {
         assertEquals("Household opened", activityTitle("OPERATOR_CROSSTENANT_ACCESS"))
-        assertFalse(activityShowsCode("OPERATOR_CROSSTENANT_ACCESS"))
-        // Every other kind keeps its humanized key and its code, unchanged.
-        assertEquals("Kincare arrived", activityTitle("KINCARE_ARRIVED"))
-        assertTrue(activityShowsCode("KINCARE_ARRIVED"))
-        assertFalse(activityShowsCode(""))
+        // #1818, #1881: every other kind reads as its key in words, brand words
+        // in their casing, and no row prints the key itself.
+        assertEquals("KinCare arrived", activityTitle("KINCARE_ARRIVED"))
+        assertEquals("Create KinCare session", activityTitle("CREATE_KINCARE_SESSION"))
+        assertEquals("KinTale draft deleted", activityTitle("KINTALE_DRAFT_DELETED"))
+        assertEquals("KinTale sent", activityTitle("CONTENT_KINTALE_SENT"))
+        assertEquals("Event", activityTitle(""))
     }
 
     @Test

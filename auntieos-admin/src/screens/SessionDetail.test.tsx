@@ -502,7 +502,7 @@ describe('SessionDetail: the visit clock', () => {
     expect(session.status).toBe('ON_MY_WAY');
     expect(action).toBe('ARRIVED');
     expect(opts.nowIso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
-    expect(await screen.findByText(/ON_MY_WAY → ARRIVED/)).toBeInTheDocument();
+    expect(await screen.findByText(/Marked arrived/)).toBeInTheDocument();
   });
   it('says whether the household was actually told, rather than implying it', async () => {
     patchVisitLifecycle.mockResolvedValue(
@@ -536,7 +536,7 @@ describe('SessionDetail: the visit clock', () => {
     await clock(/^clock out$/i, /yes, clock out/i);
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(/Cannot clock out of this visit while it is SCHEDULED/);
-    expect(screen.queryByText(/→/)).toBeNull();
+    expect(screen.queryByText(/^Marked /)).toBeNull();
   });
   // A double clock-in resolves with changed:false having written nothing. The
   // screen must not report it as a fresh clock-in, or an operator will believe
@@ -547,7 +547,7 @@ describe('SessionDetail: the visit clock', () => {
     );
     render(<SessionDetail entry={entry({ status: 'SCHEDULED' })} onBack={vi.fn()} />);
     await clock(/^clock in$/i, /yes, clock in/i);
-    expect(await screen.findByText(/Already ARRIVED.*unchanged/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Already arrived.*unchanged/i)).toBeInTheDocument();
   });
   it('offers no clock at all on a completed visit, and says why', () => {
     render(<SessionDetail entry={entry({ status: 'COMPLETED', completedAt: '2026-07-16T15:00:00Z' })} onBack={vi.fn()} />);
@@ -1180,7 +1180,7 @@ describe('#2185 SessionDetail notice lines under an Auntie sign-in', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /yes, clock in/i }));
     expect(
       await screen.findByText(
-        'ON_MY_WAY → ARRIVED. The Whitfields was not notified, because the owner has notices to households turned off.',
+        'Marked arrived. The Whitfields was not notified, because the owner has notices to households turned off.',
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/in Settings/)).toBeNull();
@@ -1196,7 +1196,7 @@ describe('#2185 SessionDetail notice lines under an Auntie sign-in', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /yes, clock in/i }));
     expect(
       await screen.findByText(
-        'ON_MY_WAY → ARRIVED. The Whitfields was not notified, because notices to households are off in Settings.',
+        'Marked arrived. The Whitfields was not notified, because notices to households are off in Settings.',
       ),
     ).toBeInTheDocument();
   });

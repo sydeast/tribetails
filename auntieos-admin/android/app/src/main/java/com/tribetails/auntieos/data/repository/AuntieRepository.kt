@@ -81,6 +81,9 @@ data class KinfolkCreated(val kinfolk: Kinfolk, val duplicateOf: String?)
  */
 const val GENERATED_DRAFTS_LIST_MAX = 50
 
+/** #1880: how many Activity Log entries one read brings, the newest page and each older one. */
+const val ACTIVITY_LOG_PAGE = 100
+
 class AuntieRepository(
     private val n8n: N8nApi,
     /**
@@ -2959,10 +2962,29 @@ class AuntieRepository(
         // recent tail for display. Older entries remain in Firestore untouched.
         firestore.collection("activity_log")
             .orderBy("seq", com.google.firebase.firestore.Query.Direction.DESCENDING)
-            .limit(100)
+            .limit(ACTIVITY_LOG_PAGE.toLong())
             .get().await()
             .toObjects(com.tribetails.auntieos.data.admin.ActivityLogEntry::class.java)
     }.onFailure { AuntieLog.e("Failed to get activity log", it) }
+
+    /**
+     * #1880: the page of entries just below [beforeSeq], newest first. The log
+     * read stops at the newest page, and nothing could reach the rest of the
+     * chain. A one-shot read: older entries are sealed and never change. The
+     * range and the order are on the same field, so no composite index is needed.
+     */
+    suspend fun getOlderActivityLog(
+        beforeSeq: Long,
+        pageSize: Int = ACTIVITY_LOG_PAGE,
+    ): Result<List<com.tribetails.auntieos.data.admin.ActivityLogEntry>> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        firestore.collection("activity_log")
+            .whereLessThan("seq", beforeSeq)
+            .orderBy("seq", com.google.firebase.firestore.Query.Direction.DESCENDING)
+            .limit(pageSize.toLong())
+            .get().await()
+            .toObjects(com.tribetails.auntieos.data.admin.ActivityLogEntry::class.java)
+    }.onFailure { AuntieLog.e("Failed to get older activity log", it) }
 
     /**
      * Catalog-dispatched notifications for the signed-in operator. Firestore
