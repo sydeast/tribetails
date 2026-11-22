@@ -62,10 +62,10 @@ class GeneratedDraftReviewTest {
     @Test
     fun onlyUnsentDraftsAwaitReviewNewestFirst() {
         val drafts = listOf(
-            GeneratedDraft(_id = "old", status = "pending", createdOn = "2026-05-01T00:00:00Z"),
+            GeneratedDraft(_id = "old", status = "pending", generatedCopy = "A tale.", createdOn = "2026-05-01T00:00:00Z"),
             GeneratedDraft(_id = "sent", status = "published", publishedReportId = "r1", createdOn = "2026-05-30T00:00:00Z"),
             GeneratedDraft(_id = "approved", status = "approved", createdOn = "2026-05-29T00:00:00Z"),
-            GeneratedDraft(_id = "new", status = "generated", generated_at = "2026-05-23T00:00:00Z"),
+            GeneratedDraft(_id = "new", status = "generated", generated_copy = "A tale.", generated_at = "2026-05-23T00:00:00Z"),
         )
         assertEquals(listOf("new", "old"), draftsAwaitingReview(drafts).map { it._id })
     }

@@ -4363,7 +4363,8 @@ data class GeneratedDraft(
  * Drafts bucket. Pure; tested.
  */
 fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
-    drafts.filter { it.isUnsent }.sortedByDescending { it.created() }
+    // #1850: with copy to review, the rule web and Android count by.
+    drafts.filter { it.isUnsent && it.body().isNotBlank() }.sortedByDescending { it.created() }
 
 /**
  * #2293: the drafts KinTales files under Drafts: every one awaiting review, plus
