@@ -91,19 +91,19 @@ describe('CoveragePackageBuilder panel order', () => {
     render(<CoveragePackageBuilder />);
     // Every panel title on the screen, in DOM order. Headings, not text, so a
     // stray mention of "Packages" in body copy cannot satisfy this.
-    await screen.findByLabelText(/client \(optional\)/i);
+    await screen.findByLabelText(/kinfolk \(optional\)/i);
     const titles = panelTitles().map((el) => el.textContent?.trim());
     const workflow = titles.filter(
       (t): t is string =>
-        t === 'Coverage window' || t === 'Coverage rules for this client' || t === 'Packages',
+        t === 'Coverage window' || t === 'Coverage rules for this household' || t === 'Packages',
     );
-    expect(workflow).toEqual(['Coverage window', 'Coverage rules for this client', 'Packages']);
+    expect(workflow).toEqual(['Coverage window', 'Coverage rules for this household', 'Packages']);
   });
 
   it('asks WHICH CLIENT before it offers rules "for this client"', async () => {
     render(<CoveragePackageBuilder />);
-    const client = await screen.findByLabelText(/client \(optional\)/i);
-    const rules = panelTitled('Coverage rules for this client');
+    const client = await screen.findByLabelText(/kinfolk \(optional\)/i);
+    const rules = panelTitled('Coverage rules for this household');
     // Node.compareDocumentPosition: FOLLOWING means `rules` comes after `client`.
     // eslint-disable-next-line no-bitwise
     expect(client.compareDocumentPosition(rules) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -113,7 +113,7 @@ describe('CoveragePackageBuilder panel order', () => {
 describe('CoveragePackageBuilder visit menu (issue #693)', () => {
   it('has no Visit menu panel, so there is only one rate card', async () => {
     render(<CoveragePackageBuilder />);
-    await screen.findByLabelText(/client \(optional\)/i);
+    await screen.findByLabelText(/kinfolk \(optional\)/i);
     expect(panelTitles().map((el) => el.textContent?.trim())).not.toContain('Visit menu');
     // The panel's own controls go with it: no editable service rows, no add row,
     // and no Save/Revert bar for a menu this screen no longer owns.
@@ -134,7 +134,7 @@ describe('CoveragePackageBuilder visit menu (issue #693)', () => {
 
   it('labels Pinned visits plainly and explains it in an info tip (#1595)', async () => {
     render(<CoveragePackageBuilder />);
-    const explain = await screen.findByText(/this client's non-negotiables/i);
+    const explain = await screen.findByText(/this household's non-negotiables/i);
     expect(explain.closest('[role="tooltip"]')).not.toBeNull();
     const label = document.querySelector('.cpb__pinnedHeading');
     expect(label?.firstChild?.textContent?.trim()).toBe('Pinned visits');
@@ -249,7 +249,7 @@ describe('CoveragePackageBuilder tiers (issue #694)', () => {
       tiersSeeded: true,
     });
     render(<CoveragePackageBuilder />);
-    await screen.findByLabelText(/client \(optional\)/i);
+    await screen.findByLabelText(/kinfolk \(optional\)/i);
     expect(screen.queryAllByLabelText('Package name')).toHaveLength(0);
   });
 
@@ -310,10 +310,10 @@ describe('CoveragePackageBuilder undo and duplicates (issue #1605)', () => {
     render(<CoveragePackageBuilder />);
     await packageNames();
     await user.click(screen.getByRole('button', { name: 'Start new quote' }));
-    expect((screen.getByLabelText(/client \(optional\)/i) as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText(/kinfolk \(optional\)/i) as HTMLInputElement).value).toBe('');
     expect(await packageNames()).toEqual(['Lean', 'Balance', 'Premium']);
     await user.click(screen.getByRole('button', { name: 'Undo' }));
-    expect((screen.getByLabelText(/client \(optional\)/i) as HTMLInputElement).value).toBe('Rex');
+    expect((screen.getByLabelText(/kinfolk \(optional\)/i) as HTMLInputElement).value).toBe('Rex');
     expect(await packageNames()).toEqual(['Alpha', 'Beta']);
     expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('2026-12-01');
   });

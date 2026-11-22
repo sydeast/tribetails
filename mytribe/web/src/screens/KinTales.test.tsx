@@ -7,6 +7,8 @@ import { KinTales } from './KinTales';
 import type { GetMyKinTalesResult, KinTaleDto, TaleThumbDto } from '../api/types';
 import type { GetKinTaleCommentsResult, KinTaleReactionResult } from '../api/kinTalesApi';
 import { isoTime } from '../lib/portalFormat';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const mocks = vi.hoisted(() => ({
   getMyKinTales: vi.fn<() => Promise<GetMyKinTalesResult>>(),
@@ -709,6 +711,33 @@ describe('KinTales: a focused tale past the first page (#1363)', () => {
     const { container } = renderScreen({ focusTaleId: 'deep' });
     await waitFor(() => expect(container.querySelector('.feature h2')?.textContent).toBe('Deep tale'));
     expect(mocks.getMyKinTales).toHaveBeenCalledTimes(2);
+  });
+});
+describe('KinTales: a tale opened by its address is scrolled to (#1843, #1911)', () => {
+  it('scrolls to a tale that only turns up on a later page', async () => {
+    const scrolled: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.id);
+    };
+    window.history.replaceState(null, '', '/kintales?tale=deep');
+    try {
+      mocks.getMyKinTales
+        .mockResolvedValueOnce({ tales: [tale({ id: 'a', title: 'First page tale', sentAtMs: 300 })], hasMore: true })
+        .mockResolvedValueOnce({ tales: [tale({ id: 'deep', title: 'Deep tale', sentAtMs: 100 })], hasMore: false });
+      renderScreen({ focusTaleId: 'deep' });
+      await waitFor(() => expect(scrolled).toContain('tale-deep'));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+      window.history.replaceState(null, '', '/');
+    }
+  });
+  // jsdom draws no layout, so the offset itself is read off the stylesheet: the
+  // card a scroll lands on stops below the see-through sticky nav, not under it.
+  it('keeps both tale cards clear of the sticky nav when scrolled to', () => {
+    const css = readFileSync(resolve(__dirname, '../styles/kintales.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = /\.feature,\s*\.talecard\s*\{([^}]*)\}/.exec(css);
+    expect(rule?.[1]).toMatch(/scroll-margin-top:\s*calc\(var\(--nav-h\)\s*\+\s*\d+px\)/);
   });
 });
 describe('KinTales: migrated tales order and date (#1775)', () => {

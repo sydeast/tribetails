@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkInvoiceTotal, formatCentsUsd, storedTotalSourceLabel } from './invoiceReconcile';
+import { checkInvoiceTotal, formatCentsUsd, invoiceTotalMismatchText } from './invoiceReconcile';
 
 /**
  * The lines-versus-total disagreement check.
@@ -140,9 +140,25 @@ describe('formatCentsUsd', () => {
   });
 });
 
-describe('storedTotalSourceLabel', () => {
-  it('names where the stored figure came from, in both cases', () => {
-    expect(storedTotalSourceLabel('totalCents')).toContain('stored on the invoice');
-    expect(storedTotalSourceLabel('total')).toContain('legacy dollar field');
+describe('invoiceTotalMismatchText (#1860)', () => {
+  it('says both figures and which one is billed, in plain words', () => {
+    const text = invoiceTotalMismatchText(0, 6000, true);
+    expect(text).toBe(
+      'The line items add up to $0.00, but the invoice total is $60.00. The household is billed $60.00. ' +
+        'Nothing was changed to make them match. If the line items are right, press Edit and save them, ' +
+        'and the total will follow.',
+    );
+  });
+
+  it('never tells the Admin to re-save lines that a recorded payment has locked', () => {
+    const text = invoiceTotalMismatchText(0, 6000, false);
+    expect(text).toContain('The line items on this invoice are locked, so they cannot be edited.');
+    expect(text).not.toMatch(/press Edit/);
+  });
+
+  it('names no storage detail', () => {
+    for (const editable of [true, false]) {
+      expect(invoiceTotalMismatchText(7500, 4000, editable)).not.toMatch(/legacy|dollar field|stored|edit path/i);
+    }
   });
 });

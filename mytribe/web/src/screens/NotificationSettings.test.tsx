@@ -496,6 +496,33 @@ describe('save on change (#1292)', () => {
     expect(box('SMS for Auntie On The Way').disabled).toBe(false); // the household can try again
     expect(container.querySelector('.savedchip.show')).toBeNull();
   });
+
+  // #1904: the page's save bar sits at the foot of a long page, out of sight
+  // from the card that was changed, so the card itself says what happened.
+  it('#1904: the card that was changed says Saving, then Saved, beside its switch', async () => {
+    await renderWithServer();
+    let release!: () => void;
+    mocks.saveMyNotificationPrefs.mockImplementationOnce(
+      () => new Promise((resolve) => { release = () => resolve({ ok: true }); }),
+    );
+    const card = document.getElementById('nf-section-visit') as HTMLElement;
+    expect(within(card).queryByTestId('card-status-visit')).toBeNull();
+    await userEvent.click(box('SMS for Auntie On The Way'));
+    await waitFor(() => expect(within(card).getByTestId('card-status-visit')).toHaveTextContent('Saving…'));
+    release();
+    await waitFor(() => expect(within(card).getByTestId('card-status-visit')).toHaveTextContent('✓ Saved'));
+  });
+
+  it('#1904: a failed save says Not saved on that card, never Saved', async () => {
+    await renderWithServer();
+    mocks.saveMyNotificationPrefs.mockRejectedValueOnce(new Error('network down'));
+    const card = document.getElementById('nf-section-visit') as HTMLElement;
+    await userEvent.click(box('SMS for Auntie On The Way'));
+    await waitFor(() => expect(within(card).getByTestId('card-status-visit')).toHaveTextContent('Not saved'));
+    expect(within(card).getByTestId('card-status-visit')).not.toHaveTextContent('✓');
+    expect(box('SMS for Auntie On The Way').checked).toBe(false);
+  });
+
   it('the saved choice is what a reload shows (SMS stays on)', async () => {
     const first = await renderWithServer();
     await userEvent.click(box('SMS for Auntie On The Way'));

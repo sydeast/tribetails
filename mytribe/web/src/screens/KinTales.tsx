@@ -125,7 +125,9 @@ export function KinTales(props: { focusTaleId?: string | undefined } = {}) {
   // household simply lands on the list. Read off the address bar rather than the
   // router so the screen keeps rendering without a router context.
   const wantedTale = new URLSearchParams(window.location.search).get('tale');
-  const wantedTaleLoaded = wantedTale !== null && (firstPage.data?.tales ?? []).some((t) => t.id === wantedTale);
+  // #1911: a Gallery picture from an older tale lands on a later page, so every loaded page counts.
+  const wantedTaleLoaded =
+    wantedTale !== null && [...(firstPage.data?.tales ?? []), ...extraPages].some((t) => t.id === wantedTale);
   useEffect(() => {
     if (!wantedTale || !wantedTaleLoaded) return;
     document.getElementById(`tale-${wantedTale}`)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });

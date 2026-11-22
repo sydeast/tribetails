@@ -72,6 +72,7 @@ class NotificationRequestConfirmTest {
         repo = mockk()
         coEvery { repo.getNotifications() } returns Result.success(listOf(row))
         coEvery { repo.getKinfolk() } returns Result.success(emptyList())
+        coEvery { repo.markNotificationRead(any()) } returns Result.success(Unit)
         coEvery { repo.manageBookingSeries(any(), any(), any(), any(), any(), any(), any()) } returns
             Result.success(ManageSeriesResult(affectedVisits = 1, failedVisits = 0, householdNotified = true, newlyConfirmed = 1))
     }
@@ -141,6 +142,8 @@ class NotificationRequestConfirmTest {
         rule.waitForIdle()
         assertEquals(listOf("kf1" to "req_1"), opened)
         assertEquals(emptyList<String>(), target)
+        // #1829: the unread notice is marked read on the way.
+        coVerify(exactly = 1) { repo.markNotificationRead(row.id) }
     }
 
     @Test

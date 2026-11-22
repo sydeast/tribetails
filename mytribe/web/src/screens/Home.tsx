@@ -177,7 +177,7 @@ export function Home() {
                 </div>
                 <h2>
                   {auntieName(liveVisit.auntieDisplayName) ?? 'Your Auntie'} {liveArrived ? 'is with' : 'is on the way to'}{' '}
-                  {liveVisit.kinNames.join(', ') || 'your kin'}
+                  {liveVisit.kinNames.join(', ') || 'your Kin'}
                 </h2>
                 {liveArrived ? (
                   <p>
@@ -190,7 +190,7 @@ export function Home() {
                 <div className="lwho">
                   <div className="lav">{speciesEmoji(null)}</div>
                   <div style={{ flex: '0 0 auto' }}>
-                    <b>{liveVisit.kinNames.join(', ') || 'Your kin'}</b>
+                    <b>{liveVisit.kinNames.join(', ') || 'Your Kin'}</b>
                     <small>{(serviceLabelOf(liveVisit) ?? visitTitleOf(liveVisit) ?? 'Visit').toUpperCase()}</small>
                   </div>
                   <div className="track">

@@ -28,7 +28,7 @@ export function UnreadMessagesWidget({ onOpenInbox, limit = 5 }: UnreadMessagesW
 
   return (
     <DenPanel
-      title="Unread client messages"
+      title="Unread Kinfolk messages"
       subtitle="Threads waiting on a reply, newest first."
       hoverLift
       trailing={onOpenInbox ? <GhostButton label="Open inbox" onClick={onOpenInbox} /> : undefined}

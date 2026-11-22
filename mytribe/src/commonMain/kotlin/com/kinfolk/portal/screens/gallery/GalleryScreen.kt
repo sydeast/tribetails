@@ -75,6 +75,8 @@ fun GalleryScreen(
     portalApi: PortalApi,
     onBack: () -> Unit,
     onOpenKinDetail: (String) -> Unit,
+    /** #1911: the viewer's "Open the KinTale" opens the tale the picture came from. */
+    onOpenTale: (taleId: String) -> Unit = {},
     controller: GalleryController = rememberGalleryController(kinfolkId, portalApi),
 ) {
     val type = LocalKinfolkTypography.current
@@ -156,7 +158,14 @@ fun GalleryScreen(
     }
 
     controller.viewing?.let { photo ->
-        PhotoViewer(photo = photo, onClose = { controller.closeViewer() })
+        PhotoViewer(
+            photo = photo,
+            onClose = { controller.closeViewer() },
+            onOpenTale = { taleId ->
+                controller.closeViewer()
+                onOpenTale(taleId)
+            },
+        )
     }
 }
 
@@ -278,7 +287,7 @@ private fun PhotoTile(photo: KinPhoto, onOpen: (KinPhoto) -> Unit) {
  * it, which is the whole reason the archive is worth having.
  */
 @Composable
-private fun PhotoViewer(photo: KinPhoto, onClose: () -> Unit) {
+private fun PhotoViewer(photo: KinPhoto, onClose: () -> Unit, onOpenTale: (String) -> Unit) {
     val type = LocalKinfolkTypography.current
     Dialog(onDismissRequest = onClose) {
         GlassCard(
@@ -313,6 +322,14 @@ private fun PhotoViewer(photo: KinPhoto, onClose: () -> Unit) {
                 }
                 photo.takenAtMs?.let {
                     Text(relativeDay(it), style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
+                }
+                // #1911: the picture's own KinTale, the same place the web Gallery's tile opens.
+                if (photo.taleId.isNotBlank()) {
+                    KinGhostButton(
+                        label = "Open the KinTale",
+                        onClick = { onOpenTale(photo.taleId) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
