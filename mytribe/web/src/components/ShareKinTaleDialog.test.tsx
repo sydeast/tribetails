@@ -51,6 +51,20 @@ describe('ShareKinTaleDialog: form', () => {
     expect(screen.getByLabelText(/optional.*4 to 8 characters/i)).toBeInTheDocument();
   });
 
+  it('#1900: the expiry chip says "1 Day" at the lowest value and "N Days" above it', () => {
+    renderDialog();
+    const slider = screen.getByRole('slider', { name: /expiration/i });
+
+    expect(screen.getByText('7 Days')).toBeInTheDocument();
+    fireEvent.change(slider, { target: { value: '1' } });
+    expect(screen.getByText('1 Day')).toBeInTheDocument();
+    expect(screen.queryByText('1 Days')).not.toBeInTheDocument();
+    fireEvent.change(slider, { target: { value: '2' } });
+    expect(screen.getByText('2 Days')).toBeInTheDocument();
+    fireEvent.change(slider, { target: { value: '90' } });
+    expect(screen.getByText('90 Days')).toBeInTheDocument();
+  });
+
   it('rejects a too-short passcode before calling the callable, with the exact Compose-parity message', async () => {
     const user = userEvent.setup();
     renderDialog();

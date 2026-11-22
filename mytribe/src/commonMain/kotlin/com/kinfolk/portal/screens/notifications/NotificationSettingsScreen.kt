@@ -139,6 +139,10 @@ fun NotificationSettingsScreen(
     var status by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
+    // #1904: the card the last tap was on. It says Saving, Saved or Not saved
+    // under its own header, because the status line is at the foot of a long
+    // screen, out of sight from most cards.
+    var savedCard by remember { mutableStateOf<String?>(null) }
     // #1504: the editor is live once the prefs have loaded; wake the save's
     // instance so Save lands on a running one. After the screen's reads (#1561).
     WarmOnOpen(portalApi, WarmableSave.SaveMyNotificationPrefs, enabled = prefsLoaded)
@@ -316,7 +320,15 @@ fun NotificationSettingsScreen(
             )
         }
 
-        MarketingOptInBlock(marketingOptIn = marketingOptIn, saving = saving, onPatch = savePatch)
+        MarketingOptInBlock(
+            marketingOptIn = marketingOptIn,
+            saving = saving,
+            // #1904: the opt-in sits above the cards and is no card's tap, so no card shows its result.
+            onPatch = { patch ->
+                if (!saving && prefsLoaded) savedCard = null
+                savePatch(patch)
+            },
+        )
 
         effectiveCategories.forEach { cat ->
             // D12: present the "schedule" category with the Schedule Reminders
@@ -330,7 +342,15 @@ fun NotificationSettingsScreen(
                 byKey = byKey,
                 marketingOptIn = marketingOptIn,
                 saving = saving,
-                onPatch = savePatch,
+                onPatch = { patch ->
+                    if (!saving && prefsLoaded) savedCard = cat.id
+                    savePatch(patch)
+                },
+                cardStatus = if (savedCard == cat.id) {
+                    cardSaveStatus(saving = saving, saved = status != null, failed = saveError != null)
+                } else {
+                    null
+                },
                 isExpanded = isExpanded,
                 onToggleExpand = { setFolded(cat.id, isExpanded) },
                 modifier = Modifier
@@ -472,6 +492,7 @@ private fun CategoryCard(
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
     modifier: Modifier = Modifier,
+    cardStatus: String? = null,
     displayTitle: String = cat.title,
     displayDescription: String = cat.description,
 ) {
@@ -516,6 +537,15 @@ private fun CategoryCard(
                 )
             }
 
+            cardStatus?.let { line ->
+                Text(
+                    line,
+                    style = type.sansLabel.copy(
+                        color = if (line == CARD_NOT_SAVED) KinfolkBrand.PackPink else KinfolkBrand.KinTeal,
+                    ),
+                    modifier = Modifier.testTag("notif-card-status-${cat.id}"),
+                )
+            }
             // Legend for the chip markers, only when this category renders any.
             categoryMarkerLegend(cat, LocalBusinessName.current)?.let { legend ->
                 Text(legend, style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
@@ -725,4 +755,17 @@ private fun PerKeyRow(
             }
         }
     }
+}
+
+internal const val CARD_NOT_SAVED = "Not saved"
+
+/**
+ * #1904: what the card a tap was on says about that tap, or null when it has
+ * nothing to say. The web portal's NotificationSettings card says the same.
+ */
+internal fun cardSaveStatus(saving: Boolean, saved: Boolean, failed: Boolean): String? = when {
+    saving -> "Saving\u2026"
+    failed -> CARD_NOT_SAVED
+    saved -> "\u2713 Saved"
+    else -> null
 }

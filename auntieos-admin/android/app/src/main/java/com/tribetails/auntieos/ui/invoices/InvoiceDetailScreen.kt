@@ -920,7 +920,7 @@ private fun invoiceDetailBody(
     item {
         DenPanel(title = "Billing") {
             Column {
-                DetailRow("Client",   invoice.client.ifBlank { "-" })
+                DetailRow("Kinfolk",  invoice.client.ifBlank { "-" })
                 DetailRow("Date",     invoice.date.ifBlank { "-" })
                 // #1570: a stored due date that names no day is never counted
                 // overdue, so the row says so beside it.
@@ -989,14 +989,15 @@ private fun invoiceDetailBody(
         item {
             AuntieBanner(
                 tone  = AuntieBannerTone.Error,
-                title = "This invoice disagrees with itself",
+                title = com.tribetails.auntieos.domain.INVOICE_TOTAL_DISAGREEMENT_TITLE,
             ) {
                 Text(
-                    text = "The line items add up to ${com.tribetails.auntieos.domain.formatCents(drift.derivedCents)}, " +
-                        "but the total stored on the invoice says ${com.tribetails.auntieos.domain.formatCents(drift.storedCents)}. " +
-                        "Nothing has been changed to make them match, and nothing will be. The household is " +
-                        "billed the stored figure. Re-saving the line items through Edit will recompute " +
-                        "the stored total from them, if the lines are the version you want to keep.",
+                    text = com.tribetails.auntieos.domain.invoiceTotalDisagreementText(
+                        drift,
+                        linesEditable = !archived &&
+                            com.tribetails.auntieos.domain.invoiceEditScopeOf(invoice) ==
+                            com.tribetails.auntieos.domain.InvoiceEditScope.ALL,
+                    ),
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
@@ -1117,7 +1118,7 @@ private fun invoiceDetailBody(
                             icon      = Lucide.CircleAlert,
                             body      = {
                                 Text(
-                                    "No payment is linked to this invoice yet. The rows below are matched by client only.",
+                                    "No payment is linked to this invoice yet. The rows below are matched by Kinfolk only.",
                                     style = AuntieTheme.typography.bodySmall,
                                     color = AuntieTheme.colors.textDim,
                                 )
@@ -1455,7 +1456,7 @@ private fun LinkedSessionsSection(
                 icon      = Lucide.CircleAlert,
                 body      = {
                     Text(
-                        "This invoice has no client (kinfolk) on record, so its sessions cannot be matched. Set a client to link visits.",
+                        "This invoice has no Kinfolk on record, so its visits cannot be matched. Set the Kinfolk to link visits.",
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )

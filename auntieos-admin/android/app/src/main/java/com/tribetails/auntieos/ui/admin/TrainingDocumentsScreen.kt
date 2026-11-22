@@ -581,7 +581,7 @@ private fun AddDocumentForm(
         AuntieField(
             value = content,
             onValueChange = { content = it },
-            placeholder = "What should the AI know about this client or pet?",
+            placeholder = "What should the AI know about this household or Kin?",
             singleLine = false,
             minLines = 4,
             maxLines = 12,

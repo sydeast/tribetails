@@ -156,10 +156,9 @@ function isImage(contentType: string | null): boolean {
 function GalleryTile({ photo, variant }: { photo: KinPhotoDto; variant: string }) {
   const caption = photo.taleTitle || (photo.takenAtMs !== null ? relativeDay(photo.takenAtMs) : 'A KinTale');
   return (
-    // Links to the KinTales feed rather than to one tale: the feed route takes
-    // no search params today, and inventing one here would be a second thing to
-    // get wrong on a screen whose job is showing pictures.
-    <Link className={`gallery-tile ${variant}`} to="/kintales" title={caption}>
+    // #1911: opens the KinTale the picture came from, featured and scrolled to,
+    // the same `?tale=` address Home's Recent KinTales and a KinTale notice use.
+    <Link className={`gallery-tile ${variant}`} to="/kintales" search={{ tale: photo.taleId }} title={caption}>
       {isImage(photo.contentType) ? (
         <FallbackImage
           src={photo.url}

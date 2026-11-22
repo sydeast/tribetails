@@ -82,6 +82,7 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
+import com.tribetails.auntieos.ui.kintales.sentViaWords
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.ui.components.RailScreen
 import com.tribetails.auntieos.ui.components.railKicker
@@ -422,7 +423,7 @@ private fun OrphanRow(
             )
             Text("·", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
             Text(
-                text  = prettySentVia(report.sentVia),
+                text  = sentViaWords(report.sentVia) ?: "imported",
                 style = AuntieTheme.typography.mono,
                 color = c.textDim,
             )
@@ -894,7 +895,8 @@ private fun SubMetaColumn(report: KinCareReport, serviceRates: Map<String, Strin
 private fun MetaRow(report: KinCareReport) {
     val c = AuntieTheme.colors
     val mediaCount = report.mediaFileIds.size
-    val sentVia    = report.sentVia.takeIf { it.isNotBlank() }
+    // #1817: a stored marker this screen cannot say in words draws no pip.
+    val sentVia    = report.sentVia.takeIf { it.isNotBlank() }?.let(::sentViaWords)
 
     if (mediaCount == 0 && sentVia == null) return
 
@@ -906,22 +908,11 @@ private fun MetaRow(report: KinCareReport) {
             Pip(icon = Lucide.Images, label = "$mediaCount", tint = c.textDim)
         }
         if (sentVia != null) {
-            Pip(icon = Lucide.Send, label = prettySentVia(sentVia), tint = c.textDim)
+            Pip(icon = Lucide.Send, label = sentVia, tint = c.textDim)
         }
     }
 }
 
-/**
- * Friendly send-channel label. Internal backfill provenance markers
- * ("legacy_visit_logs", "legacy_orphan") are migration bookkeeping, not real
- * delivery channels, so collapse them to "imported" instead of leaking the raw
- * collection name into the operator UI. Real channels (email/sms) pass through.
- */
-private fun prettySentVia(sentVia: String): String = when {
-    sentVia.isBlank() -> "imported"
-    sentVia.startsWith("legacy_") -> "imported"
-    else -> sentVia.lowercase()
-}
 
 @Composable
 private fun Pip(icon: ImageVector, label: String, tint: Color) {

@@ -519,7 +519,7 @@ private fun AddDocumentForm(
                 value         = draft.content,
                 onValueChange = { v -> vm.updateDraft { it.copy(content = v) } },
                 label         = "Intel",
-                placeholder   = "What should the AI know about this client or pet?",
+                placeholder   = "What should the AI know about this household or Kin?",
                 modifier      = Modifier.fillMaxWidth(),
             )
 

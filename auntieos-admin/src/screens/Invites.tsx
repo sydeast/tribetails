@@ -99,8 +99,6 @@ export function filterInvites(
 
 export interface InviteSection {
   readonly heading: string;
-  /** The mock's `.ct`: the raw status codes the section collects, joined with a slash. */
-  readonly statusNote: string;
   readonly rows: AdminInvite[];
 }
 
@@ -121,7 +119,6 @@ const SECTION_ORDER: ReadonlyArray<{ heading: string; statuses: readonly InviteS
 export function groupInvitesByStatus(rows: readonly AdminInvite[]): InviteSection[] {
   return SECTION_ORDER.map((s) => ({
     heading: s.heading,
-    statusNote: `status: ${s.statuses.join(' / ')}`,
     rows: rows.filter((r) => s.statuses.includes(r.effectiveStatus)),
   }));
 }
@@ -334,9 +331,9 @@ export function Invites() {
                         the section's accessible name stays the one word. */}
                     <div className="invites__section-head">
                       <h2 className="invites__section-heading">{section.heading}</h2>
-                      <span className="invites__section-note">
-                        {section.statusNote} · {section.rows.length}
-                      </span>
+                      {/* #1853: the count alone. The mock's "status: ACCEPTED"
+                          note printed the stored key beside the word it repeats. */}
+                      <span className="invites__section-note">{section.rows.length}</span>
                     </div>
                     <ul className="invites__list">
                       {section.rows.map((invite) => (

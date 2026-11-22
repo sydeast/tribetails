@@ -102,8 +102,8 @@ export const AUNTIE_LOGGABLE_EVENTS: ReadonlySet<string> = new Set<string>([
   // Her own availability.
   'BLOCK_TIME_SLOT',
   'UNBLOCK_TIME_SLOT',
-  // KinTales, and a generated draft she sends (publishGeneratedDraft).
-  'CONTENT_KINTALE_SENT',
+  // A generated draft she sends (publishGeneratedDraft). A KinTale sent from
+  // a visit is the server's line since #1821 (`sendKinTaleReport`).
   'DRAFT_APPROVED',
   // The households she serves: record edits, never archive or delete.
   'UPDATE_KINFOLK',
