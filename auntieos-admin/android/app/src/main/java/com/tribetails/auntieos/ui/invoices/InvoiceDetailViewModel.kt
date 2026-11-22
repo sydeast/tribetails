@@ -1148,7 +1148,7 @@ class InvoiceDetailViewModel(
         if (_uiState.value.sendingDraft) return
         if (invoice.kinfolkId.isBlank()) {
             _uiState.value = _uiState.value.copy(
-                toastMessage = "This invoice has no client (kinfolk) on record, so it cannot be sent.",
+                toastMessage = "This invoice has no Kinfolk on record, so it cannot be sent.",
                 toastVisible = true,
                 toastIsError = true,
             )

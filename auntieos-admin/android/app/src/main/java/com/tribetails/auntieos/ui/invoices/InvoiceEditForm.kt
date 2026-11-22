@@ -195,7 +195,7 @@ fun InvoiceEditDraft.withPickedTerms(code: InvoiceTermsCode?): InvoiceEditDraft 
  */
 internal val INVOICE_EDIT_HEADER_TEXT_MAX: Map<String, Pair<String, Int>> = mapOf(
     "kinfolkName" to ("Household" to 200),
-    "client" to ("Client" to 200),
+    "client" to ("Kinfolk" to 200),
     "address" to ("Address" to 500),
     "discount" to ("Discount note" to 200),
 )

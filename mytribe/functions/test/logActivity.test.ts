@@ -112,22 +112,34 @@ describe('logActivityHandler', () => {
     ).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
-  it('uses caller uid as actor when description omitted (default description = actionType)', async () => {
+  it('uses caller uid as actor when description omitted (#1818: the sentence is the key in words)', async () => {
     await logActivityHandler(req({ actionType: 'AUTH_PASSWORD_CHANGED' }));
     const args = writeAuditEntryMock.mock.calls[0][0];
     expect(args.actorUid).toBe('admin-1');
-    expect(args.description).toBe('AUTH_PASSWORD_CHANGED');
+    expect(args.description).toBe('Auth password changed');
   });
 
-  it('captures supplied actorId in description when it diverges from caller uid', async () => {
+  it('a line with a plain title and no sentence reads as that title (#1818)', async () => {
+    await logActivityHandler(req({ actionType: 'UPDATE_KINFOLK' }));
+    expect(writeAuditEntryMock.mock.calls[0][0].description).toBe('Kinfolk updated');
+  });
+
+  it('a diverging client actorId goes to the function log, never into the sentence (#1818)', async () => {
+    const { logEvent } = await import('../src/lib/logger');
     await logActivityHandler(
       req({ actionType: 'ADMIN_IMPERSONATION', actorId: 'other-user-xyz' }),
     );
     const args = writeAuditEntryMock.mock.calls[0][0];
-    // True actor is still the caller (admin-1); divergent client claim is
-    // appended to description for forensic correlation.
+    // True actor is still the caller (admin-1).
     expect(args.actorUid).toBe('admin-1');
-    expect(args.description).toContain('client-actor=other-user-xyz');
+    expect(args.description).toBe('Admin impersonation');
+    expect(args.description).not.toMatch(/other-user-xyz|client-actor|ADMIN_/);
+    expect(vi.mocked(logEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'logActivity.clientActorDiverged',
+        extra: expect.objectContaining({ clientActorId: 'other-user-xyz' }),
+      }),
+    );
   });
 
   it('maps status=FAILURE to severity=warn', async () => {
@@ -285,7 +297,7 @@ describe('#1820 what an Auntie may write a line about', () => {
   const hers = [
     // #2037: the four clock steps are the server's lines now (SERVER_ONLY_AUDIT_EVENTS).
     'VISIT_COMPLETED', 'VISIT_NOTE_ADDED', 'VISIT_PHOTO_ADDED',
-    'CONTENT_KINTALE_SENT', 'UPDATE_KIN', 'CREATE_KIN', 'UPDATE_KINFOLK', 'DRAFT_APPROVED', 'BLOCK_TIME_SLOT',
+    'UPDATE_KIN', 'CREATE_KIN', 'UPDATE_KINFOLK', 'DRAFT_APPROVED', 'BLOCK_TIME_SLOT',
   ];
   it.each(hers)('writes %s for an Auntie', async (actionType) => {
     await logActivityHandler(req({ actionType }, 'auntie-1', AUNTIE));

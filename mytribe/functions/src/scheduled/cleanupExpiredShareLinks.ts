@@ -22,6 +22,8 @@ export async function cleanupExpiredShareLinksCore(now: Date): Promise<{ revoked
       status: 'SUCCESS',
       event: AUDIT_EVENTS.CONTENT_SHARE_LINK_EXPIRED,
       severity: 'info', actorRole: 'SYSTEM',
+      // #1818: words, not the stored key.
+      description: (await import('../lib/activityWords.js')).shareLinkExpiredWords(),
       familyId: (d.data() as { tribeId: string }).tribeId,
       payload: { shareId: d.id },
     });

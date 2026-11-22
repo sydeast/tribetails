@@ -722,6 +722,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   onMembersWrite: () => require('./triggers/onMembersWrite'),
   onKinTaleCreate: () => require('./triggers/onKinTaleCreate'),
   onKinTaleUpdate: () => require('./triggers/onKinTaleUpdate'),
+  // #1892: the Activity Log line for a KinTale template created, saved,
+  // archived, restored or deleted, from whichever client wrote it.
+  onKinTaleTemplateWrite: () => require('./triggers/onKinTaleTemplateWrite'),
   onInviteRequestCreate: () => require('./triggers/onInviteRequestCreate'),
   onClientsWrite: () => require('./triggers/onClientsWrite'),
   onBookingsWrite: () => require('./triggers/onBookingsWrite'),
