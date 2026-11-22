@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.screens.home
 
+import com.tribetails.auntieos.web.data.GeneratedDraft
+import com.tribetails.auntieos.web.data.draftsAwaitingReview
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -21,5 +23,15 @@ class HomeDraftCountsTest {
         assertEquals("Newest 4 of 12 drafts.", pendingShownLine(shown = 4, total = 12))
         assertNull(pendingShownLine(shown = 4, total = 4))
         assertNull(pendingShownLine(shown = 0, total = 0))
+    }
+
+    @Test
+    fun aDraftWithNoCopyIsNotCounted() {
+        val drafts = listOf(
+            GeneratedDraft(_id = "real", status = "pending", generatedCopy = "A tale."),
+            GeneratedDraft(_id = "snake", status = "generated", generated_copy = "Another."),
+            GeneratedDraft(_id = "shell", status = "pending"),
+        )
+        assertEquals(setOf("real", "snake"), draftsAwaitingReview(drafts).map { it._id }.toSet())
     }
 }

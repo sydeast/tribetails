@@ -1677,10 +1677,11 @@ class AuntieRepository(
      * Home's "KinTales pending": the three newest drafts still waiting on a
      * decision. #1563: an approved or already-sent draft is not pending, and the
      * panel's rows and its "Review & send" button now open what they list, so
-     * listing one would open a draft there is nothing left to do with. Read a
-     * little wider than three so a run of decided drafts does not empty it.
+     * listing one would open a draft there is nothing left to do with. #1850:
+     * the same read as the count, so a run of decided drafts cannot leave the
+     * list at "Newest 0 of 12".
      */
-    suspend fun getRecentDrafts(): Result<List<Draft>> = getGeneratedDrafts(limit = 10)
+    suspend fun getRecentDrafts(): Result<List<Draft>> = getGeneratedDrafts()
         // #1629: the same rule as the count beside it (pendingDraftCountOf), so a
         // content-less shell is neither a row nor counted.
         .map { drafts -> drafts.filter { it.isUnsent && it.generatedCopy.isNotBlank() }.take(3) }
