@@ -12,8 +12,8 @@
     "sync:voice": "cp ../../voice/01_Voice_Bible.md voice/01_Voice_Bible.md && cp ../../voice/02_Channel_Playbook.md voice/02_Channel_Playbook.md && cp ../../voice/corpus/exemplars.md voice/corpus/exemplars.md && node checkVoice.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.4.0",
-    "firebase-admin": "^14.5.0",
+    "@anthropic-ai/sdk": "^1.13.0",
+    "firebase-admin": "^14.5.1",
     "firebase-functions": "^7.4.0"
   },
   "private": true
