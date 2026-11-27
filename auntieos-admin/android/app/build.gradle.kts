@@ -299,9 +299,9 @@ sentry {
 
 configurations.all {
     resolutionStrategy {
-        force("io.grpc:grpc-api:1.85.1")
-        force("io.grpc:grpc-context:1.85.1")
-        force("io.grpc:grpc-core:1.85.1")
+        force("io.grpc:grpc-api:1.86.0")
+        force("io.grpc:grpc-context:1.86.0")
+        force("io.grpc:grpc-core:1.86.0")
     }
 }
 
